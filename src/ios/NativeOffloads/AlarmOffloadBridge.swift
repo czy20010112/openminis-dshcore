@@ -477,6 +477,29 @@ private final class AlarmLabelStore {
 #else
 
 @objc public class AlarmOffloadBridge: NSObject {
+    @objc public static func requestAuthorization(completion: @escaping (Bool, Error?) -> Void) {
+        completion(false, NSError(domain: "AlarmOffloadBridge", code: 1, userInfo: [NSLocalizedDescriptionKey: "AlarmKit unavailable on this SDK"]))
+    }
+
+    @objc public static func scheduleAlarm(
+        withId id: String,
+        fireDate: Date,
+        label: String,
+        repeatMode: String,
+        completion: @escaping (NSDictionary?, Error?) -> Void
+    ) {
+        completion(nil, NSError(domain: "AlarmOffloadBridge", code: 1, userInfo: [NSLocalizedDescriptionKey: "AlarmKit unavailable on iOS < 26"]))
+    }
+
+    @objc public static func scheduleTimer(
+        withId id: String,
+        duration: TimeInterval,
+        label: String,
+        completion: @escaping (NSDictionary?, Error?) -> Void
+    ) {
+        completion(nil, NSError(domain: "AlarmOffloadBridge", code: 1, userInfo: [NSLocalizedDescriptionKey: "AlarmKit unavailable on iOS < 26"]))
+    }
+
     @objc public static func listAlarms(completion: @escaping ([Any]?, Error?) -> Void) {
         completion([], nil)
     }
@@ -485,22 +508,8 @@ private final class AlarmLabelStore {
         completion(false, nil)
     }
 
-    @objc public static func setAlarm(
-        hour: Int,
-        minute: Int,
-        label: String?,
-        daysOfWeek: [Int]?,
-        completion: @escaping (NSDictionary?, Error?) -> Void
-    ) {
-        completion(nil, NSError(domain: "AlarmOffloadBridge", code: 1, userInfo: [NSLocalizedDescriptionKey: "AlarmKit unavailable on iOS < 26"]))
-    }
-
-    @objc public static func setTimer(
-        duration: TimeInterval,
-        label: String?,
-        completion: @escaping (NSDictionary?, Error?) -> Void
-    ) {
-        completion(nil, NSError(domain: "AlarmOffloadBridge", code: 1, userInfo: [NSLocalizedDescriptionKey: "AlarmKit unavailable on iOS < 26"]))
+    @objc public static func cancelAllAlarms(completion: @escaping (Int, Error?) -> Void) {
+        completion(0, nil)
     }
 }
 
