@@ -654,54 +654,6 @@ final class MessageListV3UITests: XCTestCase {
         XCTAssertTrue(cv.exists)
     }
 
-    // MARK: - Test 6: Health Data Scroll Stability
-
-    func testHealthDataScrollStability() {
-        currentCase = 6
-        launchInstant(scenario: "healthData", caseNumber: 6)
-
-        action("Verify initial render", step: 1)
-        XCTAssertTrue(cv.exists)
-        XCTAssertGreaterThan(cv.cells.count, 0, "Health data messages should render")
-
-        // Scroll to top first
-        cv.swipeDown(); cv.swipeDown(); cv.swipeDown()
-        sleep(1)
-
-        // Multi-speed fling test with FPS reporting
-        let speeds: [(String, XCUIGestureVelocity)] = [
-            ("fast", .fast),
-            ("veryFast", XCUIGestureVelocity(3500)),
-            ("extreme", XCUIGestureVelocity(5000)),
-            ("max", XCUIGestureVelocity(8000)),
-        ]
-
-        for (label, vel) in speeds {
-            flingAndCapture(fromY: 0.95, toY: 0.05, velocity: vel, captureDuration: 3.0,
-                            context: "Health down \(label)")
-            reportFPS(context: "Health down \(label)")
-            XCTAssertGreaterThan(cv.cells.count, 0, "Cells must persist (\(label) down)")
-        }
-
-        for (label, vel) in speeds {
-            flingAndCapture(fromY: 0.05, toY: 0.95, velocity: vel, captureDuration: 3.0,
-                            context: "Health up \(label)")
-            reportFPS(context: "Health up \(label)")
-            XCTAssertGreaterThan(cv.cells.count, 0, "Cells must persist (\(label) up)")
-        }
-
-        // Rapid alternating max-speed flings
-        for i in 0..<5 {
-            flingAndCapture(fromY: 0.95, toY: 0.05, velocity: XCUIGestureVelocity(8000),
-                            captureDuration: 2.0, context: "Health rapid max down #\(i+1)")
-            flingAndCapture(fromY: 0.05, toY: 0.95, velocity: XCUIGestureVelocity(8000),
-                            captureDuration: 2.0, context: "Health rapid max up #\(i+1)")
-        }
-        reportFPS(context: "Health rapid flings complete")
-
-        XCTAssertTrue(cv.exists)
-    }
-
     // MARK: - Test 7: Travel Planning Streaming + Jitter Gate
 
     func testTravelPlanningStreamingJitter() {

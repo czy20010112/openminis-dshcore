@@ -7,10 +7,10 @@ import XCTest
 /// `native_offload_lookup()` → `offload_find()` matches the BASENAME of argv[0]
 /// (`strrchr(guest_path, '/')`, deps/ish/kernel/native_offload.c:186-196).
 /// `extractOffloadCommand` compared the raw first token, so
-/// `/usr/local/bin/apple-healthkit` matched nothing, returned nil, and the
+/// `/usr/local/bin/apple-calendar` matched nothing, returned nil, and the
 /// caller — which reads nil as "not an offload command" — ran it with no
 /// prompt. The kernel dispatched it anyway. Absolute-path spellings therefore
-/// reached HealthKit / HomeKit / Photos / Location regardless of the
+/// reached HomeKit / Photos / Location regardless of the
 /// configured level, including Not Allowed.
 ///
 /// These tests pin BOTH directions: every spelling of a registered command is
@@ -36,8 +36,8 @@ final class OffloadPermissionBypassTests: XCTestCase {
 
     func testAbsolutePathIsRecognised() {
         XCTAssertEqual(
-            OffloadPermissionManager.extractOffloadCommand(from: "/usr/local/bin/apple-healthkit read steps"),
-            "apple-healthkit")
+            OffloadPermissionManager.extractOffloadCommand(from: "/usr/local/bin/apple-calendar read steps"),
+            "apple-calendar")
     }
 
     func testDotSlashRelativePathIsRecognised() {
@@ -75,8 +75,8 @@ final class OffloadPermissionBypassTests: XCTestCase {
 
     func testPlainCommandStillRecognised() {
         XCTAssertEqual(
-            OffloadPermissionManager.extractOffloadCommand(from: "apple-healthkit read steps"),
-            "apple-healthkit")
+            OffloadPermissionManager.extractOffloadCommand(from: "apple-calendar read steps"),
+            "apple-calendar")
     }
 
     func testBareCommandWithNoArgumentsStillRecognised() {
@@ -92,7 +92,7 @@ final class OffloadPermissionBypassTests: XCTestCase {
     }
 
     func testNonOffloadCommandStillReturnsNil() {
-        for cmd in ["ls -la", "echo apple-healthkit", "/bin/ls", "", "   "] {
+        for cmd in ["ls -la", "echo apple-calendar", "/bin/ls", "", "   "] {
             XCTAssertNil(OffloadPermissionManager.extractOffloadCommand(from: cmd),
                          "\(cmd.debugDescription) must not be treated as an offload command")
         }
@@ -102,7 +102,7 @@ final class OffloadPermissionBypassTests: XCTestCase {
     /// program and must not inherit its permission decision — the kernel
     /// compares with strcmp, not a substring test.
     func testSimilarButDifferentNameIsNotRecognised() {
-        for cmd in ["apple-healthkit-helper read",
+        for cmd in ["apple-calendar-helper read",
                     "not-apple-photos list",
                     "/usr/bin/apple-photos-extra list"] {
             XCTAssertNil(OffloadPermissionManager.extractOffloadCommand(from: cmd),
@@ -117,7 +117,7 @@ final class OffloadPermissionBypassTests: XCTestCase {
     /// the limitation is recorded rather than assumed fixed — closing it means
     /// moving the check to the dispatch site (see GH#242).
     func testIndirectInvocationRemainsUndetected() {
-        for cmd in ["sh -c 'apple-healthkit read steps'",
+        for cmd in ["sh -c 'apple-calendar read steps'",
                     "env apple-photos list"] {
             XCTAssertNil(OffloadPermissionManager.extractOffloadCommand(from: cmd),
                          "documented gap: first-token analysis cannot see through indirection")

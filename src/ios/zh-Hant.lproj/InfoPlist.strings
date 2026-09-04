@@ -9,8 +9,6 @@
 "NSCameraUsageDescription" = "Minis 需要使用相機來拍攝照片用於 AI 對話。";
 "NSPhotoLibraryUsageDescription" = "Minis 需要訪問相冊以將圖片添加到 AI 對話中。";
 "NSPhotoLibraryAddUsageDescription" = "Minis 需要權限來將視頻和圖片保存到您的相冊。";
-"NSHealthShareUsageDescription" = "Minis 需要訪問健康數據，以便 AI 智能體代您讀取步數、心率、睡眠和運動等數據。";
-"NSHealthUpdateUsageDescription" = "Minis 需要寫入健康數據的權限，以便 AI 智能體代您記錄步數、體重和飲水量等數據。";
 "NSContactsUsageDescription" = "Minis 需要訪問通訊錄，以便 AI 智能體代您搜索、查看和管理聯繫人。";
 "NSAppleMusicUsageDescription" = "Minis 需要訪問媒體資料庫，以便 AI 智能體搜索音樂並代您控制播放。";
 "NSMicrophoneUsageDescription" = "Minis 需要使用麥克風進行語音轉文字輸入。";

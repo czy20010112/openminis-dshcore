@@ -45,7 +45,6 @@
 #import "VisionOffload.h"
 #import "OpenOffload.h"
 #import "ClipboardOffload.h"
-#import "HealthKitOffload.h"
 #import "PhotosOffload.h"
 #import "MapsOffload.h"
 #import "NLPOffload.h"
@@ -660,7 +659,6 @@ static void handle_process_exit(struct task *task, int code) {
     vision_offload_register();
     open_offload_register();
     clipboard_offload_register();
-    healthkit_offload_register();
     photos_offload_register();
     maps_offload_register();
     nlp_offload_register();

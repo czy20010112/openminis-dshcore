@@ -9,8 +9,6 @@
 "NSCameraUsageDescription" = "Minis benötigt Kamerazugriff, um Fotos für KI-Unterhaltungen aufzunehmen.";
 "NSPhotoLibraryUsageDescription" = "Minis benötigt Zugriff auf die Fotomediathek, um Bilder an KI-Unterhaltungen anzuhängen.";
 "NSPhotoLibraryAddUsageDescription" = "Minis benötigt die Berechtigung, Videos und Bilder in Ihrer Fotomediathek zu speichern.";
-"NSHealthShareUsageDescription" = "Minis greift auf HealthKit zu, damit der KI-Agent Gesundheitsdaten wie Schritte, Herzfrequenz, Schlaf und Workouts in Ihrem Namen lesen kann.";
-"NSHealthUpdateUsageDescription" = "Minis greift schreibend auf HealthKit zu, damit der KI-Agent Gesundheitsdaten wie Schritte, Gewicht und Wasseraufnahme in Ihrem Namen aufzeichnen kann.";
 "NSContactsUsageDescription" = "Minis greift auf Kontakte zu, damit der KI-Agent Ihre Kontakte in Ihrem Namen suchen, anzeigen und verwalten kann.";
 "NSAppleMusicUsageDescription" = "Minis greift auf die Mediathek zu, damit der KI-Agent Ihre Musikbibliothek durchsuchen und die Wiedergabe steuern kann.";
 "NSMicrophoneUsageDescription" = "Minis benötigt Mikrofonzugriff für die Spracheingabe im Chat.";

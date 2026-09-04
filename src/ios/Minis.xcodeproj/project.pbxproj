@@ -128,7 +128,6 @@
 		E54100001 /* SessionDataSimulator.swift in Sources */ = {isa = PBXBuildFile; fileRef = E54100011 /* SessionDataSimulator.swift */; };
 		E54200001 /* MessageListTestView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E54200011 /* MessageListTestView.swift */; };
 		E54300001 /* travel-planning-session.json in Resources */ = {isa = PBXBuildFile; fileRef = E54300011 /* travel-planning-session.json */; };
-		E54300002 /* test-data-health.json in Resources */ = {isa = PBXBuildFile; fileRef = E54300012 /* test-data-health.json */; };
 		E55000001 /* ISHShellExecutor.m in Sources */ = {isa = PBXBuildFile; fileRef = E55000012 /* ISHShellExecutor.m */; };
 		E57000001 /* BrowserUseActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = E57000011 /* BrowserUseActions.swift */; };
 		E57000002 /* BrowserUseJavaScript.swift in Sources */ = {isa = PBXBuildFile; fileRef = E57000012 /* BrowserUseJavaScript.swift */; };
@@ -282,7 +281,6 @@
 		E5L100006 /* WeatherOffload.m in Sources */ = {isa = PBXBuildFile; fileRef = E5L100062 /* WeatherOffload.m */; };
 		E5L100007 /* VisionOffload.m in Sources */ = {isa = PBXBuildFile; fileRef = E5L100072 /* VisionOffload.m */; };
 		E5L100008 /* WeatherOffloadBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5L100080 /* WeatherOffloadBridge.swift */; };
-		E5L200012 /* HealthKitOffload.m in Sources */ = {isa = PBXBuildFile; fileRef = E5L200011 /* HealthKitOffload.m */; };
 		E5L200032 /* PhotosOffload.m in Sources */ = {isa = PBXBuildFile; fileRef = E5L200031 /* PhotosOffload.m */; };
 		E5L200042 /* MapsOffload.m in Sources */ = {isa = PBXBuildFile; fileRef = E5L200041 /* MapsOffload.m */; };
 		E5L200052 /* NLPOffload.m in Sources */ = {isa = PBXBuildFile; fileRef = E5L200051 /* NLPOffload.m */; };
@@ -776,7 +774,6 @@
 		E54100011 /* SessionDataSimulator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionDataSimulator.swift; sourceTree = "<group>"; };
 		E54200011 /* MessageListTestView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageListTestView.swift; sourceTree = "<group>"; };
 		E54300011 /* travel-planning-session.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "travel-planning-session.json"; sourceTree = "<group>"; };
-		E54300012 /* test-data-health.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "test-data-health.json"; sourceTree = "<group>"; };
 		E55000011 /* ISHShellExecutor.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = ISHShellExecutor.h; sourceTree = "<group>"; };
 		E55000012 /* ISHShellExecutor.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = ISHShellExecutor.m; sourceTree = "<group>"; };
 		E57000011 /* BrowserUseActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserUseActions.swift; sourceTree = "<group>"; };
@@ -955,8 +952,6 @@
 		E5L100071 /* VisionOffload.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = VisionOffload.h; sourceTree = "<group>"; };
 		E5L100072 /* VisionOffload.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = VisionOffload.m; sourceTree = "<group>"; };
 		E5L100080 /* WeatherOffloadBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeatherOffloadBridge.swift; sourceTree = "<group>"; };
-		E5L200010 /* HealthKitOffload.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = HealthKitOffload.h; sourceTree = "<group>"; };
-		E5L200011 /* HealthKitOffload.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = HealthKitOffload.m; sourceTree = "<group>"; };
 		E5L200030 /* PhotosOffload.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = PhotosOffload.h; sourceTree = "<group>"; };
 		E5L200031 /* PhotosOffload.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = PhotosOffload.m; sourceTree = "<group>"; };
 		E5L200040 /* MapsOffload.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = MapsOffload.h; sourceTree = "<group>"; };
@@ -1610,7 +1605,6 @@
 			isa = PBXGroup;
 			children = (
 				E54300011 /* travel-planning-session.json */,
-				E54300012 /* test-data-health.json */,
 			);
 			path = TestData;
 			sourceTree = "<group>";
@@ -1849,8 +1843,6 @@
 				E5L100032 /* OpenOffload.m */,
 				E5L100021 /* ClipboardOffload.h */,
 				E5L100022 /* ClipboardOffload.m */,
-				E5L200010 /* HealthKitOffload.h */,
-				E5L200011 /* HealthKitOffload.m */,
 				E5L200030 /* PhotosOffload.h */,
 				E5L200031 /* PhotosOffload.m */,
 				E5L200040 /* MapsOffload.h */,
@@ -2533,7 +2525,6 @@
 				E5AS00001 /* AppShortcuts.strings in Resources */,
 				E5Q000002 /* cl100k_base.tiktoken in Resources */,
 				E54300001 /* travel-planning-session.json in Resources */,
-				E54300002 /* test-data-health.json in Resources */,
 				E5D00050 /* models-dev-api.json in Resources */,
 				E5JB00003 /* jieba.dict.utf8 in Resources */,
 				E5VC0000C /* zh_background_wordfreq.txt in Resources */,
@@ -2827,7 +2818,6 @@
 				E5L100006 /* WeatherOffload.m in Sources */,
 				E5L100007 /* VisionOffload.m in Sources */,
 				E5L100008 /* WeatherOffloadBridge.swift in Sources */,
-				E5L200012 /* HealthKitOffload.m in Sources */,
 				E5L200032 /* PhotosOffload.m in Sources */,
 				E5L200042 /* MapsOffload.m in Sources */,
 				E5L200052 /* NLPOffload.m in Sources */,

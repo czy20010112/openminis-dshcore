@@ -4,11 +4,9 @@ import Foundation
 import UserNotifications
 
 /// Predefined tasks that Siri can invoke by name in a single utterance.
-/// e.g. "Minis analyze sleep" (or the same phrase pattern in the user's locale).
+/// e.g. "Minis check the weather" (or the same phrase pattern in the user's locale).
 @available(iOS 16.0, *)
 enum QuickTask: String, AppEnum {
-    case analyzeSleep
-    case healthReport
     case checkWeather
     case morningBriefing
     case checkCalendar
@@ -19,8 +17,6 @@ enum QuickTask: String, AppEnum {
     static var typeDisplayRepresentation = TypeDisplayRepresentation(name: "Quick Task")
 
     static var caseDisplayRepresentations: [QuickTask: DisplayRepresentation] = [
-        .analyzeSleep:   DisplayRepresentation(title: "Analyze Sleep", subtitle: "分析睡眠"),
-        .healthReport:   DisplayRepresentation(title: "Health Report", subtitle: "健康报告"),
         .checkWeather:   DisplayRepresentation(title: "Check Weather", subtitle: "查看天气"),
         .morningBriefing: DisplayRepresentation(title: "Morning Briefing", subtitle: "早间简报"),
         .checkCalendar:  DisplayRepresentation(title: "Check Calendar", subtitle: "查看日程"),
@@ -31,10 +27,6 @@ enum QuickTask: String, AppEnum {
 
     var prompt: String {
         switch self {
-        case .analyzeSleep:
-            return "Read my recent sleep data (apple-healthkit sleep), analyze sleep quality and generate a report"
-        case .healthReport:
-            return "Read my health data for today: steps (apple-healthkit steps --today), heart rate (apple-healthkit heart-rate --today), blood oxygen, and generate a daily health report"
         case .checkWeather:
             return "Check today's weather (apple-weather) and give clothing and travel suggestions"
         case .morningBriefing:
@@ -55,7 +47,7 @@ enum QuickTask: String, AppEnum {
 @available(iOS 16.0, *)
 struct QuickTaskIntent: AppIntent {
     static var title: LocalizedStringResource = "Quick Task"
-    static var description = IntentDescription("Runs a predefined Minis task like sleep analysis, weather check, or morning briefing.")
+    static var description = IntentDescription("Runs a predefined Minis task like weather check, calendar lookup, or morning briefing.")
     static var openAppWhenRun = false
 
     @Parameter(title: "Task")

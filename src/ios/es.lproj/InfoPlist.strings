@@ -9,8 +9,6 @@
 "NSCameraUsageDescription" = "Minis necesita acceso a la cámara para tomar fotos y usarlas en las conversaciones con la IA.";
 "NSPhotoLibraryUsageDescription" = "Minis necesita acceso a la fototeca para adjuntar imágenes a las conversaciones con la IA.";
 "NSPhotoLibraryAddUsageDescription" = "Minis necesita permiso para guardar videos e imágenes en tu fototeca.";
-"NSHealthShareUsageDescription" = "Minis usa el acceso a HealthKit para que el agente de IA pueda leer tus datos de salud, como pasos, frecuencia cardíaca, sueño y entrenamientos, en tu nombre.";
-"NSHealthUpdateUsageDescription" = "Minis usa el acceso de escritura a HealthKit para que el agente de IA pueda registrar datos de salud, como pasos, peso y consumo de agua, en tu nombre.";
 "NSContactsUsageDescription" = "Minis usa el acceso a los contactos para que el agente de IA pueda buscarlos, verlos y gestionarlos en tu nombre.";
 "NSAppleMusicUsageDescription" = "Minis usa el acceso a la biblioteca multimedia para que el agente de IA pueda buscar en tu biblioteca de música y controlar la reproducción en tu nombre.";
 "NSMicrophoneUsageDescription" = "Minis necesita acceso al micrófono para la entrada de voz a texto en el chat.";

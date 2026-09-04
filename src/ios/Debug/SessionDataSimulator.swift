@@ -161,8 +161,6 @@ final class SessionDataSimulator: ObservableObject {
         case streaming
         /// Rich travel planning session with many tables, code blocks, emoji, CJK text
         case travelPlanning
-        /// Health/sleep analysis session loaded from JSON test data
-        case healthData
     }
 
     /// Load a built-in sample for the given scenario
@@ -180,9 +178,6 @@ final class SessionDataSimulator: ObservableObject {
             parsedMessages = Self.streamingScenario()
         case .travelPlanning:
             parsedMessages = Self.travelPlanningScenario()
-        case .healthData:
-            loadJSONScenario(named: "test-data-health")
-            return  // loadJSONScenario sets parsedMessages and progress internally
         }
         progress = "Loaded \(parsedMessages.count) messages (\(scenario.rawValue))"
         state = .idle

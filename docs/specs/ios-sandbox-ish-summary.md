@@ -164,7 +164,6 @@ Guest process calls execve("/usr/local/bin/apple-calendar", args)
 | ContactsOffload | `apple-contacts` | Contacts | Contact management |
 | MapsOffload | `apple-maps` | MapKit | Maps, directions, location search |
 | PhotosOffload | `apple-photos` | Photos | Photo/video library access |
-| HealthKitOffload | `apple-health` | HealthKit | Health data read/write |
 | HomeKitOffload | `apple-home` | HomeKit | Home automation control |
 
 #### System Access

@@ -5,7 +5,7 @@ import Combine
 /// `minis-config` CLI at all.
 ///
 /// This is intentionally a separate store from `OffloadPermissionManager`
-/// — that one tracks per-command privacy levels (camera, healthkit, …)
+/// — that one tracks per-command privacy levels (camera, calendar, …)
 /// for shell offloads, while this one is a single boolean gate at the
 /// top of the entire minis-config subsystem. Disabling it short-circuits
 /// every CLI call before any field lookup, ConfirmationGate enqueue,
