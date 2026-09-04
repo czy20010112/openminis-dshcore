@@ -1270,6 +1270,11 @@ struct ContentView: View {
     }
 
     var body: some View {
+        baseLayoutContent
+    }
+
+    @ViewBuilder
+    private var baseLayoutContent: some View {
         baseLayout
         .onReceive(
             NotificationCenter.default.publisher(for: .sessionDidCreate),
@@ -2742,59 +2747,7 @@ struct ContentView: View {
         }
     }
 
-    @ViewBuilder
-    private func stackSessionRowItem(session: ChatSession, group: SidebarGroup, isLast: Bool) -> some View {
-        if isSelecting {
-            selectableRow(session)
-                .id("select-\(session.id)")
-                .listRowInsets(EdgeInsets())
-        } else {
-            SessionRow(
-                session: session,
-                isActive: sidebarActivityTracker.isActive(session.id),
-                isSuspended: sidebarConcurrencyManager.isSuspended(session.id),
-                highlightQuery: isSearching ? searchText : nil,
-                matchSnippet: isSearching ? searchMatchSnippets[session.id] : nil
-            )
-            .equatable()
-            .compatDraggable(session.id)
-            .overlay {
-                if regeneratingTitleSessionId == session.id {
-                    ZStack {
-                        Color(.systemBackground).opacity(0.7)
-                        ProgressView()
-                    }
-                }
-            }
-            .background(
-                Group {
-                    if #available(iOS 16.0, *) {
-                        NavigationLink(value: session.id) { EmptyView() }
-                            .opacity(0)
-                    } else {
-                        NavigationLink(destination: chatDestination(for: session.id)) { EmptyView() }
-                            .opacity(0)
-                    }
-                }
-            )
-            .listRowInsets(EdgeInsets())
-            .listRowSeparator(.hidden)
-            .listRowBackground(Group {
-                if group.folderId != nil {
-                    FolderMemberRowBackground(isLast: isLast)
-                } else {
-                    Color(.systemBackground)
-                }
-            })
-            .contextMenu {
-                SessionContextMenu(
-                    key: MenuKey(sid: session.id, pinned: session.isPinned, title: session.title, filed: session.isFiled),
-                    actions: menuActions
-                )
-                .equatable()
-            }
-        }
-    }
+    // First definition: remove the duplicate
 
     @ViewBuilder
     private func stackSessionRowItem(session: ChatSession, group: SidebarGroup, isLast: Bool) -> some View {
@@ -2846,7 +2799,6 @@ struct ContentView: View {
                 )
                 .equatable()
             }
-            .equatable()
         }
     }
 
@@ -2914,7 +2866,6 @@ struct ContentView: View {
                     }
                 }
             )
-            .equatable()
         }
     }
 
@@ -3036,7 +2987,7 @@ struct ContentView: View {
 
         }
         .listStyle(.plain)
-        .navigationSplitViewColumnWidth(min: 340, ideal: 380, max: 500)
+        .modifier(SidebarColumnWidthModifier())
         .opacity(didInitialLoad ? 1 : 0)
         .overlay { if didInitialLoad, displaySessions.isEmpty, !isSearching { emptyState } }
         .overlay(alignment: .top) { folderMiniBarOverlay(scrollProxy) }
@@ -8006,6 +7957,16 @@ private struct ForceSyncToastBanner: View {
         .shadow(color: .black.opacity(0.18), radius: 8, y: 3)
         .padding(.horizontal, 16)
         .frame(maxWidth: 480)
+    }
+}
+
+private struct SidebarColumnWidthModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 16.0, *) {
+            content.navigationSplitViewColumnWidth(min: 340, ideal: 380, max: 500)
+        } else {
+            content
+        }
     }
 }
 
