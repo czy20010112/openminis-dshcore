@@ -476,11 +476,17 @@ public final class ContentViewNavigationHolder: ObservableObject {
 
     @Published public var navigationPathToken = UUID()
 
+    @Published public var activeSessionId: String? = nil {
+        didSet {
+            navigationPathToken = UUID()
+        }
+    }
+
     public var isPathEmpty: Bool {
         if #available(iOS 16.0, *) {
             return navigationPath.isEmpty
         } else {
-            return true
+            return activeSessionId == nil
         }
     }
 
@@ -492,8 +498,8 @@ public final class ContentViewNavigationHolder: ObservableObject {
             (_columnVisibility as? NavigationSplitViewVisibility) ?? .automatic
         }
         set {
-            _columnVisibility = newValue
             objectWillChange.send()
+            _columnVisibility = newValue
         }
     }
 
@@ -508,9 +514,9 @@ public final class ContentViewNavigationHolder: ObservableObject {
             return p
         }
         set {
+            objectWillChange.send()
             _navigationPath = newValue
             navigationPathToken = UUID()
-            objectWillChange.send()
         }
     }
 
@@ -525,8 +531,8 @@ public final class ContentViewNavigationHolder: ObservableObject {
             return p
         }
         set {
-            _settingsNavPath = newValue
             objectWillChange.send()
+            _settingsNavPath = newValue
         }
     }
 
@@ -538,8 +544,8 @@ public final class ContentViewNavigationHolder: ObservableObject {
             _pendingBackgroundNav as? (path: NavigationPath, deferredAt: Date)
         }
         set {
-            _pendingBackgroundNav = newValue
             objectWillChange.send()
+            _pendingBackgroundNav = newValue
         }
     }
 }

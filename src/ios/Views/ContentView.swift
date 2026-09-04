@@ -1793,6 +1793,9 @@ struct ContentView: View {
                 }
             }
             previousSelectedSessionId = newValue
+            if !isWideLayout {
+                navHolder.activeSessionId = newValue
+            }
             if let sid = newValue {
                 SessionBadgeStore.shared.remove(.unread, for: sid)
                 AIChatViewModel.activeSessionId = sid
@@ -2120,6 +2123,28 @@ struct ContentView: View {
         } else {
             NavigationView {
                 sessionList(useNavigationLinks: true)
+                    .background(
+                        NavigationLink(
+                            destination: Group {
+                                if let sid = selectedSessionId {
+                                    chatDestination(for: sid)
+                                }
+                            },
+                            isActive: Binding(
+                                get: { selectedSessionId != nil },
+                                set: { active in
+                                    if !active {
+                                        selectedSessionId = nil
+                                        currentStackSessionId = nil
+                                        navHolder.activeSessionId = nil
+                                    }
+                                }
+                            )
+                        ) {
+                            EmptyView()
+                        }
+                        .hidden()
+                    )
             }
             .navigationViewStyle(.stack)
         }
@@ -3514,6 +3539,7 @@ struct ContentView: View {
             commitNavigationPath(NavigationPath([id]))
         } else {
             selectedSessionId = id
+            navHolder.activeSessionId = id
         }
         currentStackSessionId = id
     }
@@ -3523,6 +3549,7 @@ struct ContentView: View {
             navHolder.navigationPath = NavigationPath()
         } else {
             selectedSessionId = nil
+            navHolder.activeSessionId = nil
         }
         currentStackSessionId = nil
     }
@@ -3627,6 +3654,7 @@ struct ContentView: View {
                 commitNavigationPath(next)
             } else {
                 selectedSessionId = id
+                navHolder.activeSessionId = id
             }
             currentStackSessionId = id
         }
