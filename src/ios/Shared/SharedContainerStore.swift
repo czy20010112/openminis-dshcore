@@ -5,6 +5,27 @@ import Foundation
 enum SharedContainerStore {
     static let appGroupID = "group.com.openminis.app"
 
+    /// Storage root used by the main app. Properly provisioned builds use the
+    /// App Group container; unsigned/TrollStore/sideload builds may not retain
+    /// that entitlement, so they fall back to the app's own Library container
+    /// instead of crashing on a force unwrap during launch.
+    static var persistentContainerRoot: URL {
+        let fm = FileManager.default
+        let library = fm.urls(for: .libraryDirectory, in: .userDomainMask).first!
+        return resolvePersistentContainerRoot(
+            appGroupContainer: fm.containerURL(forSecurityApplicationGroupIdentifier: appGroupID),
+            libraryDirectory: library
+        )
+    }
+
+    static func resolvePersistentContainerRoot(
+        appGroupContainer: URL?,
+        libraryDirectory: URL
+    ) -> URL {
+        appGroupContainer
+            ?? libraryDirectory.appendingPathComponent("MinisChat", isDirectory: true)
+    }
+
     private static let pendingShareKey = "pendingShare"
 
     static var sharedDefaults: UserDefaults? {

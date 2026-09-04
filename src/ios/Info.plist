@@ -220,10 +220,6 @@
 	<string>Minis uses reminders access so the AI agent can query and create reminders on your behalf.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>Minis uses speech recognition to convert your voice into text messages.</string>
-	<key>NSSupportsLiveActivities</key>
-	<true/>
-	<key>NSSupportsLiveActivitiesFrequentUpdates</key>
-	<true/>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>
