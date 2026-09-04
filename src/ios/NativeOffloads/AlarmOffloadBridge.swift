@@ -474,4 +474,34 @@ private final class AlarmLabelStore {
     }
 }
 
+#else
+
+@objc public class AlarmOffloadBridge: NSObject {
+    @objc public static func listAlarms(completion: @escaping ([Any]?, Error?) -> Void) {
+        completion([], nil)
+    }
+
+    @objc public static func cancelAlarm(withId id: String, completion: @escaping (Bool, Error?) -> Void) {
+        completion(false, nil)
+    }
+
+    @objc public static func setAlarm(
+        hour: Int,
+        minute: Int,
+        label: String?,
+        daysOfWeek: [Int]?,
+        completion: @escaping (NSDictionary?, Error?) -> Void
+    ) {
+        completion(nil, NSError(domain: "AlarmOffloadBridge", code: 1, userInfo: [NSLocalizedDescriptionKey: "AlarmKit unavailable on iOS < 26"]))
+    }
+
+    @objc public static func setTimer(
+        duration: TimeInterval,
+        label: String?,
+        completion: @escaping (NSDictionary?, Error?) -> Void
+    ) {
+        completion(nil, NSError(domain: "AlarmOffloadBridge", code: 1, userInfo: [NSLocalizedDescriptionKey: "AlarmKit unavailable on iOS < 26"]))
+    }
+}
+
 #endif // canImport(AlarmKit)

@@ -19,7 +19,167 @@ extension Task where Success == Never, Failure == Never {
     }
 }
 
-// MARK: - Compat Uneven Rounded Rectangle
+// MARK: - Compat AnyShape
+
+public struct AnyCompatShape: Shape {
+    private let _path: (CGRect) -> Path
+
+    public init<S: Shape>(_ shape: S) {
+        _path = { rect in shape.path(in: rect) }
+    }
+
+    public func path(in rect: CGRect) -> Path {
+        _path(rect)
+    }
+}
+
+// MARK: - Compat LabeledContent
+
+public struct LabeledContent<Label: View, Content: View>: View {
+    private let label: Label
+    private let content: Content
+
+    public init(@ViewBuilder content: () -> Content, @ViewBuilder label: () -> Label) {
+        self.label = label()
+        self.content = content()
+    }
+
+    public var body: some View {
+        HStack {
+            label
+            Spacer()
+            content
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
+extension LabeledContent where Label == Text, Content == Text {
+    public init(_ titleKey: LocalizedStringKey, value: String) {
+        self.init(content: { Text(value) }, label: { Text(titleKey) })
+    }
+
+    public init<S: StringProtocol>(_ title: S, value: S) {
+        self.init(content: { Text(String(value)) }, label: { Text(String(title)) })
+    }
+}
+
+extension LabeledContent where Label == Text {
+    public init<S: StringProtocol>(_ title: S, @ViewBuilder content: () -> Content) {
+        self.init(content: content, label: { Text(String(title)) })
+    }
+
+    public init(_ titleKey: LocalizedStringKey, @ViewBuilder content: () -> Content) {
+        self.init(content: content, label: { Text(titleKey) })
+    }
+}
+
+// MARK: - Compat UIHostingConfiguration
+
+import UIKit
+
+public struct UIHostingConfiguration<Content: View, Background: View>: UIContentConfiguration {
+    public var content: Content
+    public var background: Background?
+
+    public init(@ViewBuilder content: () -> Content) where Background == EmptyView {
+        self.content = content()
+        self.background = nil
+    }
+
+    public func minSize(width: CGFloat? = nil, height: CGFloat? = nil) -> Self { self }
+    public func margins(_ edges: Edge.Set = .all, _ insets: EdgeInsets) -> Self { self }
+    public func margins(_ edges: Edge.Set = .all, _ length: CGFloat) -> Self { self }
+
+    public func makeContentView() -> UIView & UIContentView {
+        HostingContentView(configuration: self)
+    }
+
+    public func updated(for state: UIConfigurationState) -> Self { self }
+}
+
+private class HostingContentView<Content: View, Background: View>: UIView, UIContentView {
+    var configuration: UIContentConfiguration {
+        didSet {
+            update()
+        }
+    }
+
+    private var host: UIHostingController<Content>?
+
+    init(configuration: UIHostingConfiguration<Content, Background>) {
+        self.configuration = configuration
+        super.init(frame: .zero)
+        backgroundColor = .clear
+        let h = UIHostingController(rootView: configuration.content)
+        h.view.backgroundColor = .clear
+        h.view.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(h.view)
+        NSLayoutConstraint.activate([
+            h.view.topAnchor.constraint(equalTo: topAnchor),
+            h.view.leadingAnchor.constraint(equalTo: leadingAnchor),
+            h.view.trailingAnchor.constraint(equalTo: trailingAnchor),
+            h.view.bottomAnchor.constraint(equalTo: bottomAnchor)
+        ])
+        self.host = h
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    private func update() {
+        if let config = configuration as? UIHostingConfiguration<Content, Background> {
+            host?.rootView = config.content
+        }
+    }
+}
+
+// MARK: - Additional View Modifiers
+
+struct CompatGeometryPreferenceKey<T: Equatable>: PreferenceKey {
+    static var defaultValue: T? { nil }
+    static func reduce(value: inout T?, nextValue: () -> T?) {
+        if let next = nextValue() { value = next }
+    }
+}
+
+extension View {
+    @ViewBuilder
+    public func compatListRowSeparatorLeadingZero() -> some View {
+        if #available(iOS 16.0, *) {
+            self.alignmentGuide(.listRowSeparatorLeading) { _ in 0 }
+        } else {
+            self
+        }
+    }
+
+    @ViewBuilder
+    public func compatScrollIndicators() -> some View {
+        if #available(iOS 16.0, *) {
+            self.scrollIndicators(.visible)
+        } else {
+            self
+        }
+    }
+
+    public func compatOnGeometryChange<T: Equatable>(for type: T.Type, of transform: @escaping (GeometryProxy) -> T, action: @escaping (T) -> Void) -> some View {
+        self.background(
+            GeometryReader { geo in
+                Color.clear.preference(key: CompatGeometryPreferenceKey<T>.self, value: transform(geo))
+            }
+        )
+        .onPreferenceChange(CompatGeometryPreferenceKey<T>.self) { val in
+            if let val = val { action(val) }
+        }
+    }
+}
+
+// MARK: - Locale Helpers
+
+extension Locale {
+    public var compatLangCode: String? {
+        self.languageCode
+    }
+}
 
 /// Backward-compatible asymmetric rounded rectangle shape that works on iOS 15+.
 public struct CompatUnevenRoundedRectangle: Shape {

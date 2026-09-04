@@ -749,7 +749,7 @@ struct InlineVoiceInputView: View {
             TextField("", text: Binding(
                 get: { viewModel.transcript },
                 set: { viewModel.setTranscript($0); inputText = $0 }
-            ), axis: .vertical)
+            ))
                 .focused($editFocused)
                 .font(.body)
                 .multilineTextAlignment(.center)
@@ -766,7 +766,7 @@ struct InlineVoiceInputView: View {
                             // see focus already false and skip that release.
                             viewModel.endEditing(resume: false)
                         } label: {
-                            Text("Done", comment: "Finish transcript editing")
+                            Text("Done")
                                 .font(.body.weight(.semibold))
                         }
                     }

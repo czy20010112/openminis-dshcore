@@ -239,38 +239,18 @@ private let folderEdgeHighlight = Color(UIColor { traits in
 /// over a separately-drawn shape.
 private struct SearchBarSurface: ViewModifier {
     func body(content: Content) -> some View {
-        if #available(iOS 26.0, *) {
-            // No .clipShape needed — glassEffect(in:) already clips to the
-            // capsule, and no .shadow: the material carries its own.
-            content.glassEffect(.regular, in: .capsule)
-        } else {
-            content
-                .background(Color(UIColor.secondarySystemBackground))
-                .clipShape(Capsule())
-                .shadow(color: .black.opacity(0.1), radius: 6, x: 0, y: 2)
-        }
+        content
+            .background(Color(UIColor.secondarySystemBackground))
+            .clipShape(Capsule())
+            .shadow(color: .black.opacity(0.1), radius: 6, x: 0, y: 2)
     }
 }
 
-/// Tags the search FAB and the expanded search bar with ONE shared
-/// `glassEffectID`.
-///
-/// Currently INERT: `glassEffectID` only does anything inside a
-/// `GlassEffectContainer`, and the FAB row no longer has one — that container
-/// suppressed the new-chat FAB's context menu, see the note on `fabRow`. The
-/// modifier is kept (harmless, and it costs nothing) so that if the container
-/// is ever reinstated with the menu problem solved, the morph works again
-/// without re-deriving the id plumbing. The row's scale+opacity transition is
-/// what actually animates the swap today.
 private struct FABGlassMorphID: ViewModifier {
     let namespace: Namespace.ID
 
     func body(content: Content) -> some View {
-        if #available(iOS 26.0, *) {
-            content.glassEffectID("fabSearch", in: namespace)
-        } else {
-            content
-        }
+        content
     }
 }
 
@@ -309,18 +289,18 @@ private struct FolderSurface: ViewModifier {
             : UIColor(red: 252/255.0, green: 252/255.0, blue: 252/255.0, alpha: 1)
     })
 
-    private var shape: AnyShape {
+    private var shape: AnyCompatShape {
         switch kind {
         case .lone:
-            return AnyShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            return AnyCompatShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         case .top:
-            return AnyShape(CompatUnevenRoundedRectangle(
+            return AnyCompatShape(CompatUnevenRoundedRectangle(
                 topLeadingRadius: 16, bottomLeadingRadius: 0,
                 bottomTrailingRadius: 0, topTrailingRadius: 16, style: .continuous))
         case .middle:
-            return AnyShape(Rectangle())
+            return AnyCompatShape(Rectangle())
         case .bottom:
-            return AnyShape(CompatUnevenRoundedRectangle(
+            return AnyCompatShape(CompatUnevenRoundedRectangle(
                 topLeadingRadius: 0, bottomLeadingRadius: 16,
                 bottomTrailingRadius: 16, topTrailingRadius: 0, style: .continuous))
         }
@@ -328,31 +308,7 @@ private struct FolderSurface: ViewModifier {
 
     func body(content: Content) -> some View {
         Group {
-            // Two states, two deliberate treatments (user decision):
-            // - COLLAPSED lone card: the sampled constant. glassEffect is a
-            //   live material and a collapsed card scrolls past heterogeneous
-            //   content (blurred colorful pinned rows), so live glass
-            //   flickered frame to frame; the constant is what that glass
-            //   rendered over the flat background anyway.
-            // - EXPANDED segments: a real material for translucency. Member
-            //   rows sit over the STABLE list background only — nothing
-            //   colorful ever passes behind them — so the flicker mechanism
-            //   doesn't apply, and the material keeps the container from
-            //   reading as a dull solid slab. regularMaterial (the brighter
-            //   tier; ultraThin ran too dark here before).
-            if kind == .lone {
-                if #available(iOS 26.0, *) {
-                    content.background(shape.fill(Self.sampledGlassColor))
-                } else {
-                    content.background(shape.fill(Color(UIColor.secondarySystemBackground)))
-                }
-            } else {
-                if #available(iOS 26.0, *) {
-                    content.background(shape.fill(.regularMaterial))
-                } else {
-                    content.background(shape.fill(Color(UIColor.secondarySystemBackground)))
-                }
-            }
+            content.background(shape.fill(Color(UIColor.secondarySystemBackground)))
         }
         .overlay {
             // Border: full hairline on the lone card (its existing look, sub-26
@@ -389,12 +345,12 @@ private struct FolderCardBackground: ViewModifier {
     let isDropTarget: Bool
     let isExpanded: Bool
 
-    private var dropShape: AnyShape {
+    private var dropShape: AnyCompatShape {
         isExpanded
-            ? AnyShape(CompatUnevenRoundedRectangle(
+            ? AnyCompatShape(CompatUnevenRoundedRectangle(
                 topLeadingRadius: 16, bottomLeadingRadius: 0,
                 bottomTrailingRadius: 0, topTrailingRadius: 16, style: .continuous))
-            : AnyShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            : AnyCompatShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
     func body(content: Content) -> some View {
@@ -597,8 +553,8 @@ private struct FolderPickerSheet: View {
                     // One-sentence auto-grouping context (≤100 chars). Typed
                     // here or prefilled by AI Suggest; never shown in the
                     // list, editable later from Rename Group.
-                    TextField("Description (optional, guides auto-grouping)", text: $newFolderDesc, axis: .vertical)
-                        .lineLimit(1...2)
+                    TextField("Description (optional, guides auto-grouping)", text: $newFolderDesc)
+                        .lineLimit(2)
                         .font(.subheadline)
                         .onChange(of: newFolderDesc) { v in
                             if v.count > 100 { newFolderDesc = String(v.prefix(100)) }
@@ -4345,50 +4301,10 @@ struct ContentView: View {
         fallbackShadowOpacity: Double,
         @ViewBuilder icon: () -> Icon
     ) -> some View {
-        if #available(iOS 26.0, *) {
-            icon()
-                .frame(width: 56, height: 56)
-                .glassEffect(
-                    tint.map { Glass.regular.tint($0) } ?? Glass.regular,
-                    in: .circle
-                )
-                // [T-fab-glass-contextmenu-regression] Without this the long-press
-                // menu on the new-chat FAB stops opening.
-                //
-                // The pre-glass label was `Circle().fill(...)`, a filled shape,
-                // so its hit-test region was the whole 56x56 disc and
-                // `.contextMenu` (attached to that same view) picked up a
-                // long-press anywhere on the button. The glass version's content
-                // is a bare `Image` — `.frame` only reserves space, and
-                // `.glassEffect` draws a material without contributing a
-                // hit-testable shape — so the only interactive pixels left were
-                // the glyph's own strokes. A long press on the surrounding
-                // (visually filled) area hit nothing and no menu appeared.
-                //
-                // Tapping still worked, which is what made this look like a
-                // gesture-priority fight with glassEffect rather than a hit-test
-                // hole: DraggableFAB re-applies `.frame` and `.onTapGesture` at
-                // ITS level, one layer out, so taps were being caught there.
-                // `.contextMenu` is the only one of the three attached inside.
-                //
-                // Restoring an explicit circular content shape gives the glass
-                // surface the same hit region the filled Circle had. Applied
-                // AFTER glassEffect so it covers the rendered disc.
-                .contentShape(.circle)
-                // …and the same shape again for the context-menu PREVIEW.
-                // `.contentShape(_:)` only sets the INTERACTION region; the
-                // lifted platter resolves its shape separately and otherwise
-                // falls back to the view's rectangular bounds, which is what
-                // showed a grey rounded-rect slab peeking out from under the
-                // circular button on long press. `ChatMessageRow` already
-                // declares the two shapes separately for the same reason.
-                .contentShape(.contextMenuPreview, Circle())
-        } else {
-            Circle()
-                .fill(fallbackFill)
-                .overlay { icon() }
-                .shadow(color: .black.opacity(fallbackShadowOpacity), radius: 8, x: 0, y: 4)
-        }
+        Circle()
+            .fill(fallbackFill)
+            .overlay { icon() }
+            .shadow(color: .black.opacity(fallbackShadowOpacity), radius: 8, x: 0, y: 4)
     }
 
     @ViewBuilder
@@ -6896,7 +6812,7 @@ struct SessionEditSheet: View {
                         guard !title.isEmpty else { return }
                         onSave(title, editCategory.isEmpty ? nil : editCategory)
                     }
-                    .bold()
+                    .font(.body.weight(.bold))
                     .disabled(editTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }

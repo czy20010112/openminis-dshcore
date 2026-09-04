@@ -2772,7 +2772,7 @@ struct AIChatView: View {
                 // layout and trips a precondition on the iOS 18 async renderer
                 // (ViewGraphGeometryObservers.needsUpdate SIGTRAP). The action
                 // also fires with the initial value, covering the old onAppear.
-                .onGeometryChange(for: CGFloat.self) { proxy in
+                .compatOnGeometryChange(for: CGFloat.self) { proxy in
                     proxy.size.height
                 } action: { newH in
                     floatingBarHeight = newH
@@ -3665,7 +3665,7 @@ struct AIChatView: View {
             // floating-bar site). Fires with the initial value too, so the
             // old onAppear seeding AND its diagnostic log are preserved as
             // a single unified line.
-            .onGeometryChange(for: CGRect.self) { proxy in
+            .compatOnGeometryChange(for: CGRect.self) { proxy in
                 proxy.frame(in: .global)
             } action: { frame in
                 let newH = frame.size.height
@@ -4146,7 +4146,7 @@ struct AIChatView: View {
                     }
                 }
             }
-            .scrollIndicators(.visible)
+            .compatScrollIndicators()
             .frame(height: Self.slashPickerFixedHeight)
         }
     }
@@ -4216,7 +4216,7 @@ struct AIChatView: View {
                         // [T-slash-picker-fixed-height] Match slash popup:
                         // exactly 4 rows tall, scrolls on overflow with the
                         // visible indicator above.
-                        .scrollIndicators(.visible)
+                        .compatScrollIndicators()
                         .frame(height: Self.slashPickerFixedHeight)
                         .onChange(of: vm.mentionSelectedIndex) { newIndex in
                             guard newIndex >= 0, newIndex < rows.count else { return }
@@ -4605,17 +4605,11 @@ private struct ComposerSurface: ViewModifier {
     }
 
     func body(content: Content) -> some View {
-        if #available(iOS 26.0, *) {
-            content
-                .glassEffect(.regular, in: shape)
-                .clipShape(shape)
-        } else {
-            content
-                .background(shape.fill(ChatColors.inputBg))
-                .clipShape(shape)
-                .shadow(color: Color.black.opacity(0.12), radius: 8, x: 0, y: 2)
-                .shadow(color: Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 0, alpha: 0.5) : UIColor(white: 0, alpha: 0) }), radius: 8, x: 0, y: -4)
-        }
+        content
+            .background(shape.fill(ChatColors.inputBg))
+            .clipShape(shape)
+            .shadow(color: Color.black.opacity(0.12), radius: 8, x: 0, y: 2)
+            .shadow(color: Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 0, alpha: 0.5) : UIColor(white: 0, alpha: 0) }), radius: 8, x: 0, y: -4)
     }
 }
 
@@ -4799,23 +4793,21 @@ private struct NavBarStyleModifier: ViewModifier {
                 .toolbarBackgroundVisibility(.visible, for: .navigationBar)
         } else {
             // iOS 16–18: opaque navbar background
-            content
-                .toolbarBackground(ChatColors.background, for: .navigationBar)
-                .toolbarBackground(.visible, for: .navigationBar)
-                .overlay(alignment: .top) {
-                    // [T-ios-geometry-observer-crash] onGeometryChange replaces
-                    // the GeometryReader scaffold (async-renderer SIGTRAP — see
-                    // the floating-bar site). The proxy measures the same
-                    // Color.clear the reader wrapped; ignoresSafeArea/frame
-                    // stay outside it exactly as before, and the action's
-                    // initial fire covers the old onAppear seed.
-                    Color.clear
-                        .onGeometryChange(for: CGFloat.self) { proxy in
-                            proxy.safeAreaInsets.top
-                        } action: { topSafeAreaInset = $0 }
-                        .ignoresSafeArea()
-                        .frame(height: 0)
-                }
+            if #available(iOS 16.0, *) {
+                content
+                    .toolbarBackground(ChatColors.background, for: .navigationBar)
+                    .toolbarBackground(.visible, for: .navigationBar)
+                    .overlay(alignment: .top) {
+                        Color.clear
+                            .compatOnGeometryChange(for: CGFloat.self) { proxy in
+                                proxy.safeAreaInsets.top
+                            } action: { topSafeAreaInset = $0 }
+                            .ignoresSafeArea()
+                            .frame(height: 0)
+                    }
+            } else {
+                content
+            }
         }
     }
 }
@@ -5293,6 +5285,7 @@ private struct ChatTrailingMenuButton: UIViewRepresentable {
     /// icon-sized footprint and the system wraps it in the same round glass
     /// as a plain toolbar icon (a representable otherwise accepts the full
     /// proposed width -> stretched capsule, the 2026-07-17 regression).
+    @available(iOS 16.0, *)
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: UIButton, context: Context) -> CGSize? {
         uiView.intrinsicContentSize
     }
@@ -5845,14 +5838,14 @@ private struct SpeechLanguagePickerSheet: View {
 
     /// Indices where the preferred/non-preferred boundary lies for section headers.
     private var preferredCodes: Set<String> {
-        Set(Locale.preferredLanguages.map { Locale(identifier: $0).language.languageCode?.identifier ?? "" })
+        Set(Locale.preferredLanguages.map { Locale(identifier: $0).languageCode ?? "" })
     }
 
     var body: some View {
         CompatNavigationStack {
             List {
-                let preferred = filteredLocales.filter { preferredCodes.contains($0.language.languageCode?.identifier ?? "") }
-                let others = filteredLocales.filter { !preferredCodes.contains($0.language.languageCode?.identifier ?? "") }
+                let preferred = filteredLocales.filter { preferredCodes.contains($0.languageCode ?? "") }
+                let others = filteredLocales.filter { !preferredCodes.contains($0.languageCode ?? "") }
 
                 if !preferred.isEmpty {
                     Section(AppLocalized("Preferred", comment: "Section header for preferred speech languages")) {

@@ -234,12 +234,7 @@
 		E5F2009A1 /* EquatableContextMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5F2009B1 /* EquatableContextMenu.swift */; };
 		E5F200AA1 /* MemoryWriteRevoker.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5F200AB1 /* MemoryWriteRevoker.swift */; };
 		E5FMI0001 /* FileMentionIndex.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5FMI0011 /* FileMentionIndex.swift */; };
-		E5FP00001 /* FileProviderExtension.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5FP00011 /* FileProviderExtension.swift */; };
-		E5FP00002 /* FileProviderEnumerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5FP00012 /* FileProviderEnumerator.swift */; };
-		E5FP00003 /* FileProviderItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5FP00013 /* FileProviderItem.swift */; };
-		E5FP00009 /* MinisFileProvider.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = E5FP00010 /* MinisFileProvider.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		E5FP00100 /* AppGroupChangeWatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5FP00101 /* AppGroupChangeWatcher.swift */; };
-		E5FP00200 /* FPSyncTraceLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5FP00201 /* FPSyncTraceLog.swift */; };
 		E5G000001 /* BackgroundKeepAliveManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5G000011 /* BackgroundKeepAliveManager.swift */; };
 		E5G000002 /* AgentLiveActivityManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5G000012 /* AgentLiveActivityManager.swift */; };
 		E5G000003 /* EnhancedBackgroundSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5G000013 /* EnhancedBackgroundSettingsView.swift */; };
@@ -598,7 +593,6 @@
 			files = (
 				E5E000009 /* MinisShare.appex in Embed Foundation Extensions */,
 				E5H000009 /* AgentWidgetExtension.appex in Embed Foundation Extensions */,
-				E5FP00009 /* MinisFileProvider.appex in Embed Foundation Extensions */,
 			);
 			name = "Embed Foundation Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -2372,7 +2366,6 @@
 			dependencies = (
 				E5E000080 /* PBXTargetDependency */,
 				E5H000080 /* PBXTargetDependency */,
-				E5FP00080 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				AA0838CB2F3CA8A900049557 /* Terminal */,
@@ -3109,11 +3102,6 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				E5FP00001 /* FileProviderExtension.swift in Sources */,
-				E5FP00002 /* FileProviderEnumerator.swift in Sources */,
-				E5FP00003 /* FileProviderItem.swift in Sources */,
-				E5FP00200 /* FPSyncTraceLog.swift in Sources */,
-				E5SHV0002 /* SharedFolderVisibility.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
