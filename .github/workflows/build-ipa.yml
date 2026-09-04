@@ -43,9 +43,10 @@ jobs:
 
       - name: Install build tools
         run: |
-          brew install ninja llvm libarchive pkg-config
-          pip3 install meson
+          brew install ninja llvm libarchive pkg-config meson || pip3 install --break-system-packages meson
           echo "/opt/homebrew/opt/llvm/bin" >> $GITHUB_PATH
+          echo "/opt/homebrew/opt/libarchive/bin" >> $GITHUB_PATH
+          echo "PKG_CONFIG_PATH=/opt/homebrew/opt/libarchive/lib/pkgconfig" >> $GITHUB_ENV
 
       - name: Setup Go
         uses: actions/setup-go@v5
