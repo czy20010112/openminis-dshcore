@@ -1952,7 +1952,12 @@ struct ContentView: View {
                 // same "what is actually on screen" test the outgoing-session
                 // tracker at line ~1879 uses.
                 if hadRecord {
-                    let foreground: String? = navigationPath.isEmpty ? nil : currentStackSessionId
+                    let foreground: String? = {
+                        if #available(iOS 16.0, *) {
+                            return navigationPath.isEmpty ? nil : currentStackSessionId
+                        }
+                        return selectedSessionId
+                    }()
                     if let foreground {
                         // Already on screen — stamp it and navigate nowhere.
                         shareCoordinator.setBufferTarget(foreground)
