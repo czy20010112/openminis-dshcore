@@ -2500,7 +2500,7 @@ static NSDictionary *logCategoryTypeInfo(NSString *name) {
                                         @"Sleep apnea detection event — iOS 18+.");
         }
         if (@available(iOS 26.2, *)) {
-            table[@"hypertension-event"]        = Cat(HKCategoryTypeIdentifierHypertensionEvent, @"cardio-event", NO, nil,
+            table[@"hypertension-event"]        = Cat(@"HKCategoryTypeIdentifierHypertensionEvent", @"cardio-event", NO, nil,
                                         @"Hypertension notification — iOS 26.2+.");
         }
     });
