@@ -576,4 +576,17 @@ extension View {
             self
         }
     }
+
+    @ViewBuilder
+    public func compatDraggable<T>(_ payload: @autoclosure @escaping () -> T) -> some View {
+        #if canImport(CoreTransferable)
+        if #available(iOS 16.0, *), let transferable = payload() as? String {
+            self.draggable(transferable)
+        } else {
+            self
+        }
+        #else
+        self
+        #endif
+    }
 }

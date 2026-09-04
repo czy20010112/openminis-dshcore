@@ -821,7 +821,7 @@ final class BackgroundKeepAliveManager: NSObject, ObservableObject, CLLocationMa
         if #available(iOS 16.0, *) {
             UNUserNotificationCenter.current().setBadgeCount(count) { err in
                 if let err {
-                    self.logger.error("[Badge] setBadgeCount failed: \(err.localizedDescription)")
+                    logger.error("[Badge] setBadgeCount failed: \(err.localizedDescription)")
                 }
             }
         } else {

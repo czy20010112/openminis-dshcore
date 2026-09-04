@@ -2796,6 +2796,128 @@ struct ContentView: View {
         }
     }
 
+    @ViewBuilder
+    private func stackSessionRowItem(session: ChatSession, group: SidebarGroup, isLast: Bool) -> some View {
+        if isSelecting {
+            selectableRow(session)
+                .id("select-\(session.id)")
+                .listRowInsets(EdgeInsets())
+        } else {
+            SessionRow(
+                session: session,
+                isActive: sidebarActivityTracker.isActive(session.id),
+                isSuspended: sidebarConcurrencyManager.isSuspended(session.id),
+                highlightQuery: isSearching ? searchText : nil,
+                matchSnippet: isSearching ? searchMatchSnippets[session.id] : nil
+            )
+            .compatDraggable(session.id)
+            .overlay {
+                if regeneratingTitleSessionId == session.id {
+                    ZStack {
+                        Color(.systemBackground).opacity(0.7)
+                        ProgressView()
+                    }
+                }
+            }
+            .background(
+                Group {
+                    if #available(iOS 16.0, *) {
+                        NavigationLink(value: session.id) { EmptyView() }
+                            .opacity(0)
+                    } else {
+                        NavigationLink(destination: chatDestination(for: session.id)) { EmptyView() }
+                            .opacity(0)
+                    }
+                }
+            )
+            .listRowInsets(EdgeInsets())
+            .listRowSeparator(Visibility.hidden)
+            .listRowBackground(Group {
+                if group.folderId != nil {
+                    FolderMemberRowBackground(isLast: isLast)
+                } else {
+                    Color(.systemBackground)
+                }
+            })
+            .contextMenu {
+                SessionContextMenu(
+                    key: MenuKey(sid: session.id, pinned: session.isPinned, title: session.title, filed: session.isFiled),
+                    actions: menuActions
+                )
+                .equatable()
+            }
+            .equatable()
+        }
+    }
+
+    @ViewBuilder
+    private func splitSessionRowItem(session: ChatSession, group: SidebarGroup, isLast: Bool) -> some View {
+        if isSelecting {
+            selectableRow(session)
+                .id("select-\(session.id)")
+                .listRowInsets(EdgeInsets())
+        } else {
+            SessionRow(
+                session: session,
+                isHighlighted: isSessionHighlighted(session.id),
+                isActive: sidebarActivityTracker.isActive(session.id),
+                isSuspended: sidebarConcurrencyManager.isSuspended(session.id),
+                highlightQuery: isSearching ? searchText : nil,
+                matchSnippet: isSearching ? searchMatchSnippets[session.id] : nil
+            )
+            .compatDraggable(session.id)
+            .overlay {
+                if regeneratingTitleSessionId == session.id {
+                    ZStack {
+                        Color(.systemBackground).opacity(0.7)
+                        ProgressView()
+                    }
+                }
+            }
+            .contextMenu {
+                let menuSid = Self.isNewSessionId(session.id) ? newSessionRealId : session.id
+                if let menuSid {
+                    SessionContextMenu(
+                        key: MenuKey(sid: menuSid, pinned: session.isPinned, title: session.title, filed: session.isFiled),
+                        actions: menuActions
+                    )
+                    .equatable()
+                }
+            }
+            .tag(session.id)
+            .listRowInsets(EdgeInsets())
+            .listRowSeparator(Visibility.hidden)
+            .listRowBackground(
+                ZStack {
+                    if group.folderId != nil {
+                        let isLast = isLast
+                        FolderMemberRowBackground(isLast: isLast)
+                        if isSessionHighlighted(session.id) {
+                            CompatUnevenRoundedRectangle(
+                                topLeadingRadius: 0,
+                                bottomLeadingRadius: isLast ? 16 : 0,
+                                bottomTrailingRadius: isLast ? 16 : 0,
+                                topTrailingRadius: 0,
+                                style: .continuous
+                            )
+                            .fill(Color(red: 183/255.0, green: 175/255.0, blue: 150/255.0).opacity(0.3))
+                            .padding(.horizontal, 6)
+                            .padding(.bottom, isLast ? 4 : 0)
+                        }
+                    } else {
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(isSessionHighlighted(session.id)
+                                  ? Color(red: 183/255.0, green: 175/255.0, blue: 150/255.0).opacity(0.3)
+                                  : Color.clear)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                    }
+                }
+            )
+            .equatable()
+        }
+    }
+
     /// Plain List with NavigationLink for stack (iPhone) layout.
     /// ScrollViewReader feeds the mini-bar's "back to header" jump; wrapping
     /// the List is inert otherwise (no layout/behavior change).
@@ -2892,127 +3014,9 @@ struct ContentView: View {
                             .modifier(SelectionDisabledIfAvailable())
                     }
                     ForEach(group.ids, id: \.self) { sessionId in
-                        // [T-ios-session-list-equatable-jank] Resolve via the
-                        // @State cache (sessionForRow), NOT a captured
-                        // [String:ChatSession] — see sessionsByIdCache.
                         if let session = sessionForRow(sessionId) {
-                        if isSelecting {
-                            selectableRow(session)
-                                .id("select-\(session.id)")
-                                .listRowInsets(EdgeInsets())
-                        } else {
-                            SessionRow(
-                                session: session,
-                                isHighlighted: isSessionHighlighted(session.id),
-                                // [T-ios-ipad-sidebar-running-indicator-stale]
-                                // Pass running/suspended as VALUES so a flip
-                                // changes the SessionRow value → body re-evals
-                                // in place (same identity, no cell rebuild).
-                                isActive: sidebarActivityTracker.isActive(session.id),
-                                isSuspended: sidebarConcurrencyManager.isSuspended(session.id),
-                                highlightQuery: isSearching ? searchText : nil,
-                                matchSnippet: isSearching ? searchMatchSnippets[session.id] : nil
-                            )
-                                // [T-ios-session-list-equatable-jank] Gate
-                                // parent-driven re-eval on SessionRow's cheap
-                                // custom == (rendered fields only), so a
-                                // transaction flush from unrelated ContentView
-                                // state churn doesn't deep-compare ChatSession.
-                                .equatable()
-                                // Entry D: long-press then move = drag the
-                                // session id (never the ChatSession value —
-                                // same id-only discipline as the list
-                                // projection and the menu's value-semantics
-                                // constraint). The SYSTEM arbitrates against
-                                // .contextMenu on the same press: hold still →
-                                // menu, hold then move → drag. Do not replace
-                                // with a hand-rolled gesture sequence — the
-                                // gesture layer is where system gestures are
-                                // beaten (see the WebView sheet-dismiss fix).
-                                .compatDraggable(session.id)
-                                .overlay {
-                                    if regeneratingTitleSessionId == session.id {
-                                        ZStack {
-                                            Color(.systemBackground).opacity(0.7)
-                                            ProgressView()
-                                        }
-                                    }
-                                }
-                                // [T-ios-selected-session-contextmenu] Attach the
-                                // contextMenu to the row CONTENT, not to the list-row
-                                // modifier chain. On iPadOS / macOS this List uses
-                                // `List(selection:)` + `.tag()`; the currently-selected
-                                // row's selection gesture swallows the long-press (iPad)
-                                // / right-click (mac), so a contextMenu placed at the
-                                // list-row level never fires for the open session
-                                // (GH#30 / TG36272). Binding it to the SessionRow view
-                                // itself puts it below the selection layer, so it
-                                // triggers on every row regardless of selection state.
-                                // iPhone uses `stackList` (no selection:) and is
-                                // unaffected.
-                                .contextMenu {
-                                    // [T-ios-ipad-new-session-contextmenu-broken / GH#30]
-                                    // The selected new-chat row keeps the DRAFT id as its
-                                    // tag even after the user sends a message and the
-                                    // session is persisted (displaySessions swaps in a
-                                    // proxy with realSession data under the draft id, so
-                                    // List(selection:) stays matched). The old guard
-                                    // `if !isNewSessionId(session.id)` then suppressed the
-                                    // context menu for that row forever — until the user
-                                    // switched away and the id resolved to the real one.
-                                    // Fix: a draft row that has already been persisted
-                                    // (newSessionRealId != nil) is a real, operable
-                                    // session — surface the menu, targeting the REAL id.
-                                    // Only a truly empty, never-sent draft (no realId)
-                                    // still has no menu.
-                                    // [T-ios-crash-contextmenu-uaf] Value-only menu, no closure.
-                                    let menuSid = Self.isNewSessionId(session.id)
-                                        ? newSessionRealId
-                                        : session.id
-                                    if let menuSid {
-                                        SessionContextMenu(
-                                            key: MenuKey(sid: menuSid, pinned: session.isPinned, title: session.title, filed: session.isFiled),
-                                            actions: menuActions
-                                        )
-                                        .equatable()
-                                    }
-                                }
-                                .tag(session.id)
-                                .listRowInsets(EdgeInsets())
-                                .listRowSeparator(.hidden)
-                                .listRowBackground(
-                                    ZStack {
-                                        if group.folderId != nil {
-                                            let isLast = sessionId == group.ids.last
-                                            FolderMemberRowBackground(isLast: isLast)
-                                            // Flush selection band inside the group;
-                                            // the last member's band takes the
-                                            // container's bottom radii so it stays
-                                            // wrapped by the corners.
-                                            if isSessionHighlighted(session.id) {
-                                                CompatUnevenRoundedRectangle(
-                                                    topLeadingRadius: 0,
-                                                    bottomLeadingRadius: isLast ? 16 : 0,
-                                                    bottomTrailingRadius: isLast ? 16 : 0,
-                                                    topTrailingRadius: 0,
-                                                    style: .continuous
-                                                )
-                                                .fill(Color(red: 183/255.0, green: 175/255.0, blue: 150/255.0).opacity(0.3))
-                                                .padding(.horizontal, 6)
-                                                .padding(.bottom, isLast ? 4 : 0)
-                                            }
-                                        } else {
-                                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                                .fill(isSessionHighlighted(session.id)
-                                                      ? Color(red: 183/255.0, green: 175/255.0, blue: 150/255.0).opacity(0.3)
-                                                      : Color.clear)
-                                                .padding(.horizontal, 6)
-                                                .padding(.vertical, 2)
-                                        }
-                                    }
-                                )
+                            splitSessionRowItem(session: session, group: group, isLast: sessionId == group.ids.last)
                         }
-                        }  // if let session
                     }
                 } header: {
                     // Folder groups render their card as the section's first
