@@ -4341,8 +4341,13 @@ final class VideoAttachment: NSTextAttachment {
 
             var thumb: UIImage?
             do {
-                let (cgImage, _) = try await generator.image(at: .zero)
-                thumb = UIImage(cgImage: cgImage)
+                if #available(iOS 16.0, *) {
+                    let (cgImage, _) = try await generator.image(at: .zero)
+                    thumb = UIImage(cgImage: cgImage)
+                } else {
+                    let cgImage = try generator.copyCGImage(at: .zero, actualTime: nil)
+                    thumb = UIImage(cgImage: cgImage)
+                }
             } catch {
                 // Fallback: no thumbnail
             }
@@ -7790,15 +7795,18 @@ struct SelectableMarkdownView: UIViewRepresentable {
         // becomes a measurable chunk of every updateUIView pass (and
         // updateUIView runs on each SwiftUI body re-evaluation, so it
         // multiplies during streaming and self-sizing measurement loops).
-        let imageMatches = markdown.ranges(of: /!\[([^\]]*)\]\(([^)]+)\)/)
-        if !imageMatches.isEmpty {
-            for match in imageMatches {
-                let matchStr = String(markdown[match])
-                imgLogger.info("[MinisImage][StreamParse] image markdown found: \(matchStr)")
-            }
-            let imageBlockCount = content.blocks.flatMap { Self.collectImageNodes(from: $0) }.count
-            if imageBlockCount > 0 {
-                imgLogger.info("[MinisImage][StreamParse] parsed \(imageBlockCount) image node(s) from \(content.blocks.count) block(s), markdownLen=\(markdown.count)")
+        if markdown.contains("!["), let regex = try? NSRegularExpression(pattern: #"(!\[[^\]]*\]\([^)]+\))"#) {
+            let nsString = markdown as NSString
+            let matches = regex.matches(in: markdown, range: NSRange(location: 0, length: nsString.length))
+            if !matches.isEmpty {
+                for match in matches {
+                    let matchStr = nsString.substring(with: match.range)
+                    imgLogger.info("[MinisImage][StreamParse] image markdown found: \(matchStr)")
+                }
+                let imageBlockCount = content.blocks.flatMap { Self.collectImageNodes(from: $0) }.count
+                if imageBlockCount > 0 {
+                    imgLogger.info("[MinisImage][StreamParse] parsed \(imageBlockCount) image node(s) from \(content.blocks.count) block(s), markdownLen=\(markdown.count)")
+                }
             }
         }
 

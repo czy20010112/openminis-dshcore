@@ -543,3 +543,37 @@ public final class ContentViewNavigationHolder: ObservableObject {
         }
     }
 }
+
+// MARK: - View Compatibility Extensions
+
+extension View {
+    @ViewBuilder
+    public func compatContextMenu<M: View, P: View>(
+        @ViewBuilder menuItems: () -> M,
+        @ViewBuilder preview: () -> P
+    ) -> some View {
+        if #available(iOS 16.0, *) {
+            self.contextMenu(menuItems: menuItems, preview: preview)
+        } else {
+            self.contextMenu(menuItems: menuItems)
+        }
+    }
+
+    @ViewBuilder
+    public func compatFontWeight(_ weight: Font.Weight?) -> some View {
+        if #available(iOS 16.0, *) {
+            self.fontWeight(weight)
+        } else {
+            self
+        }
+    }
+
+    @ViewBuilder
+    public func compatBold(_ active: Bool = true) -> some View {
+        if #available(iOS 16.0, *) {
+            self.bold(active)
+        } else {
+            self
+        }
+    }
+}

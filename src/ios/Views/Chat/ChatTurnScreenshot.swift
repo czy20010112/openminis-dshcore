@@ -59,7 +59,7 @@ struct ChatScreenshotPreviewSheet: View {
                     }
                 }
             }
-            .toolbarBackground(.visible, for: .navigationBar)
+            .modifier(ScreenshotNavBarBackgroundModifier())
             .overlay(alignment: .bottom) {
                 if let toast {
                     Text(toast)
@@ -228,6 +228,16 @@ final class ImageSaver: NSObject {
             }
             self.inFlight = false
             self.pumpIfNeeded()
+        }
+    }
+}
+
+private struct ScreenshotNavBarBackgroundModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 16.0, *) {
+            content.toolbarBackground(.visible, for: .navigationBar)
+        } else {
+            content
         }
     }
 }

@@ -296,7 +296,7 @@ struct BackupSettingsView: View {
                     // Without maxWidth the row sizes to its content and sits
                     // left; this is what centres it in the Form row.
                     .frame(maxWidth: .infinity)
-                    .fontWeight(.medium)
+                    .font(.body.weight(.medium))
                 }
                 // The start-time requirements gate STARTING only. Applying
                 // them while running would disable the button mid-run and

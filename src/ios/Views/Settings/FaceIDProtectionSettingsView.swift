@@ -55,7 +55,7 @@ struct FaceIDProtectionSettingsView: View {
                 Section {
                     Picker(AppLocalized("Require unlock"), selection: $appLockIdleSeconds) {
                         ForEach(SessionLockIdleOption.allOptions) { opt in
-                            Text(opt.labelKey).tag(opt.seconds)
+                            Text(LocalizedStringKey(opt.labelKey)).tag(opt.seconds)
                         }
                     }
                     .onChange(of: appLockIdleSeconds) { newValue in
@@ -96,7 +96,7 @@ struct FaceIDProtectionSettingsView: View {
                 Section {
                     Picker(AppLocalized("Re-lock after idle"), selection: $idleSeconds) {
                         ForEach(SessionLockIdleOption.allOptions) { opt in
-                            Text(opt.labelKey).tag(opt.seconds)
+                            Text(LocalizedStringKey(opt.labelKey)).tag(opt.seconds)
                         }
                     }
                 } header: {

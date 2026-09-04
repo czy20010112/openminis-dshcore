@@ -20,47 +20,36 @@ struct ProviderInstancesView: View {
     /// it must never be a one-swipe irreversible act.
     @State private var pendingDeleteInstance: ProviderInstance?
 
+    @ViewBuilder
+    private func providerInstanceRow(_ instance: ProviderInstance) -> some View {
+        NavigationLink {
+            ProviderInstanceDetailView(instanceId: instance.id)
+        } label: {
+            InstanceRow(instance: instance)
+        }
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            Button(role: .destructive) {
+                pendingDeleteInstance = instance
+            } label: {
+                Label("Delete", systemImage: "trash")
+            }
+            Button {
+                editingInstanceId = instance.id
+            } label: {
+                Label("Edit", systemImage: "pencil")
+            }
+            .tint(.blue)
+        }
+    }
+
     var body: some View {
         List {
-            // [T-mimo-shadow-voice] EVERY instance appears under its providerType
-            // section now (no voice-only exclusion) — a mixed vendor like MiMo
-            // shows its text models here AND a shadow voice row below ("dual
-            // visibility"). Pure-voice vendors (ElevenLabs etc.) still appear here
-            // too; they just have no usable text models, which is expected.
             ForEach(ProviderType.allCases, id: \.self) { type in
                 let instancesOfType = store.instances.filter { $0.providerType == type }
                 if !instancesOfType.isEmpty {
                     Section(type.displayName) {
                         ForEach(instancesOfType) { instance in
-                            NavigationLink {
-                                ProviderInstanceDetailView(instanceId: instance.id)
-                            } label: {
-                                InstanceRow(instance: instance)
-                            }
-                            // [T-provider-group-swipe-actions] Swipe actions and
-                            // `.onMove` coexist without extra work: UIKit routes a
-                            // horizontal drag to the row's swipe actions and a
-                            // vertical one to the reorder engine, and in edit mode
-                            // the drag handles take over entirely. No custom
-                            // gesture is introduced here precisely so that
-                            // arbitration stays UIKit's.
-                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                                // Destructive first = rightmost, the platform's
-                                // position for Delete. `allowsFullSwipe: false`
-                                // so a long swipe cannot delete a provider (and
-                                // its keys) without the confirmation below.
-                                Button(role: .destructive) {
-                                    pendingDeleteInstance = instance
-                                } label: {
-                                    Label("Delete", systemImage: "trash")
-                                }
-                                Button {
-                                    editingInstanceId = instance.id
-                                } label: {
-                                    Label("Edit", systemImage: "pencil")
-                                }
-                                .tint(.blue)
-                            }
+                            providerInstanceRow(instance)
                         }
                         .onMove { source, destination in
                             moveInstances(in: type, from: source, to: destination)

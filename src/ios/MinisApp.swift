@@ -898,6 +898,7 @@ struct MinisApp: App {
     }
 
     private static func signalFileProvider() {
+        guard #available(iOS 16.0, *) else { return }
         NSFileProviderManager(for: fileProviderDomain)?.signalEnumerator(for: .rootContainer) { error in
             if let error {
                 lifecycleLog.warning("[FileProvider] signal failed: \(error.localizedDescription)")

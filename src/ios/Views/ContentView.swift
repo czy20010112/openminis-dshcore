@@ -1240,7 +1240,8 @@ struct ContentView: View {
     /// override where the user just chose to be.
     private static let pendingBackgroundNavigationTTL: TimeInterval = 90
 
-    var body: some View {
+    @ViewBuilder
+    private var baseLayout: some View {
         GeometryReader { geo in
             let wide = isIPad && geo.size.width >= compactThreshold
             Group {
@@ -1266,6 +1267,10 @@ struct ContentView: View {
                 wireMenuActions()
             }
         }
+    }
+
+    var body: some View {
+        baseLayout
         .onReceive(
             NotificationCenter.default.publisher(for: .sessionDidCreate),
             perform: handleSessionCreatedForPendingFolder
@@ -2737,6 +2742,60 @@ struct ContentView: View {
         }
     }
 
+    @ViewBuilder
+    private func stackSessionRowItem(session: ChatSession, group: SidebarGroup, isLast: Bool) -> some View {
+        if isSelecting {
+            selectableRow(session)
+                .id("select-\(session.id)")
+                .listRowInsets(EdgeInsets())
+        } else {
+            SessionRow(
+                session: session,
+                isActive: sidebarActivityTracker.isActive(session.id),
+                isSuspended: sidebarConcurrencyManager.isSuspended(session.id),
+                highlightQuery: isSearching ? searchText : nil,
+                matchSnippet: isSearching ? searchMatchSnippets[session.id] : nil
+            )
+            .equatable()
+            .compatDraggable(session.id)
+            .overlay {
+                if regeneratingTitleSessionId == session.id {
+                    ZStack {
+                        Color(.systemBackground).opacity(0.7)
+                        ProgressView()
+                    }
+                }
+            }
+            .background(
+                Group {
+                    if #available(iOS 16.0, *) {
+                        NavigationLink(value: session.id) { EmptyView() }
+                            .opacity(0)
+                    } else {
+                        NavigationLink(destination: chatDestination(for: session.id)) { EmptyView() }
+                            .opacity(0)
+                    }
+                }
+            )
+            .listRowInsets(EdgeInsets())
+            .listRowSeparator(.hidden)
+            .listRowBackground(Group {
+                if group.folderId != nil {
+                    FolderMemberRowBackground(isLast: isLast)
+                } else {
+                    Color(.systemBackground)
+                }
+            })
+            .contextMenu {
+                SessionContextMenu(
+                    key: MenuKey(sid: session.id, pinned: session.isPinned, title: session.title, filed: session.isFiled),
+                    actions: menuActions
+                )
+                .equatable()
+            }
+        }
+    }
+
     /// Plain List with NavigationLink for stack (iPhone) layout.
     /// ScrollViewReader feeds the mini-bar's "back to header" jump; wrapping
     /// the List is inert otherwise (no layout/behavior change).
@@ -2764,82 +2823,9 @@ struct ContentView: View {
                             .modifier(SelectionDisabledIfAvailable())
                     }
                     ForEach(group.ids, id: \.self) { sessionId in
-                        // [T-ios-session-list-equatable-jank] Resolve via the
-                        // @State cache (sessionForRow), NOT a captured
-                        // [String:ChatSession] — see sessionsByIdCache.
                         if let session = sessionForRow(sessionId) {
-                        if isSelecting {
-                            selectableRow(session)
-                                .id("select-\(session.id)")
-                                .listRowInsets(EdgeInsets())
-                        } else {
-                            SessionRow(
-                                session: session,
-                                // [T-ios-ipad-sidebar-running-indicator-stale]
-                                // Pass running/suspended as VALUES so a flip
-                                // changes the SessionRow value → body re-evals
-                                // in place (same identity, no cell rebuild).
-                                isActive: sidebarActivityTracker.isActive(session.id),
-                                isSuspended: sidebarConcurrencyManager.isSuspended(session.id),
-                                highlightQuery: isSearching ? searchText : nil,
-                                matchSnippet: isSearching ? searchMatchSnippets[session.id] : nil
-                            )
-                                // [T-ios-session-list-equatable-jank] Gate
-                                // parent-driven re-eval on SessionRow's cheap
-                                // custom == (rendered fields only), so a
-                                // transaction flush from unrelated ContentView
-                                // state churn doesn't deep-compare ChatSession.
-                                .equatable()
-                                // Entry D: long-press then move = drag the
-                                // session id (never the ChatSession value —
-                                // same id-only discipline as the list
-                                // projection and the menu's value-semantics
-                                // constraint). The SYSTEM arbitrates against
-                                // .contextMenu on the same press: hold still →
-                                // menu, hold then move → drag. Do not replace
-                                // with a hand-rolled gesture sequence — the
-                                // gesture layer is where system gestures are
-                                // beaten (see the WebView sheet-dismiss fix).
-                                .compatDraggable(session.id)
-                                .overlay {
-                                    if regeneratingTitleSessionId == session.id {
-                                        ZStack {
-                                            Color(.systemBackground).opacity(0.7)
-                                            ProgressView()
-                                        }
-                                    }
-                                }
-                                .background(
-                                    Group {
-                                        if #available(iOS 16.0, *) {
-                                            NavigationLink(value: session.id) { EmptyView() }
-                                                .opacity(0)
-                                        } else {
-                                            NavigationLink(destination: chatDestination(for: session.id)) { EmptyView() }
-                                                .opacity(0)
-                                        }
-                                    }
-                                )
-                            .listRowInsets(EdgeInsets())
-                            .listRowSeparator(.hidden)
-                            .listRowBackground(Group {
-                                if group.folderId != nil {
-                                    FolderMemberRowBackground(isLast: sessionId == group.ids.last)
-                                } else {
-                                    Color(.systemBackground)
-                                }
-                            })
-                            .contextMenu {
-                                // [T-ios-crash-contextmenu-uaf] Value-only menu view,
-                                // no closure captures — see SessionContextMenu.
-                                SessionContextMenu(
-                                    key: MenuKey(sid: session.id, pinned: session.isPinned, title: session.title, filed: session.isFiled),
-                                    actions: menuActions
-                                )
-                                .equatable()
-                            }
+                            stackSessionRowItem(session: session, group: group, isLast: sessionId == group.ids.last)
                         }
-                        }  // if let session
                     }
                 } header: {
                     // Folder groups render their card as the section's first
@@ -3495,7 +3481,9 @@ struct ContentView: View {
         // to keep out of the watchdog window), and the quick-action state
         // machine advances from the `onChange(of: navigationPath)` observer
         // this write triggers — holding it back would stall `markHome`.
-        pendingBackgroundNavigation = nil
+        if #available(iOS 16.0, *) {
+            pendingBackgroundNavigation = nil
+        }
         let alreadyHome = isWideLayout ? (selectedSessionId == nil) : navHolder.isPathEmpty
         if alreadyHome {
             // Same-runloop advance — no SwiftUI commit needed.
@@ -3613,6 +3601,7 @@ struct ContentView: View {
     /// Apply a navigation change that was held back while backgrounded.
     /// Called from the `scenePhase == .active` observer.
     private func flushPendingBackgroundNavigation() {
+        guard #available(iOS 16.0, *) else { return }
         guard let pending = pendingBackgroundNavigation else { return }
         // Re-check rather than trust the caller: the `.onAppear` backstop can
         // run while still backgrounded, and committing there would reinstate
@@ -3817,8 +3806,16 @@ struct ContentView: View {
             Section {
                 ForEach(entry.ids, id: \.self) { sessionId in
                     if let session = byId["\(entry.deviceId):\(sessionId)"] {
-                        NavigationLink(value: "remote:\(entry.deviceId):\(session.id)") {
-                            RemoteSessionRow(session: session)
+                        Group {
+                            if #available(iOS 16.0, *) {
+                                NavigationLink(value: "remote:\(entry.deviceId):\(session.id)") {
+                                    RemoteSessionRow(session: session)
+                                }
+                            } else {
+                                NavigationLink(destination: chatDestination(for: "remote:\(entry.deviceId):\(session.id)")) {
+                                    RemoteSessionRow(session: session)
+                                }
+                            }
                         }
                         .listRowInsets(EdgeInsets())
                         .listRowSeparator(.hidden)
