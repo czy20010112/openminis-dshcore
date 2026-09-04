@@ -44,7 +44,7 @@ struct ModelQuickTestSheet: View {
     }
 
     var body: some View {
-        NavigationStack {
+        CompatNavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     header

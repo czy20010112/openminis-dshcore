@@ -174,6 +174,14 @@ static int weather_handler(int argc, char **argv,
         return NOFF_EXIT_NOT_AVAILABLE;
     }
 
+    if (!@available(iOS 16.0, *)) {
+        NSDictionary *err = noff_json_error(TOOL_NAME, subcmd,
+                                             NOFF_ERR_NOT_AVAILABLE,
+                                             @"WeatherKit requires iOS 16.0 or later.");
+        noff_emit_json(stdout_fd, err, compact, quiet);
+        return NOFF_EXIT_NOT_AVAILABLE;
+    }
+
     // Call Swift bridge for weather data
     dispatch_semaphore_t sem = dispatch_semaphore_create(0);
     __block NSDictionary *weatherData = nil;

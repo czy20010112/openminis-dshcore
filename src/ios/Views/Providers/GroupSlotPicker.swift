@@ -54,7 +54,7 @@ struct GroupSlotPicker: View {
             }
         }
         .sheet(isPresented: $showCreate) {
-            NavigationStack {
+            CompatNavigationStack {
                 UnifiedModelPicker(config: createGroupConfig())
             }
         }

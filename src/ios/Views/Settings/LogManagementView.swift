@@ -220,8 +220,17 @@ struct LogDetailView: View {
         .navigationTitle(name)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                ShareLink(item: url)
+            ToolbarItem(placement: .primaryAction) {
+                if #available(iOS 16.0, *) {
+                    ShareLink(item: url)
+                } else {
+                    Button(action: {
+                        let av = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+                        UIApplication.shared.windows.first?.rootViewController?.present(av, animated: true)
+                    }) {
+                        Image(systemName: "square.and.arrow.up")
+                    }
+                }
             }
         }
         .task {

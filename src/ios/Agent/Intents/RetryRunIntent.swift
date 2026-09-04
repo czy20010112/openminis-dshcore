@@ -1,3 +1,4 @@
+#if canImport(AppIntents)
 import AppIntents
 import Foundation
 
@@ -261,3 +262,4 @@ struct RetryRunIntent: AppIntent {
         }
     }
 }
+#endif // canImport(AppIntents)

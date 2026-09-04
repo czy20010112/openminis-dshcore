@@ -1,0 +1,137 @@
+name: Build iOS 15 IPA
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: 'Create a GitHub Release with the IPA'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  build-ipa:
+    name: Build Unsigned IPA for iOS 15+
+    runs-on: macos-14
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Select Xcode
+        run: |
+          echo "Available Xcode versions:"
+          ls -d /Applications/Xcode* || true
+          if [ -d "/Applications/Xcode_16.0.app" ]; then
+            sudo xcode-select -s /Applications/Xcode_16.0.app
+          elif [ -d "/Applications/Xcode_15.4.app" ]; then
+            sudo xcode-select -s /Applications/Xcode_15.4.app
+          fi
+          xcodebuild -version
+
+      - name: Install build tools
+        run: |
+          brew install ninja llvm libarchive pkg-config
+          pip3 install meson
+          echo "/opt/homebrew/opt/llvm/bin" >> $GITHUB_PATH
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: false
+
+      - name: Restore native dependencies cache
+        id: cache-deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps/lame-build
+            deps/frameworks
+            deps/libs
+            deps/include
+            deps/resources
+          key: native-deps-${{ runner.os }}-${{ hashFiles('deps/build_*.sh', 'deps/prepare_*.sh', '.gitmodules') }}
+
+      - name: Build native dependencies
+        if: steps.cache-deps.outputs.cache-hit != 'true'
+        run: |
+          chmod +x deps/*.sh
+          echo "==> Building LAME..."
+          ./deps/build_lame.sh
+          echo "==> Building FFmpeg..."
+          ./deps/build_ffmpeg.sh
+          echo "==> Building iSH..."
+          ./deps/build_ish.sh
+          echo "==> Preparing Alpine rootfs..."
+          ./deps/prepare_alpine_rootfs.sh
+          echo "==> Building rclone..."
+          ./deps/build_rclone_ios.sh
+
+      - name: Prepare configuration templates
+        run: |
+          cp -n src/ios/Configs/ProviderCustomization.xcconfig.example src/ios/Configs/ProviderCustomization.xcconfig || true
+
+      - name: Build iOS App (Release)
+        run: |
+          xcodebuild -project src/ios/Minis.xcodeproj \
+            -scheme Minis \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Package IPA
+        run: |
+          APP_DIR=$(find build/Build/Products/Release-iphoneos -name "Minis.app" -type d | head -n 1)
+          if [ -z "$APP_DIR" ]; then
+            echo "Error: Minis.app not found under build/Build/Products/Release-iphoneos"
+            find build -name "*.app" -type d || true
+            exit 1
+          fi
+          echo "Found app bundle at: $APP_DIR"
+          mkdir -p Payload
+          cp -R "$APP_DIR" Payload/
+          
+          # Ad-hoc sign bundle for TrollStore / Sideloading compatibility
+          codesign --force --deep --sign - "Payload/Minis.app" || true
+          
+          zip -r9 Minis-iOS15-unsigned.ipa Payload
+          ls -lh Minis-iOS15-unsigned.ipa
+
+      - name: Upload IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Minis-iOS15-IPA
+          path: Minis-iOS15-unsigned.ipa
+          retention-days: 14
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == true)
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Minis-iOS15-unsigned.ipa
+          name: Minis iOS 15 Build (${{ github.ref_name }})
+          tag_name: ${{ github.ref_name }}
+          body: |
+            OpenMinis customized for iOS 15.0+ (iOS 15.8.8 compatible).
+            
+            - **Installation**: Use TrollStore 2 (recommended) or AltStore / SideStore / Sideloadly.
+            - **Target**: iOS 15.0+ (arm64)
+          draft: false
+          prerelease: false

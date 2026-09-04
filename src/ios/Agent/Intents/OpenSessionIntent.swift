@@ -1,7 +1,9 @@
+#if canImport(AppIntents)
 import AppIntents
 import Foundation
 
 /// Opens a specific chat session in the Minis app.
+@available(iOS 16.0, *)
 struct OpenSessionIntent: AppIntent {
     static var title: LocalizedStringResource = "Open Session"
     static var description = IntentDescription("Opens a Minis chat session in the app.")
@@ -24,3 +26,4 @@ struct OpenSessionIntent: AppIntent {
 extension Notification.Name {
     static let openSessionFromIntent = Notification.Name("openSessionFromIntent")
 }
+#endif // canImport(AppIntents)

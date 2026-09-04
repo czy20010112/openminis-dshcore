@@ -67,87 +67,61 @@ struct SwipeToSendHint: View {
 
 // MARK: - Flow Layout
 
-/// A custom Layout that arranges subviews in a wrapping horizontal flow.
-private struct FlowLayout: Layout {
+private struct FlowLayoutHeightPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = .zero
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
+/// A custom View container that arranges subviews in a wrapping horizontal flow, compatible with iOS 15+.
+private struct FlowLayout<Content: View>: View {
     var hSpacing: CGFloat = 8
     var vSpacing: CGFloat = 8
     var alignment: HorizontalAlignment = .leading
+    @ViewBuilder var content: () -> Content
 
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let result = arrange(proposal: proposal, subviews: subviews)
-        // Use the full proposed width so the layout fills its container.
-        return CGSize(width: proposal.width ?? result.size.width, height: result.size.height)
-    }
+    @State private var totalHeight: CGFloat = .zero
 
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        let result = arrange(proposal: proposal, subviews: subviews)
-        let containerWidth = bounds.width
-        for (index, position) in result.positions.enumerated() {
-            let xOffset: CGFloat
-            if alignment == .trailing {
-                let rowWidth = result.rowWidths[result.rowIndices[index]]
-                xOffset = containerWidth - rowWidth + position.x
-            } else {
-                xOffset = position.x
+    var body: some View {
+        VStack(spacing: 0) {
+            GeometryReader { geometry in
+                self.generateContent(in: geometry)
             }
-            subviews[index].place(
-                at: CGPoint(x: bounds.minX + xOffset, y: bounds.minY + position.y),
-                proposal: ProposedViewSize(result.sizes[index])
-            )
         }
+        .frame(height: totalHeight)
     }
 
-    private struct ArrangeResult {
-        var positions: [CGPoint]
-        var sizes: [CGSize]
-        var size: CGSize
-        var rowWidths: [CGFloat]
-        var rowIndices: [Int]
-    }
+    private func generateContent(in g: GeometryProxy) -> some View {
+        var width = CGFloat.zero
+        var height = CGFloat.zero
 
-    private func arrange(proposal: ProposedViewSize, subviews: Subviews) -> ArrangeResult {
-        let maxWidth = proposal.width ?? .infinity
-        var positions: [CGPoint] = []
-        var sizes: [CGSize] = []
-        var rowIndices: [Int] = []
-        var rowWidths: [CGFloat] = []
-        var x: CGFloat = 0
-        var y: CGFloat = 0
-        var rowHeight: CGFloat = 0
-        var totalWidth: CGFloat = 0
-        var currentRowStart = 0
-        var currentRow = 0
-
-        for (i, subview) in subviews.enumerated() {
-            let size = subview.sizeThatFits(.unspecified)
-            if x + size.width > maxWidth, x > 0 {
-                // Finish current row
-                rowWidths.append(x - hSpacing)
-                currentRow += 1
-                x = 0
-                y += rowHeight + vSpacing
-                rowHeight = 0
-                currentRowStart = i
-            }
-            positions.append(CGPoint(x: x, y: y))
-            sizes.append(size)
-            rowIndices.append(currentRow)
-            rowHeight = max(rowHeight, size.height)
-            x += size.width + hSpacing
-            totalWidth = max(totalWidth, x - hSpacing)
+        return ZStack(alignment: alignment == .trailing ? .topTrailing : .topLeading) {
+            self.content()
+                .alignmentGuide(alignment == .trailing ? .trailing : .leading, computeValue: { d in
+                    if abs(width - d.width) > g.size.width {
+                        width = 0
+                        height -= d.height + vSpacing
+                    }
+                    let result = width
+                    if d.width == 0 {
+                        width = 0
+                    } else {
+                        width -= d.width + hSpacing
+                    }
+                    return result
+                })
+                .alignmentGuide(.top, computeValue: { _ in
+                    let result = height
+                    return result
+                })
         }
-        // Last row
-        if !subviews.isEmpty {
-            rowWidths.append(x - hSpacing)
+        .background(GeometryReader { geo in
+            Color.clear.preference(key: FlowLayoutHeightPreferenceKey.self, value: geo.size.height)
+        })
+        .onPreferenceChange(FlowLayoutHeightPreferenceKey.self) { h in
+            self.totalHeight = h
         }
-
-        return ArrangeResult(
-            positions: positions,
-            sizes: sizes,
-            size: CGSize(width: totalWidth, height: y + rowHeight),
-            rowWidths: rowWidths,
-            rowIndices: rowIndices
-        )
     }
 }
 
@@ -274,7 +248,7 @@ private struct AttachmentChip: View {
         .onAppear { loadThumbnailIfNeeded() }
         .onTapGesture { showPreview = true }
         .sheet(isPresented: $showPreview) {
-            NavigationStack {
+            CompatNavigationStack {
                 AttachmentPreviewView(url: attachment.cacheURL)
                     .navigationTitle(attachment.fileName)
                     .navigationBarTitleDisplayMode(.inline)
@@ -502,6 +476,10 @@ private struct AttachmentPreviewView: UIViewControllerRepresentable {
 
 // MARK: - Video File Transferable (for PhotosPicker video export)
 
+#if canImport(CoreTransferable)
+import CoreTransferable
+
+@available(iOS 16.0, *)
 struct VideoFileTransferable: Transferable {
     let url: URL
 
@@ -517,6 +495,7 @@ struct VideoFileTransferable: Transferable {
         }
     }
 }
+#endif
 
 // MARK: - Camera Picker (UIImagePickerController wrapper)
 

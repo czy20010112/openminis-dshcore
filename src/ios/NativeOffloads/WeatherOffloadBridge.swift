@@ -7,10 +7,12 @@
 //  for the ObjC handler to consume.
 //
 
+#if canImport(WeatherKit)
 import Foundation
 import WeatherKit
 import CoreLocation
 
+@available(iOS 16.0, *)
 @objc public class WeatherOffloadBridge: NSObject {
 
     @objc public static func fetchWeather(
@@ -207,3 +209,4 @@ import CoreLocation
         }
     }
 }
+#endif // canImport(WeatherKit)

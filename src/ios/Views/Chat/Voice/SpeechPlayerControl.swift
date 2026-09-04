@@ -159,7 +159,7 @@ struct SpeechPlayerControl: View {
     private func scheduleRecompute() {
         recomputeTask?.cancel()
         recomputeTask = Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(250))
+            try? await Task.sleep(nanoseconds: 250_000_000)
             guard !Task.isCancelled else { return }
             recompute()
         }
@@ -229,7 +229,7 @@ struct SpeechPlayerControl: View {
             } else if descentTask == nil {
                 VoiceLog.log("[capsule] descent \(Int(avoidLift)) → \(Int(newLift)) ARMED — applying after \(Self.descentSettleMillis)ms of stability")
                 descentTask = Task { @MainActor in
-                    try? await Task.sleep(for: .milliseconds(Self.descentSettleMillis))
+                    try? await Task.sleep(nanoseconds: UInt64(Self.descentSettleMillis) * 1_000_000)
                     guard !Task.isCancelled else { return }
                     descentTask = nil
                     // Re-evaluate from a FRESH requiredLift at fire time — the
@@ -305,7 +305,7 @@ struct SpeechPlayerControl: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + 3) { showFailureFlash = false }
         }
         .sheet(isPresented: $showModelSelector, onDismiss: { refreshModelLabel(); bumpIdle() }) {
-            NavigationStack {
+            CompatNavigationStack {
                 UnifiedModelPicker(config: .voiceOutput())
             }
         }
@@ -421,7 +421,7 @@ struct SpeechPlayerControl: View {
     private func scheduleReclamp() {
         reclampTask?.cancel()
         reclampTask = Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(150))
+            try? await Task.sleep(nanoseconds: 150_000_000)
             guard !Task.isCancelled, !isDragging else { return }
             let clamped = clampedOffset(dragOffset)
             if abs(clamped.width - dragOffset.width) > 0.5 || abs(clamped.height - dragOffset.height) > 0.5 {

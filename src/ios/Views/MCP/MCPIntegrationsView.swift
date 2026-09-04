@@ -174,7 +174,7 @@ struct MCPToolsSheet: View {
     @State private var errorText: String?
 
     var body: some View {
-        NavigationStack {
+        CompatNavigationStack {
             List {
                 if isLoading {
                     HStack(spacing: 10) {

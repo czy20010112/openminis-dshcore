@@ -1,3 +1,4 @@
+#if canImport(AppIntents)
 import AppIntents
 import Foundation
 
@@ -11,6 +12,7 @@ private let logger = AppLogger(category: "AskMinisIntent")
 /// It reuses the exact normal send pipeline (`AIChatViewModel.send()`) and the
 /// existing `.openSessionFromIntent` navigation path — no separate agent logic.
 /// New session when `session` is nil; follow-up when a `SessionEntity` is given.
+@available(iOS 16.0, *)
 struct AskMinisIntent: AppIntent {
     static var title: LocalizedStringResource = "Ask Minis"
     static var description = IntentDescription("Opens Minis, sends your prompt, and shows the conversation. Starts a new session, or continues an existing one when you pick a session.")
@@ -91,3 +93,4 @@ struct AskMinisIntent: AppIntent {
         return .result(dialog: "On it — opening Minis.")
     }
 }
+#endif // canImport(AppIntents)

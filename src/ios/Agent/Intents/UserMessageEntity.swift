@@ -1,3 +1,4 @@
+#if canImport(AppIntents)
 import AppIntents
 import Foundation
 
@@ -96,3 +97,4 @@ struct UserMessageEntityQuery: EntityQuery {
         return entities
     }
 }
+#endif // canImport(AppIntents)

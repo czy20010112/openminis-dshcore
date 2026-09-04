@@ -89,7 +89,7 @@ struct SessionSkillsView: View {
         // Reference the version counter so SwiftUI refreshes on override changes.
         let _ = store.sessionOverrideVersion
 
-        NavigationStack {
+        CompatNavigationStack {
             List {
                 if store.skills.isEmpty {
                     Section {

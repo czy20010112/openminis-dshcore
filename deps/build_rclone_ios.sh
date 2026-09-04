@@ -34,7 +34,7 @@ build_slice() {
       -o "$BUILD/$tag/librclone.a" ./librclone
 }
 
-build_slice iphoneos          "-miphoneos-version-min=16.0"        device
+build_slice iphoneos          "-miphoneos-version-min=15.0"        device
 build_slice iphonesimulator   "-mios-simulator-version-min=16.0"   simulator
 
 # c-archive emits librclone.h next to each .a; both slices share one header.

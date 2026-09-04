@@ -1,3 +1,4 @@
+#if canImport(AppIntents)
 import AppIntents
 import Foundation
 import UniformTypeIdentifiers
@@ -5,6 +6,7 @@ import UniformTypeIdentifiers
 private let logger = AppLogger(category: "FollowUpIntent")
 
 /// Sends a follow-up prompt to an existing session, continuing the conversation.
+@available(iOS 16.0, *)
 struct FollowUpSessionIntent: AppIntent {
     static var title: LocalizedStringResource = "Follow Up Session"
     static var description = IntentDescription("Sends a follow-up prompt to an existing Minis session, continuing the conversation with the AI agent.")
@@ -204,3 +206,4 @@ struct FollowUpSessionIntent: AppIntent {
         }
     }
 }
+#endif // canImport(AppIntents)

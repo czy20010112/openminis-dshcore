@@ -1,3 +1,4 @@
+#if canImport(AppIntents)
 import AppIntents
 import Foundation
 
@@ -51,3 +52,4 @@ struct AudioTogglePlaybackIntent: LiveActivityIntent {
         return .result()
     }
 }
+#endif // canImport(AppIntents)

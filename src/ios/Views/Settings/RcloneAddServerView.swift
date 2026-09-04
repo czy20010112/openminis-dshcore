@@ -68,7 +68,7 @@ struct RcloneAddServerView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        CompatNavigationStack {
             Form {
                 if connectedRemote == nil {
                     typeSection

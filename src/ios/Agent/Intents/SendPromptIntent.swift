@@ -1,3 +1,4 @@
+#if canImport(AppIntents)
 import AppIntents
 import Foundation
 import UniformTypeIdentifiers
@@ -5,6 +6,7 @@ import UserNotifications
 
 /// Sends a prompt to the Minis AI agent and returns immediately with structured session info.
 /// The agent continues running in the background — use Get Session Status to poll for completion.
+@available(iOS 16.0, *)
 struct SendPromptIntent: AppIntent {
     static var title: LocalizedStringResource = "Send Prompt"
     static var description = IntentDescription("Sends a prompt to the Minis AI agent. Returns session info immediately while the task runs in the background.")
@@ -463,3 +465,4 @@ final class ShortcutNotificationDelegate: NSObject, UNUserNotificationCenterDele
         completionHandler([.banner, .sound])
     }
 }
+#endif // canImport(AppIntents)

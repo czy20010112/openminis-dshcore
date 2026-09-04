@@ -1,3 +1,4 @@
+#if canImport(AppIntents)
 import AppIntents
 
 /// Registers app shortcuts so they appear in Shortcuts with zero user setup.
@@ -92,3 +93,4 @@ struct MinisShortcutsProvider: AppShortcutsProvider {
         // so the Shortcuts/AppIntents action is no longer registered.
     }
 }
+#endif // canImport(AppIntents)
