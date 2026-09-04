@@ -1273,8 +1273,7 @@ struct ContentView: View {
         baseLayoutContent
     }
 
-    @ViewBuilder
-    private var baseLayoutContent: some View {
+    private var baseLayoutWithEvents: some View {
         baseLayout
         .onReceive(
             NotificationCenter.default.publisher(for: .sessionDidCreate),
@@ -1431,6 +1430,10 @@ struct ContentView: View {
                 switchToSession(sessionId)
             }
         }
+    }
+
+    private var baseLayoutContent: some View {
+        baseLayoutWithEvents
         .fullScreenCover(isPresented: $showTerminal) {
             CompatNavigationStack {
                 ISHTerminalView(showCloseButton: true)
