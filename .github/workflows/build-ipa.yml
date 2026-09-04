@@ -117,7 +117,10 @@ jobs:
           mkdir -p Payload
           cp -R "$APP_DIR" Payload/
           
-          # Ad-hoc sign bundle for TrollStore / Sideloading compatibility
+          # Core iOS 15 build: omit optional extensions (Live Activity widget and Share Extension).
+          # The main app's chat/agent/shell features do not require either extension.
+          rm -rf "Payload/Minis.app/PlugIns/AgentWidgetExtension.appex" "Payload/Minis.app/PlugIns/MinisShare.appex"
+          # Ad-hoc sign the remaining app bundle for TrollStore / Sideloading compatibility
           codesign --force --deep --sign - "Payload/Minis.app" || true
           
           zip -r9 Minis-iOS15-unsigned.ipa Payload
