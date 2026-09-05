@@ -1056,7 +1056,7 @@ fileprivate final class MarkdownNSRenderer {
             displayContent = "\n"
         } else {
             displayContent = content.replacingOccurrences(
-                of: "<\\s*/?\\s*br\\b[^>]*\/?>",
+                of: "<\\s*/?\\s*br\\b[^>]*>",
                 with: "\n",
                 options: .regularExpression
             )

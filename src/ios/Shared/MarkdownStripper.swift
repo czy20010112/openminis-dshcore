@@ -26,7 +26,7 @@ enum MarkdownStripper {
         )
 
         s = s.replacingOccurrences(
-            of: "<\\s*/?\\s*br\\b[^>]*\\/?>",
+            of: "<\\s*/?\\s*br\\b[^>]*>",
             with: " ",
             options: .regularExpression
         )
