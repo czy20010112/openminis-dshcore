@@ -25,6 +25,12 @@ enum MarkdownStripper {
             options: .regularExpression
         )
 
+        s = s.replacingOccurrences(
+            of: "<\\s*/?\\s*br\\b[^>]*\\/?>",
+            with: " ",
+            options: .regularExpression
+        )
+
         let inlinePatterns: [(String, String)] = [
             ("\\*\\*([^*]+)\\*\\*", "$1"),
             ("__([^_]+)__",          "$1"),

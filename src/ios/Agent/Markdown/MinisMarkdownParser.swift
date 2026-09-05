@@ -776,7 +776,13 @@ extension InlineNode {
         case .softBreak: self = .softBreak
         case .lineBreak: self = .lineBreak
         case .code: self = .code(unsafeNode.literal ?? "")
-        case .html: self = .html(unsafeNode.literal ?? "")
+        case .html:
+            let raw = unsafeNode.literal ?? ""
+            if Self.isBreakTag(raw) {
+                self = .lineBreak
+            } else {
+                self = .html(raw)
+            }
         case .emphasis:
             self = .emphasis(children: unsafeNode.children.compactMap(InlineNode.init(unsafeNode:)))
         case .strong:
@@ -797,6 +803,17 @@ extension InlineNode {
             assertionFailure("Unhandled node type '\(unsafeNode.nodeType)' in InlineNode.")
             return nil
         }
+    }
+
+    static func isBreakTag(_ html: String) -> Bool {
+        let trimmed = html.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if trimmed == "<br>" || trimmed == "<br/>" || trimmed == "<br />" || trimmed == "</br>" {
+            return true
+        }
+        guard trimmed.hasPrefix("<") && trimmed.hasSuffix(">") else { return false }
+        let stripped = trimmed.dropFirst().dropLast().trimmingCharacters(in: .whitespaces)
+        let tag = stripped.hasPrefix("/") ? stripped.dropFirst().trimmingCharacters(in: .whitespaces) : stripped
+        return tag == "br" || tag.hasPrefix("br ") || tag.hasPrefix("br/") || tag.hasPrefix("br\t")
     }
 }
 
@@ -881,13 +898,7 @@ extension UnsafeNode {
         let parser = cmark_parser_new(CMARK_OPT_DEFAULT | CMARK_OPT_STRIKETHROUGH_DOUBLE_TILDE)
         defer { cmark_parser_free(parser) }
 
-        let extensionNames: Set<String>
-
-        if #available(iOS 16.0, macOS 13.0, tvOS 16.0, watchOS 9.0, *) {
-            extensionNames = ["autolink", "strikethrough", "tagfilter", "tasklist", "table"]
-        } else {
-            extensionNames = ["autolink", "strikethrough", "tagfilter", "tasklist"]
-        }
+        let extensionNames: Set<String> = ["autolink", "strikethrough", "tagfilter", "tasklist", "table"]
 
         for extensionName in extensionNames {
             guard let syntaxExtension = cmark_find_syntax_extension(extensionName) else {

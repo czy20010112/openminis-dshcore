@@ -1049,8 +1049,21 @@ fileprivate final class MarkdownNSRenderer {
         }
         style.lineSpacing = bodyLineSpacing
         attrs[.paragraphStyle] = style
+
+        let displayContent: String
+        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        if InlineNode.isBreakTag(trimmed) {
+            displayContent = "\n"
+        } else {
+            displayContent = content.replacingOccurrences(
+                of: "<\\s*/?\\s*br\\b[^>]*\/?>",
+                with: "\n",
+                options: .regularExpression
+            )
+        }
+
         return RenderedBlock(
-            attributed: NSAttributedString(string: content, attributes: attrs),
+            attributed: NSAttributedString(string: displayContent, attributes: attrs),
             topMargin: 0,
             bottomMargin: 16
         )
@@ -1284,6 +1297,9 @@ fileprivate final class MarkdownNSRenderer {
             }
 
         case .html(let html):
+            if InlineNode.isBreakTag(html) {
+                return NSAttributedString(string: "\n", attributes: attrs)
+            }
             return NSAttributedString(string: html, attributes: attrs)
 
         case .softBreak:
@@ -1839,7 +1855,9 @@ final class TableAttachment: NSTextAttachment {
     func plainText() -> String {
         let colCount = alignments.count
         return rows.map { row in
-            row.cells.prefix(colCount).map { $0.content.plainText }.joined(separator: "\t")
+            row.cells.prefix(colCount).map {
+                $0.content.plainText.replacingOccurrences(of: "\n", with: " ")
+            }.joined(separator: "\t")
         }.joined(separator: "\n")
         // [T-md-cjk-emphasis-pairs] Strip flanking-fix spacers (see
         // plainTextWithTables) so table copies stay clean too.
@@ -2015,15 +2033,19 @@ final class TableAttachment: NSTextAttachment {
         // 200%) caused well-formed tables to wrap and produce uneven row
         // heights — user feedback 2026-05-13.
 
-        // Calculate column widths based on single-line content measurement
+        // Calculate column widths based on content measurement (splitting lines for multi-line cells)
         for (rowIdx, row) in rows.enumerated() {
             for (colIdx, cell) in row.cells.enumerated() where colIdx < colCount {
                 let text = cell.content.plainText
                 let font: UIFont = rowIdx == 0
                     ? .systemFont(ofSize: theme.baseFontSize, weight: .semibold)
                     : .systemFont(ofSize: theme.baseFontSize)
-                let size = (text as NSString).size(withAttributes: [.font: font])
-                let requested = ceil(size.width) + Self.cellPaddingH * 2 + 12
+                let lines = text.components(separatedBy: "\n")
+                let maxLineWidth: CGFloat = lines.reduce(0) { maxW, line in
+                    let size = (line as NSString).size(withAttributes: [.font: font])
+                    return max(maxW, ceil(size.width))
+                }
+                let requested = maxLineWidth + Self.cellPaddingH * 2 + 12
                 columnWidths[colIdx] = min(width * 5, max(columnWidths[colIdx], requested))
             }
         }
@@ -2041,7 +2063,7 @@ final class TableAttachment: NSTextAttachment {
                 let font: UIFont = rowIdx == 0
                     ? .systemFont(ofSize: theme.baseFontSize, weight: .semibold)
                     : .systemFont(ofSize: theme.baseFontSize)
-                let cellWidth = columnWidths[colIdx] - Self.cellPaddingH * 2
+                let cellWidth = max(columnWidths[colIdx] - Self.cellPaddingH * 2, 20)
                 let attrStr = renderCellInlines(cell.content, baseFont: font)
                 let boundingRect = attrStr.boundingRect(
                     with: CGSize(width: cellWidth, height: .greatestFiniteMagnitude),
@@ -2110,10 +2132,16 @@ final class TableAttachment: NSTextAttachment {
         // entering an infinite _fillLayoutHole loop when the attachment spans
         // the full line fragment width.  Also snap to 1pt grid so tiny floating-
         // point variations between layout passes hit the cached layout.
-        let usableWidth = floor(lineFrag.width) - 1
-        guard usableWidth > 0 else {
-            return CGRect(x: 0, y: 0, width: lineFrag.width, height: Self.minRowHeight)
+        let containerWidth = textContainer?.size.width ?? 0
+        let effectiveWidth: CGFloat
+        if lineFrag.width > 0 && lineFrag.width < 100_000 {
+            effectiveWidth = lineFrag.width
+        } else if containerWidth > 0 && containerWidth < 100_000 {
+            effectiveWidth = containerWidth
+        } else {
+            effectiveWidth = UIScreen.main.bounds.width - 32
         }
+        let usableWidth = max(floor(effectiveWidth) - 1, 50)
         // [TableProbeFix] SwiftUI / UIHostingConfiguration's intrinsic-size
         // probing pass calls `attachmentBounds` with a synthesized lineFrag
         // width of `CGFloat.greatestFiniteMagnitude` (10_000_000pt). If we
@@ -2123,7 +2151,7 @@ final class TableAttachment: NSTextAttachment {
         // and `updateAttachmentViews`. Clamp to 32_768pt and don't persist
         // the probe layout so subsequent real-width measurements aren't
         // poisoned.
-        let isOversizedProbe = lineFrag.width >= 100_000
+        let isOversizedProbe = lineFrag.width >= 100_000 || lineFrag.width <= 0
         let clampedWidth = isOversizedProbe ? min(usableWidth, 32_768) : usableWidth
         // [TableProbeHeightFix] The HEIGHT we return must reflect how the table
         // wraps at the REAL display width, not at the probe's 32_768pt. At 32_768
@@ -2278,6 +2306,9 @@ final class TableAttachment: NSTextAttachment {
             codeAttrs[.backgroundColor] = minisInlineCodeBackgroundColor
             return NSAttributedString(string: code, attributes: codeAttrs)
         case .html(let h):
+            if InlineNode.isBreakTag(h) {
+                return NSAttributedString(string: "\n", attributes: attrs)
+            }
             return NSAttributedString(string: h, attributes: attrs)
         case .emphasis(let children):
             let italicFont = font.withTraits(.traitItalic)
@@ -2396,11 +2427,13 @@ final class TableAttachment: NSTextAttachment {
         scrollView.alwaysBounceVertical = false
         scrollView.isScrollEnabled = true
 
+        let usableWidth = width > 1 && width < 100_000 ? width : (UIScreen.main.bounds.width - 32)
+
         let stack = UIStackView()
         stack.axis = .vertical
         stack.spacing = 0
 
-        let layout = computeLayout(for: width)
+        let layout = computeLayout(for: usableWidth)
         let colCount = alignments.count
         let columnWidths = layout.columnWidths
         let rowHeights = layout.rowHeights
@@ -2479,8 +2512,9 @@ final class TableAttachment: NSTextAttachment {
             rowView.translatesAutoresizingMaskIntoConstraints = false
 
             var x: CGFloat = 0
-            for (colIdx, cell) in row.cells.enumerated() where colIdx < colCount {
-                let cellContentWidth = columnWidths[colIdx] - Self.cellPaddingH * 2
+            for colIdx in 0..<colCount {
+                let cell = colIdx < row.cells.count ? row.cells[colIdx] : RawTableCell(content: [])
+                let cellContentWidth = max(columnWidths[colIdx] - Self.cellPaddingH * 2, 20)
                 let cellFrame = CGRect(x: x + Self.cellPaddingH, y: 0, width: cellContentWidth, height: rowHeight)
 
                 let alignment: NSTextAlignment
@@ -2561,14 +2595,16 @@ final class TableAttachment: NSTextAttachment {
 
                     tv.frame = cellFrame
                     let textSize = tv.sizeThatFits(CGSize(width: cellFrame.width, height: .greatestFiniteMagnitude))
-                    tv.frame.origin.y = (rowHeight - textSize.height) / 2
+                    tv.frame.size.height = textSize.height
+                    tv.frame.origin.y = max(0, (rowHeight - textSize.height) / 2)
                     rowView.addSubview(tv)
 
                     Self.wireMathAttachments(mathAttachments, cellWidth: cellFrame.width, rowHeight: rowHeight, attrStr: attrStr) { [weak tv] in
                         guard let tv else { return }
                         tv.attributedText = attrStr
                         let ts = tv.sizeThatFits(CGSize(width: cellFrame.width, height: .greatestFiniteMagnitude))
-                        tv.frame.origin.y = (rowHeight - ts.height) / 2
+                        tv.frame.size.height = ts.height
+                        tv.frame.origin.y = max(0, (rowHeight - ts.height) / 2)
                     }
                 } else {
                     let label = TableCellLabel()
@@ -2581,7 +2617,7 @@ final class TableAttachment: NSTextAttachment {
                     label.frame = cellFrame
                     let textSize = label.sizeThatFits(CGSize(width: cellFrame.width, height: .greatestFiniteMagnitude))
                     label.frame.size.height = textSize.height
-                    label.frame.origin.y = (rowHeight - textSize.height) / 2
+                    label.frame.origin.y = max(0, (rowHeight - textSize.height) / 2)
                     rowView.addSubview(label)
 
                     Self.wireMathAttachments(mathAttachments, cellWidth: cellFrame.width, rowHeight: rowHeight, attrStr: attrStr) { [weak label] in
@@ -2590,7 +2626,7 @@ final class TableAttachment: NSTextAttachment {
                         label.selectableAttributedText = attrStr
                         let ts = label.sizeThatFits(CGSize(width: cellFrame.width, height: .greatestFiniteMagnitude))
                         label.frame.size.height = ts.height
-                        label.frame.origin.y = (rowHeight - ts.height) / 2
+                        label.frame.origin.y = max(0, (rowHeight - ts.height) / 2)
                         label.setNeedsDisplay()
                     }
                 }
@@ -2626,7 +2662,7 @@ final class TableAttachment: NSTextAttachment {
         stack.frame = CGRect(x: 0, y: 0, width: tableWidth, height: stackHeight)
         scrollView.addSubview(stack)
         scrollView.contentSize = CGSize(width: tableWidth, height: stackHeight)
-        scrollView.frame = CGRect(x: 0, y: Self.verticalMargin, width: width, height: stackHeight)
+        scrollView.frame = CGRect(x: 0, y: Self.verticalMargin, width: usableWidth, height: stackHeight)
 
         // Border — borderColor is re-applied by TableScrollView on every
         // traitCollectionDidChange via `borderColorProvider`, so dark-mode
@@ -2638,7 +2674,7 @@ final class TableAttachment: NSTextAttachment {
         scrollView.clipsToBounds = true
 
         wrapper.addSubview(scrollView)
-        wrapper.frame = CGRect(x: 0, y: 0, width: width, height: stackHeight + Self.verticalMargin * 2)
+        wrapper.frame = CGRect(x: 0, y: 0, width: usableWidth, height: stackHeight + Self.verticalMargin * 2)
 
         // [T-ios-table-hscroll-offset-lost] Keep the attachment's persistent
         // offset in sync with every user-driven scroll on this view, then
@@ -4765,7 +4801,9 @@ private extension Array where Element == InlineNode {
             case .link(_, let ch), .image(_, let ch): return ch.plainText
             case .softBreak: return " "
             case .lineBreak: return "\n"
-            case .html(let h): return h
+            case .html(let h):
+                if InlineNode.isBreakTag(h) { return "\n" }
+                return h
             case .inlineMath(let latex): return latex
             }
         }.joined()
@@ -6148,7 +6186,8 @@ final class SelectableMarkdownTextView: UITextView, UIGestureRecognizerDelegate 
             // async image load). Fall back to the text container width so
             // attachment views are created at a usable size.
             if boundingRect.width < 1 || (containerWidth > 0 && boundingRect.width > containerWidth) {
-                boundingRect.size.width = containerWidth
+                let fallbackWidth = containerWidth > 0 && containerWidth < 100_000 ? containerWidth : (self.bounds.width > 0 ? self.bounds.width : UIScreen.main.bounds.width - 32)
+                boundingRect.size.width = fallbackWidth
             }
             // [issue #117-4] Inline formulas: replace the line-level y with the
             // glyph-derived one (see inlineAttachmentOrigin). nil for every

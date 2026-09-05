@@ -401,19 +401,14 @@ func splitStreamingTableTail(_ markdown: String) -> (prefix: String, plainSuffix
 
 /// [TableTerminator] GitHub-flavored Markdown allows a table to end implicitly
 /// when the next line doesn't start with `|`. However the swift-markdown
-/// parser swift-cmark uses requires an explicit blank line — without it, a
-/// prose paragraph immediately following a table row is greedily consumed as
-/// an extra (single-column) row of that table. Symptom in chat: a table
-/// "grows a final row" containing a long sentence from the post-table prose,
-/// blowing up the column width and producing the visible "table is mostly
-/// blank, one extra row of prose" rendering.
+/// parser swift-cmark uses requires an explicit blank line before and after
+/// a table — without it:
+///   1. A table preceded by prose without a blank line is greedily consumed
+///      as part of the preceding paragraph, completely failing to render as a table.
+///   2. A prose paragraph immediately following a table row is greedily consumed
+///      as an extra (single-column) row of that table.
 ///
-/// This pass inserts an empty line between a `| ... |` line and the
-/// immediately following non-table, non-blank line. We intentionally limit
-/// the trigger to lines that *start* with `|` (after optional whitespace)
-/// so prose containing inline `|` characters can't accidentally promote a
-/// surrounding paragraph to a table.
-///
+/// This pass inserts an empty line both before the table header and after the table.
 /// Skips fenced code blocks so `|` chars in code aren't affected.
 func insertBlankLineAfterTable(_ markdown: String) -> String {
     var lines = markdown.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
@@ -421,22 +416,33 @@ func insertBlankLineAfterTable(_ markdown: String) -> String {
     var inFence = false
     var fenceMarker = ""
     var result: [String] = []
-    result.reserveCapacity(lines.count + 4)
+    result.reserveCapacity(lines.count + 8)
+
     func isTableLine(_ s: String) -> Bool {
         let t = s.drop(while: { $0 == " " || $0 == "\t" })
         return t.hasPrefix("|")
     }
+
+    func isTableSeparatorLine(_ s: String) -> Bool {
+        let t = s.trimmingCharacters(in: .whitespaces)
+        guard t.contains("-") else { return false }
+        let nonSep = t.filter { $0 != "|" && $0 != "-" && $0 != ":" && $0 != " " && $0 != "\t" }
+        return nonSep.isEmpty && (t.hasPrefix("|") || t.contains("|"))
+    }
+
     func isBlank(_ s: String) -> Bool {
         s.allSatisfy { $0 == " " || $0 == "\t" }
     }
+
     for i in 0..<lines.count {
         let line = lines[i]
-        result.append(line)
         let trimmed = line.drop(while: { $0 == " " || $0 == "\t" })
+
         if !inFence {
             if trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") {
                 inFence = true
                 fenceMarker = String(trimmed.prefix(3))
+                result.append(line)
                 continue
             }
         } else {
@@ -445,9 +451,21 @@ func insertBlankLineAfterTable(_ markdown: String) -> String {
                     .allSatisfy({ $0 == " " || $0 == "\t" }) {
                 inFence = false
             }
+            result.append(line)
             continue
         }
-        // Check: table row terminated by a non-table, non-blank line on the
+
+        // Check before table: line i is header, line i+1 is separator.
+        // If preceding line was non-blank and non-table, insert a blank line before header.
+        if isTableLine(line) && i + 1 < lines.count && isTableSeparatorLine(lines[i + 1]) {
+            if i > 0 && !isBlank(lines[i - 1]) && !isTableLine(lines[i - 1]) {
+                result.append("")
+            }
+        }
+
+        result.append(line)
+
+        // Check after table: table row terminated by a non-table, non-blank line on the
         // next index? If so, insert a blank line between them.
         guard isTableLine(line), i + 1 < lines.count else { continue }
         let next = lines[i + 1]
