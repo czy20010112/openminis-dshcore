@@ -131,6 +131,40 @@ private class HostingContentView<Content: View, Background: View>: UIView, UICon
             host?.rootView = config.content
         }
     }
+
+    override func systemLayoutSizeFitting(
+        _ targetSize: CGSize,
+        withHorizontalFittingPriority horizontalFittingPriority: UILayoutPriority,
+        verticalFittingPriority: UILayoutPriority
+    ) -> CGSize {
+        guard let host = host else {
+            return super.systemLayoutSizeFitting(
+                targetSize,
+                withHorizontalFittingPriority: horizontalFittingPriority,
+                verticalFittingPriority: verticalFittingPriority
+            )
+        }
+        let width = targetSize.width > 0 ? targetSize.width : (bounds.width > 0 ? bounds.width : UIScreen.main.bounds.width)
+        let fitSize: CGSize
+        if #available(iOS 16.0, *) {
+            fitSize = host.sizeThatFits(in: CGSize(width: width, height: .greatestFiniteMagnitude))
+        } else {
+            fitSize = host.view.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
+        }
+        return CGSize(width: width, height: ceil(fitSize.height))
+    }
+
+    override func sizeThatFits(_ size: CGSize) -> CGSize {
+        guard let host = host else { return super.sizeThatFits(size) }
+        let width = size.width > 0 ? size.width : (bounds.width > 0 ? bounds.width : UIScreen.main.bounds.width)
+        let fitSize: CGSize
+        if #available(iOS 16.0, *) {
+            fitSize = host.sizeThatFits(in: CGSize(width: width, height: .greatestFiniteMagnitude))
+        } else {
+            fitSize = host.view.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
+        }
+        return CGSize(width: width, height: ceil(fitSize.height))
+    }
 }
 
 // MARK: - Additional View Modifiers

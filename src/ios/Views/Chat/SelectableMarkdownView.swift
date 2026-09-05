@@ -1470,7 +1470,15 @@ final class CodeBlockAttachment: NSTextAttachment {
     }
 
     override func attachmentBounds(for textContainer: NSTextContainer?, proposedLineFragment lineFrag: CGRect, glyphPosition position: CGPoint, characterIndex charIndex: Int) -> CGRect {
-        let width = lineFrag.width
+        let containerWidth = textContainer?.size.width ?? 0
+        let effectiveWidth: CGFloat
+        if lineFrag.width > 0 && lineFrag.width < 100_000 {
+            effectiveWidth = lineFrag.width
+        } else if containerWidth > 0 && containerWidth < 100_000 {
+            effectiveWidth = containerWidth
+        } else {
+            effectiveWidth = UIScreen.main.bounds.width - 32
+        }
         let topOffset: CGFloat = (language != nil && !language!.isEmpty) ? 28 : 12
         let contentHeight = measureCodeHeight()
         let bottomPadding: CGFloat = 12
@@ -1478,15 +1486,16 @@ final class CodeBlockAttachment: NSTextAttachment {
         let scrollHeight = min(contentHeight, maxCodeHeight)
         let totalHeight = topOffset + scrollHeight + bottomPadding
         let height = totalHeight + Self.topMargin + Self.bottomMargin
-        return CGRect(x: 0, y: 0, width: width, height: height)
+        return CGRect(x: 0, y: 0, width: effectiveWidth, height: height)
     }
 
     func makeView(width: CGFloat) -> UIView {
         let wrapper = UIView()
         wrapper.backgroundColor = .clear
 
+        let usableWidth = width > 0 && width < 100_000 ? width : (UIScreen.main.bounds.width - 32)
         let inset = leftInset
-        let contentWidth = width - inset
+        let contentWidth = max(usableWidth - inset, 50)
 
         let container = UIView()
         container.backgroundColor = theme.codeBlockBackground
@@ -1643,7 +1652,8 @@ final class CodeBlockAttachment: NSTextAttachment {
         let maxCodeHeight: CGFloat = 400 - topOffset - 12
         let scrollHeight = min(fitting.height, maxCodeHeight)
         let bottomPadding: CGFloat = 12
-        let newScrollFrame = CGRect(x: 0, y: topOffset, width: container.frame.width, height: scrollHeight + bottomPadding)
+        let scrollWidth = max(container.frame.width, 50)
+        let newScrollFrame = CGRect(x: 0, y: topOffset, width: scrollWidth, height: scrollHeight + bottomPadding)
         let totalHeight = topOffset + scrollHeight + bottomPadding
 
         // [CodeBlockGrow] Animate the visible code-frame growing taller as more
@@ -5148,6 +5158,8 @@ final class SelectableMarkdownTextView: UITextView, UIGestureRecognizerDelegate 
         let textContainer = NSTextContainer()
         textContainer.lineFragmentPadding = 0
         textContainer.widthTracksTextView = true
+        let defaultWidth = UIScreen.main.bounds.width - 32
+        textContainer.size = CGSize(width: defaultWidth, height: .greatestFiniteMagnitude)
         layoutManager.addTextContainer(textContainer)
         textStorage.addLayoutManager(layoutManager)
 
@@ -6726,6 +6738,32 @@ final class SelectableMarkdownTextView: UITextView, UIGestureRecognizerDelegate 
 
     // MARK: Layout
 
+    override func sizeThatFits(_ size: CGSize) -> CGSize {
+        let width = size.width > 1 && size.width < 100_000 ? size.width : (textContainer.size.width > 1 && textContainer.size.width < 100_000 ? textContainer.size.width : (bounds.width > 1 ? bounds.width : UIScreen.main.bounds.width - 32))
+        guard textStorage.length > 0 else {
+            return super.sizeThatFits(CGSize(width: width, height: size.height > 0 ? size.height : 4))
+        }
+        let oldWidth = textContainer.size.width
+        let oldHeight = textContainer.size.height
+        if abs(textContainer.size.width - width) > 0.5 {
+            textContainer.size = CGSize(width: width, height: .greatestFiniteMagnitude)
+        }
+        let fit = super.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
+        if oldHeight < .greatestFiniteMagnitude {
+            textContainer.size.height = oldHeight
+        }
+        return CGSize(width: width, height: ceil(fit.height))
+    }
+
+    override var intrinsicContentSize: CGSize {
+        let width = textContainer.size.width > 1 && textContainer.size.width < 100_000 ? textContainer.size.width : (bounds.width > 1 ? bounds.width : UIScreen.main.bounds.width - 32)
+        guard width > 1, textStorage.length > 0 else {
+            return CGSize(width: UIView.noIntrinsicMetric, height: UIView.noIntrinsicMetric)
+        }
+        let fit = sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
+        return CGSize(width: UIView.noIntrinsicMetric, height: ceil(fit.height))
+    }
+
     override func layoutSubviews() {
         // TEMP(2026-05-13) — layoutSubviews slow-path probe. Most layout
         // work is fast; emit a direct-write line when a single
@@ -7507,6 +7545,8 @@ struct SelectableMarkdownView: UIViewRepresentable {
         textView.delegate = context.coordinator
         textView.setContentHuggingPriority(.required, for: .vertical)
         textView.setContentCompressionResistancePriority(.required, for: .vertical)
+        let defaultWidth = UIScreen.main.bounds.width - 32
+        textView.textContainer.size = CGSize(width: defaultWidth, height: .greatestFiniteMagnitude)
         context.coordinator.lastMarkdown = ""
         context.coordinator.openURL = openURL
         textView.onTapBlank = onTapBlank
@@ -7536,6 +7576,11 @@ struct SelectableMarkdownView: UIViewRepresentable {
 
         let currentFontSize = FontSettings.shared.scaledMessage(16.5)
         let fontChanged = context.coordinator.lastFontSize != currentFontSize
+
+        if textView.textContainer.size.width <= 1 || textView.textContainer.size.width >= 100_000 {
+            let fallbackW = textView.bounds.width > 1 && textView.bounds.width < 100_000 ? textView.bounds.width : (UIScreen.main.bounds.width - 32)
+            textView.textContainer.size = CGSize(width: fallbackW, height: .greatestFiniteMagnitude)
+        }
 
         // [AttachHotPath] updateUIView entry — only log when this textView has
         // image attachments in its renderer's cache (the only scenario that can
