@@ -581,7 +581,7 @@ object ThinkingRuleResolver {
                     // gemini-3.7-flash returns a hard
                     //   400 "Thinking level MINIMAL is not supported for this model."
                     // on EVERY request — 5/5 consecutive, "all fallbacks exhausted".
-                    // So with 思考 set to Off, 3.7 Flash was completely unusable, not
+                    // So with Thinking set to Off, 3.7 Flash was completely unusable, not
                     // merely un-thinking. "low" is accepted by the whole family and is
                     // the same floor 3.x Pro already used, so fall back to it for the
                     // models that reject minimal rather than probing at runtime.

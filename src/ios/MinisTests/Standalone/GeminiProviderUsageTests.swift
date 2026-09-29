@@ -14,8 +14,8 @@
 //     `promptTokenCount` (the FULL input) was passed straight through as
 //     `inputTokens`, reporting the cache as well would have double-counted it.
 //
-// The numbers below are real captures against gemini-3.8-flash, recorded in
-// /tmp/issue_384_plan.md, not invented fixtures.
+// The numbers below are real captures against gemini-3.8-flash, not invented
+// fixtures.
 //
 // Run: swift GeminiProviderUsageTests.swift
 //

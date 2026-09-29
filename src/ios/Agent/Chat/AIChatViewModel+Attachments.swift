@@ -20,8 +20,8 @@ struct PastedText: Identifiable {
 
 enum PastePlaceholder {
     /// The literal the composer inserts and send() expands. Exactly one
-    /// spelling — capital P, matching Claude Code CLI's "[Pasted text #N]"
-    /// convention — and the regex accepts only that: this is protocol text,
+    /// spelling — `[Pasted#N]`, capital P, no space —
+    /// and the regex accepts only that: this is protocol text,
     /// not localizable UI copy, and a single strict form keeps hand-typed
     /// lookalikes falling through verbatim as designed.
     static let regex = try! NSRegularExpression(pattern: #"\[Pasted#(\d+)\]"#)

@@ -251,7 +251,7 @@ extension AIChatViewModel {
 
     /// [T-p2-shared-workspace] The session whose `/var/minis` bucket this vm's
     /// shell and file tools operate in. A helper works in its PARENT's
-    /// workspace — like Claude Code / OpenClaw / Hermes sub-agents share the
+    /// workspace — it shares the
     /// parent's files — so what it writes is what the parent (and the user)
     /// can read. Its transcript, media rows and job identity stay its own.
     var fsSessionId: String? { helperConfig?.parentSessionId ?? sessionId }
@@ -339,8 +339,8 @@ extension AIChatViewModel {
             ?? (args["max_minutes"] as? Double).map(Int.init)
             ?? Self.helperDefaultMinutes
         let minutes = max(1, min(Self.helperMaxMinutes, requestedMinutes))
-        // [T-p2-background-default] Background is the default (Claude Code's
-        // current Agent tool semantics); wait=true is the opt-in for "the next
+        // [T-p2-background-default] Background is the default;
+        // wait=true is the opt-in for "the next
         // step needs this result before anything else".
         let wait = (args["wait"] as? Bool) ?? false
         // [T-p2-progress-report] Mid-run reporting level (background mode only).

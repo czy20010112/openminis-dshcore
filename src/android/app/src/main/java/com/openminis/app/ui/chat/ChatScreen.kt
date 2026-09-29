@@ -1147,10 +1147,8 @@ fun ChatScreen(
     //
     // Five iterations of "fight the LazyColumn" (anchor lock, fling-settle
     // gate, isStreaming/lastToolCount/lastAwaiting force-follow LEs) never
-    // truly stopped the streaming jitter. Survey of production Compose
-    // chat clients (google-ai-edge/gallery, GetStream/stream-chat-android-ai,
-    // lambiengcode/compose-chatgpt-kotlin-android-chatbot, Taewan-P/gpt_mobile)
-    // showed a consistent pattern:
+    // truly stopped the streaming jitter. The pattern that works
+    // for a Compose chat list:
     //
     //   1. Trust reverseLayout's native bottom anchor — do not call
     //      scrollToItem(0) on every streaming token.
@@ -1181,7 +1179,7 @@ fun ChatScreen(
     //   - reverseLayout=true on the LazyColumn — handles "stick to
     //     bottom while user is at bottom" natively.
 
-    // T128: tightened from 90 dp (google-ai-edge/gallery) to 32 dp.
+    // T128: tightened from 90 dp to 32 dp.
     // 90 dp made the JumpToBottom FAB appear well before the user had
     // really left the bottom — users reported the "Quick to bottom" button
     // appearing too often. 32 dp is roughly half the floating tool-bar height, so the
@@ -1228,7 +1226,7 @@ fun ChatScreen(
             //   - scroll-to-bottom FAB shown on a session that's actually
             //     bottom-anchored
             //   - trailing-row pin gated on isNearBottom failing
-            // See /tmp/fix_scroll_diagnosis.md. Anchor on firstIdx/firstOff
+            // Anchor on firstIdx/firstOff
             // alone — they survive the measure window.
             val result = firstIdx == 0 && firstOff <= nearBottomThresholdPx.toInt()
             // T-android-jank-profile: was logging on every scroll frame (this

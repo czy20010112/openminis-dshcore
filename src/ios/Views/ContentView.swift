@@ -3379,7 +3379,7 @@ struct ContentView: View {
         // immunity (604a9947 / T-voice-bg-fg-gap): with the inline search bar
         // closed, nothing down here accepts text — any keyboard inset reaching
         // this list is a stale/zombie one (stranded responder, interrupted
-        // bg-snapshot dismiss) and must not push the 新建/搜索 FABs up. With
+        // bg-snapshot dismiss) and must not push the New/Search FABs up. With
         // the search bar open its TextField legitimately rises with the
         // keyboard, so normal avoidance is restored.
         .ignoresSafeArea(.keyboard, edges: showSearchBar ? [] : .bottom)

@@ -410,7 +410,7 @@ final class BackgroundKeepAliveManager: NSObject, ObservableObject, CLLocationMa
                 // [T-ish-bg-cpu-governor] Closed-loop governor replaces the
                 // old fixed 80% duty cycle (which sat exactly on the iOS
                 // background kill line and still measured 91% — see
-                // docs/ish-bg-cpu-governor-design.md).
+                // docs/internal/ish-bg-cpu-governor-design.md).
                 ISHKernel.shared.beginBackgroundCPUGovernor()
                 logger.info("[BKA] iSH background CPU governor STARTED")
                 self.logLifecycleSnapshot("Background")

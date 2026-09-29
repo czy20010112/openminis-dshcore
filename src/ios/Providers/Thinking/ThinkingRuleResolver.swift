@@ -215,8 +215,7 @@ enum ThinkingRuleResolver {
 
     // MARK: - Built-in registry
 
-    /// The vendor rules, in priority order. Each entry names the evidence it encodes;
-    /// see `/tmp/thinking_rules_evidence.md` §A for the full chain.
+    /// The vendor rules, in priority order. Each entry names the evidence it encodes.
     ///
     /// Order matters and is not alphabetical — the most specific predicate must be
     /// consulted first. Mistral leads because its rule is a total prohibition that

@@ -50,7 +50,7 @@ import androidx.compose.ui.unit.sp
 import com.openminis.app.i18n.uppercaseForDisplay
 
 /**
- * Shared primitives for settings pages. Grouped-card layout (iOS/ChatGPT style).
+ * Shared primitives for settings pages. Grouped-card layout (iOS inset-grouped style).
  *
  * Structure:
  *   SettingsScaffold(title, actions?) {

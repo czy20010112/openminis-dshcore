@@ -1881,7 +1881,7 @@ static int ish_throttle_trampoline(void) {
 #pragma mark - Background CPU Governor (closed-loop sliding window)
 
 // [T-ish-bg-cpu-governor] Closed-loop governor per
-// docs/ish-bg-cpu-governor-design.md. iOS 26 background budget (empirical,
+// docs/internal/ish-bg-cpu-governor-design.md. iOS 26 background budget (empirical,
 // IPS 2026-08-02): 48 CPU-s per 60s sliding window, enforced by kill.
 // Sense what iOS bills (process-wide CPU via proc_pid_rusage), drive the
 // Q16 throttle ratio as feedback so actuator inaccuracy cannot break safety.

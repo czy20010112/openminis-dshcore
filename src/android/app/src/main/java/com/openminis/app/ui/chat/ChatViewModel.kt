@@ -570,7 +570,7 @@ class ChatViewModel(
             //
             // Also verified end-to-end on device (Pixel 4a, build with this
             // `.toList()` deliberately REVERTED): create a multi-turn session,
-            // long-press a middle user message → 编辑 → send. `truncateBeforeEdit`
+            // long-press a middle user message → Edit → send. `truncateBeforeEdit`
             // provably ran (8 messages → 4), storing a live SubList as
             // `_messages.value`, and a further message was sent — NO crash. The
             // next `+` copies the SubList back into a plain ArrayList, so the

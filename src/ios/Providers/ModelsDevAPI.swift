@@ -212,8 +212,8 @@ enum ModelsDevAPI {
         // relay that publishes `glm-5.3-flash-cpa` (or `-0710`, `-preview`,
         // any house suffix) matched nothing at all and the model arrived with
         // no context window, no thinking support and no modalities — the
-        // reported "14 个模型逐项读取均返回 unknown_path". opencode and hermes
-        // resolve these because they fall back to a prefix match; we did not.
+        // reported "14 个模型逐项读取均返回 unknown_path". A prefix
+        // match resolves these; we had no such fallback.
         //
         // Only ever reached when both exact stages missed, so no id that
         // resolves today can change meaning.

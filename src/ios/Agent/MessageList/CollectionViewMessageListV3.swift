@@ -1575,7 +1575,7 @@ extension CollectionViewMessageListV3 {
                 // layout height (set via setPrecalcHeight in applySnapshot) so the
                 // cell's initial POSITION is approximately right, but the cell's
                 // real height is always decided by an actual measure, never frozen
-                // at an estimate. (The first-mount-measure-storm 方案 D was trading
+                // at an estimate. (The first-mount-measure-storm option D was trading
                 // correctness for fewer measures here; correctness wins — a too-
                 // short estimate that truncates content is worse than a measure.)
             }

@@ -558,7 +558,7 @@ class BrowserTabPool(private val context: Context) {
                     //    in its inUse grace window).
                     //  - opens-new-page actions (navigate, fetch): keep the
                     //    grace-based fan-out so an agent's concurrent navigates
-                    //    still open distinct tabs (#595) instead of trampling.
+                    //    still open distinct tabs instead of trampling.
                     val mustFollowSelected = singleTab || !input.action.opensNewPage
                     if (mustFollowSelected && _tabs.value.isNotEmpty()) {
                         // Route to the selected tab under its serial lock. If the

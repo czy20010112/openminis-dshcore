@@ -342,7 +342,7 @@
                  user taps a file in Files / Photos / any document viewer.
                  The T142 filters above only fire for BROWSABLE intents
                  (web links, deep-links) and never list Minis in the OEM
-                 file manager's chooser. Termux's working pattern is
+                 file manager's chooser. The pattern that works is
                  scheme=file + scheme=content + mimeType=*/* without
                  BROWSABLE — file managers don't tag intents BROWSABLE.
                  ShareReceiverActivity.handleView already routes the
@@ -360,7 +360,7 @@
         <!-- T-pwa-1 (renamed Pwa → WebApp): WebApp shortcut host.
              Reachable only via explicit Intent from a pinned launcher
              shortcut (ACTION_OPEN_WEBAPP + extras). Old ACTION_OPEN_PWA
-             intent-filter intentionally removed: per user direction,
+             intent-filter intentionally removed:
              home-screen icons pinned before the rename are not preserved
              and will return "intent not found" on tap; the user has to
              re-add them from inside the app. -->

@@ -26,8 +26,6 @@
 // must persist. Toggles have no empty state, so for those the rule is "differs
 // from what the sheet showed, OR an override already exists".
 //
-// Analysis: /tmp/issue_model_ctx_revert_plan.md
-//
 // Run: swift ModelOverrideSaveGateTests.swift
 //
 // Convention: a bare `swift` script — `deps/libs/libish_emu.a` is device-arm64

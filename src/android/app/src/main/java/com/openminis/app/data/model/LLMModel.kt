@@ -121,8 +121,8 @@ data class LLMModel(
         // flagship on top. T-xai-models-refresh dropped grok-3-* slugs
         // (xAI server-side now redirects those to grok-4.3, so showing
         // them in the picker is just noise) and added the multi-agent
-        // / build / fast / code-fast variants surfaced by xAI docs and
-        // OpenClaw's catalog (port iOS db973552).
+        // / build / fast / code-fast variants listed in the xAI docs
+        // (docs.x.ai/docs/models; port iOS db973552).
         // Official xAI catalog (docs.x.ai/docs/models) - synced from CLIProxyAPI models.json
         // [T-provider-dynamic-catalog-reconcile] grok-4.6 added for GH#265.
         // Note this list is now a SEED/FALLBACK, not the whole story: since
@@ -139,7 +139,7 @@ data class LLMModel(
         val grok3Mini = LLMModel("grok-3-mini", "Grok 3 Mini", "xAI", supportsReasoning = true)
         val grok3MiniFast = LLMModel("grok-3-mini-fast", "Grok 3 Mini Fast", "xAI", supportsReasoning = true)
         val grokComposer25Fast = LLMModel("grok-composer-2.5-fast", "Grok Composer 2.5 Fast", "xAI")
-        // High-frequency fast / code variants surfaced by OpenClaw's catalog.
+        // High-frequency fast / code variants (docs.x.ai/docs/models).
         val grok4Fast = LLMModel("grok-4-fast", "Grok 4 Fast", "xAI", supportsReasoning = true)
         val grok4FastNonReasoning = LLMModel("grok-4-fast-non-reasoning", "Grok 4 Fast (Non-Reasoning)", "xAI")
         val grokCodeFast1 = LLMModel("grok-code-fast-1", "Grok Code Fast 1", "xAI", supportsReasoning = true)

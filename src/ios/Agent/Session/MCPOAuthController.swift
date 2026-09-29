@@ -13,7 +13,7 @@
 //      refreshes autonomously via refresh_token when a call hits 401/expiry, and
 //      rewrites the bridge file so both sides stay current.
 //
-//  Storage decisions (deliberate, see design doc /tmp/mcp-oauth-design-report.md):
+//  Storage decisions (deliberate):
 //    1. client_secret + tokens live in the LOCAL Keychain (kSecAttrSynchronizable
 //       = false) — never in servers.json, so the iCloud MCPServerItem sync ships
 //       only the non-secret oauth config (endpoints/clientId). A peer device

@@ -412,7 +412,7 @@ class SessionListViewModel(
     /**
      * True only for a session filed into a group that EXISTS locally. A dangling
      * folder_id is displayed as ungrouped, so treating it as filed would offer
-     * "暂不分组" for a group the user cannot see — and label the action 更换 when
+     * "暂不分组" for a group the user cannot see — and label the action "Change" when
      * there is nothing to change from. Mirrors partitionByFolder's presence test.
      */
     private fun isFiled(session: ChatSessionEntity?): Boolean {

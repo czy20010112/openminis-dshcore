@@ -24,7 +24,12 @@ import os
 import sys
 import unittest
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# The package ships inside the app's default mount; iOS and Android carry
+# identical copies. Set MINIS_MCP_CLI_DIR to test a different copy.
+_PKG = os.environ.get("MINIS_MCP_CLI_DIR") or os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "..", "..",
+    "src", "ios", "default_mount", "usr", "local", "lib", "minis-mcp-cli")
+sys.path.insert(0, os.path.abspath(_PKG))
 
 import httpx  # noqa: E402
 

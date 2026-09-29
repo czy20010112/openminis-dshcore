@@ -1438,7 +1438,7 @@ struct AIChatView: View {
             // first responder: leaving the chat while the composer (or the voice
             // transcript editor) still holds focus leaves the keyboard's inset
             // reserved on the WINDOW, and SwiftUI's automatic keyboard avoidance
-            // applies that window-wide. The home screen's 新建/搜索 FAB row is a
+            // applies that window-wide. The home screen's New/Search FAB row is a
             // `.safeAreaInset(edge: .bottom)` (ContentView 1213/1326) with no
             // `.ignoresSafeArea(.keyboard)` opt-out, so it reads that inflated
             // bottom safe area and floats upward — the reported symptom. Same
@@ -2152,7 +2152,7 @@ struct AIChatView: View {
     }
 
     /// [T-codex-fast-mode] True when the session's active model can use Fast
-    /// Mode. Broadened per user request from Codex-OAuth-only to: ANY
+    /// Mode. Broadened from Codex-OAuth-only to: ANY
     /// Responses-API provider + a gpt-family model. Concretely the request
     /// must travel the Responses API path — providerType .openAIResponses
     /// (any credential/base, e.g. sub2api relays, which pass service_tier
@@ -2615,7 +2615,7 @@ struct AIChatView: View {
                     // Same three-dot language as SessionLoadingCard — this
                     // overlay can appear right after the loading card on a
                     // cold entry, so a system spinner here read as "the old
-                    // 菊花 came back".
+                    // spinner came back".
                     LoadingDotsView(dotSize: 9, color: ChatColors.secondaryText)
                         .frame(height: 20)
                     Text("Booting Kernel")
@@ -6788,7 +6788,7 @@ private struct EmptyChatDirectoryTimeline: View {
 /// Three-dot carousel indicator: dots pulse in a staggered wave. The single
 /// loading language for the session-entry path (loading card, in-place reload,
 /// kernel boot) — replaces every system ProgressView spinner there, so the
-/// old "菊花" never appears after / alongside the new loading UI.
+/// old system spinner never appears after / alongside the new loading UI.
 struct LoadingDotsView: View {
     var dotSize: CGFloat = 10
     var color: Color = .accentColor

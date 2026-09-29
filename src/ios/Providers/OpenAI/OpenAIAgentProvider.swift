@@ -650,8 +650,8 @@ final class OpenAIAgentProvider: AgentProvider {
         // OpenAIProvider.buildResponsesAPIRequest covers only the offload /
         // non-agent paths, which is why the first device trace showed Codex
         // requests without the field. Wire value: codex_cli_rs sends
-        // service_tier="priority" for its Fast mode. Broadened per user
-        // request from Codex-OAuth-only to every Responses-API flavor (this
+        // service_tier="priority" for its Fast mode. Broadened
+        // from Codex-OAuth-only to every Responses-API flavor (this
         // function IS the Responses path — incl. forceResponsesAPI relays
         // like sub2api, which pass service_tier through) gated on a
         // gpt-family model id, mirroring the official fast catalog.
@@ -754,8 +754,8 @@ final class OpenAIAgentProvider: AgentProvider {
                                 // ReasoningEcho at response.completed and
                                 // round-tripped to the same model on next
                                 // turn — UI hiding is decoupled from chain-
-                                // of-thought continuity. Matches Hermes Agent
-                                // (NousResearch) and Codex CLI behavior.
+                                // of-thought continuity. Matches Codex CLI
+                                // behavior.
                                 let itemId = item["id"] as? String ?? ""
                                 if currentReasoningItemId == itemId {
                                     currentReasoningItemId = nil

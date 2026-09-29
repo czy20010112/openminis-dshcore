@@ -1278,7 +1278,7 @@ Do not create extraneous files: README.md, INSTALLATION_GUIDE.md, CHANGELOG.md, 
         return skills.contains(where: { $0.id == candidate }) ? candidate : nil
     }
 
-    // MARK: - Prompt Fragment (Claude Code style: metadata only)
+    // MARK: - Prompt Fragment (progressive disclosure: metadata only)
 
     /// Maximum number of skill metadata entries to include in the prompt.
     private static let maxSkillMetadataCount = 20

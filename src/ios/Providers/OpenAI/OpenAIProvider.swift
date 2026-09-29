@@ -932,8 +932,8 @@ final class OpenAIProvider: LLMProvider {
             // cache on the conversation identity carried in these HEADERS, not
             // on the `prompt_cache_key` body field alone. Sending the body
             // field by itself produced a measured 0% cache-hit rate across
-            // every multi-turn test on device (see /tmp/gpt56_cache_findings.md
-            // — 0% even for two byte-identical 8.7k-token requests sent
+            // every multi-turn test on device
+            // (0% even for two byte-identical 8.7k-token requests sent
             // back-to-back), which is what motivated this change.
             //
             // Mirrors CLIProxyAPI's codex_executor.go `cacheHelper`, which sets

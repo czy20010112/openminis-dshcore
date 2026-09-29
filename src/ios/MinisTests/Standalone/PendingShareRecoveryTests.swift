@@ -292,7 +292,7 @@ do {
     check("an expired buffer is dropped with a toast", ttl.consumeBuffer() == nil && ttl.toasts.count == 1)
 
     // The check is disk-only: nothing about an intent extra is consulted.
-    knownGap("every foreground return (scenePhase .active) re-checks the disk record, not only onAppear / minis://share (spec: 每次进入前台都检查)",
+    knownGap("every foreground return (scenePhase .active) re-checks the disk record, not only onAppear / minis://share (spec: check on every return to the foreground)",
              false)
 }
 

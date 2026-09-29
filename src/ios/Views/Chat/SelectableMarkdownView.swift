@@ -1182,7 +1182,7 @@ fileprivate final class MarkdownNSRenderer {
     /// [T-ios-inline-code-long-path-wrap] Insert zero-width spaces after the
     /// separators inside an inline code span so TextKit can wrap a long token.
     ///
-    /// Problem: a path like `/tmp/android_backup_tg_feedback_triage_2026.md` is
+    /// Problem: a path like `/tmp/android_backup_user_feedback_triage_2026.md` is
     /// a single unbreakable "word" under `.byWordWrapping` except at `/`. On a
     /// narrow screen TextKit therefore breaks after `/tmp/` — leaving half the
     /// first line empty and a full-width background pill around four visible

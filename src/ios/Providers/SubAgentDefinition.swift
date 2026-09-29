@@ -5,7 +5,7 @@ import Foundation
 /// [T-sub-agents-v1] These are not defensive "just in case" numbers: the roster
 /// is injected into the main conversation's system prompt on every turn, so the
 /// count and the description length ARE the fixed per-request cost. Bounding the
-/// input is what removes the need for Claude Code's runtime token warning — a
+/// input is what removes the need for a runtime token warning — a
 /// user cannot configure a roster that blows the budget. At the maximum
 /// (10 × (40 + 200) chars) the roster is ~800 tokens.
 ///
@@ -35,8 +35,8 @@ struct SubAgentDefinition: Identifiable, Codable, Hashable {
     ///
     /// Renamed from `delegate_task` so it reads as "the sub agent tool" rather
     /// than a generic verb, matching the Sub Agents wording everywhere else.
-    /// The separate `agent_status` tool is folded in as an `action` — the shape
-    /// Hermes uses — so the model sees ONE tool for delegating and for
+    /// The separate `agent_status` tool is folded in as an `action`, so the
+    /// model sees ONE tool for delegating and for
     /// inspecting or stopping what it delegated.
     ///
     /// No compatibility shim for the old names: the feature has not shipped, so

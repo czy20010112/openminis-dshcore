@@ -21,7 +21,7 @@ import SwiftUI
 /// "truncated" preview on long assistant messages. It now renders the FULL
 /// message content inside a vertical ScrollView: short messages size to their
 /// content, long ones are capped to a fraction of the screen height and scroll
-/// inside the platter (Telegram/iMessage-style), so the preview is both opaque
+/// inside the platter, so the preview is both opaque
 /// and complete. An explicit measured height is required because a ScrollView
 /// has no intrinsic height — without it the context-menu platter would collapse.
 struct MessageContextMenuPreview: View {

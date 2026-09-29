@@ -938,7 +938,7 @@ extension AIChatViewModel {
                 }
                 break
             }
-            // [T-sub-agents-v1] One tool, three actions (the Hermes shape):
+            // [T-sub-agents-v1] One tool, three actions:
             // delegating and inspecting/stopping what was delegated are the
             // same capability, so they share a declaration. `delegate` is the
             // default because it is what the model calls almost every time.

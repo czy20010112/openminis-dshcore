@@ -2676,7 +2676,7 @@ final class ProviderConfigStore: ObservableObject {
     }
 
     /// True when ≥2 enabled instances share a normalized base URL AND have voice
-    /// models — the migration/dup case (场景 B). UI shows a non-destructive hint.
+    /// models — the migration/dup case (scenario B). UI shows a non-destructive hint.
     func hasFoldedShadowDuplicates() -> Bool {
         var seen = Set<String>()
         for inst in config.instances where inst.isEnabled && hasVoiceModels(for: inst.id) {

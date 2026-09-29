@@ -223,7 +223,7 @@ actor BackupExporter {
         //   - encryption still works by rewriting the staged tree in place
         //     after every category has run, so its members have to BE there.
         //     Moving encryption into the write path is the next step in
-        //     docs/backup-streaming-package-design.md;
+        //     docs/internal/backup-streaming-package-design.md;
         //   - a resume adopts staging written by the previous attempt, which
         //     may predate this build.
         // Both keep the old path, which is unchanged and still correct.

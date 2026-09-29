@@ -668,7 +668,7 @@ fun MarkdownDocument(
     }
 }
 
-// ─── Block-level splitting (Pattern A: ChatGPT/Claude-style scroll stability) ─
+// ─── Block-level splitting (Pattern A: stable scroll while streaming) ─────────
 //
 // Earlier the entire streaming markdown was rendered inside a single
 // LazyColumn item. When that item's height grew mid-stream, LazyList's

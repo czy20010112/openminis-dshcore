@@ -16,8 +16,8 @@ import org.junit.Before
 import org.junit.Test
 
 /**
- * Regression safety-net for the thinking/reasoning wire-format rules catalogued in
- * `/tmp/thinking_rules_evidence.md` §A (17 rules mined from git history).
+ * Regression safety-net for the thinking/reasoning wire-format rules (17 rules mined
+ * from past regressions; each test cites the rule and the commit that fixed it).
  *
  * WHY THIS EXISTS: the dominant failure mode for these rules is SILENT DEGRADATION —
  * not a thrown error, but a field quietly landing at the wrong path, or a tier
@@ -139,7 +139,7 @@ class ThinkingRulesRegressionTest {
 
     /**
      * Rule: Mistral — no thinking request parameter may EVER be sent.
-     * evidence §A "[Mistral] 完全禁止一切 reasoning 字段" · 4592ca9b (422
+     * Ref: "[Mistral] every reasoning field is strictly forbidden" · 4592ca9b (422
      * `extra_forbidden body.reasoning`) · OpenMinis#87.
      * This is the single most likely rule to be broken by a future refactor, because
      * it is a pure absence — nothing in the body points at it.
@@ -269,7 +269,7 @@ class ThinkingRulesRegressionTest {
     /**
      * Rule: Mistral — `reasoning_content` is forbidden on assistant history too.
      * The request schema and the message schema have DIFFERENT strictness: only
-     * `AssistantMessage` is `additionalProperties:false`. evidence §A · 29065ca0 / 0839f019.
+     * `AssistantMessage` is `additionalProperties:false`. Ref: 29065ca0 / 0839f019.
      */
     @Test
     fun `mistral strips reasoning_content from assistant history`() {
@@ -291,7 +291,7 @@ class ThinkingRulesRegressionTest {
      * root key is rejected at schema validation BEFORE model dispatch — which is why
      * the reporter saw every model fail and why turning thinking OFF did not help
      * (the `{"type":"disabled"}` branch still emitted the key).
-     * evidence §A "[Venice] 未知根键…" · 84f5c9e1 · OpenMinis#86.
+     * Ref: "[Venice] unknown root key…" · 84f5c9e1 · OpenMinis#86.
      */
     @Test
     fun `venice never receives root thinking key even when off`() {
@@ -312,7 +312,7 @@ class ThinkingRulesRegressionTest {
 
     /**
      * Rule: families that declare NO effort tiers keep the legacy self-reasoning skip.
-     * evidence §A "[数据驱动重构]" · 22647505 — the inverse case of the GLM report.
+     * Ref: "[data-driven refactor]" · 22647505 — the inverse case of the GLM report.
      */
     @Test
     fun `undeclared glm family sends no thinking field`() {
@@ -332,7 +332,7 @@ class ThinkingRulesRegressionTest {
     /**
      * Rule: a model DECLARING effort tiers is driven by declared capability, not by
      * its family name — the fix for "GLM 5.2 ignores the thinking level while Hermes
-     * on the same relay honours it". evidence §A · 22647505 / 47dc71b3.
+     * on the same relay honours it". Ref: 22647505 / 47dc71b3.
      */
     @Test
     fun `declared glm model receives clamped root reasoning_effort`() {
@@ -350,7 +350,7 @@ class ThinkingRulesRegressionTest {
     /**
      * Rule: the requested tier is clamped ONTO the declared set — asking for a tier the
      * model never declared must not reach the wire. `["high","max"]` is the most common
-     * sparse shape in the catalog. evidence §A · 47dc71b3.
+     * sparse shape in the catalog. Ref: 47dc71b3.
      */
     @Test
     fun `sparse declared set clamps xhigh onto a declared tier`() {
@@ -368,7 +368,7 @@ class ThinkingRulesRegressionTest {
     /**
      * Rule: ULTRA is a client-side "Max + orchestration" concept and must NEVER reach a
      * backend as the literal string "ultra" — both MAX and ULTRA map to "max".
-     * evidence §A "[GPT-5.6 / ULTRA]" · b38bf3d5.
+     * Ref: "[GPT-5.6 / ULTRA]" · b38bf3d5.
      */
     @Test
     fun `ultra never reaches the wire as a literal`() {
@@ -389,7 +389,7 @@ class ThinkingRulesRegressionTest {
      * At OFF the field must be OMITTED — sending "minimal" killed the whole request
      * on-device (iPhone 11, api.xiaomimimo.com): no reply at all, strictly worse than
      * the vendor-default reasoning the change was meant to avoid.
-     * evidence §A "[MiMo / Agnes] OFF 时必须完全省略字段" · c5efeb1e.
+     * Ref: "[MiMo / Agnes] OFF must omit the field entirely" · c5efeb1e.
      */
     @Test
     fun `mimo omits reasoning_effort entirely when off`() {
@@ -406,7 +406,7 @@ class ThinkingRulesRegressionTest {
      * Rule: OFF-tier injection is an ALLOWLIST, not a blanket rule. Vendors with
      * undocumented off semantics keep field omission; only official OpenAI ("none")
      * and Volcano Ark ("minimal") are on the list.
-     * evidence §A "[全局] thinking-off 显式值是 ALLOWLIST" · ff60c818.
+     * Ref: "[global] explicit thinking-off values are an ALLOWLIST" · ff60c818.
      */
     @Test
     fun `unknown custom base omits the off tier`() {
@@ -422,7 +422,7 @@ class ThinkingRulesRegressionTest {
 
     /**
      * Rule: Volcano Ark IS on the allowlist and takes the documented smallest tier.
-     * evidence §A · ff60c818 (`volces`/`ark.` base or seed/doubao model → "minimal").
+     * Ref: ff60c818 (`volces`/`ark.` base or seed/doubao model → "minimal").
      */
     @Test
     fun `volcano ark sends minimal as its off tier`() {
@@ -446,7 +446,7 @@ class ThinkingRulesRegressionTest {
      * be nested inside the `thinking` object; doing so made it an unknown nested key
      * with no root tier at all, so every V4 request silently ran at the vendor default.
      * The paired negative assertion is the whole point: the positive one alone passed
-     * for 3 months. evidence §A "[DeepSeek V4] …根级兄弟" · 847822eb.
+     * for 3 months. Ref: "[DeepSeek V4] …root-level siblings" · 847822eb.
      */
     @Test
     fun `deepseek v4 sends thinking and reasoning_effort as root siblings`() {
@@ -466,7 +466,7 @@ class ThinkingRulesRegressionTest {
 
     /**
      * Rule: thinking is ON by default on DeepSeek V4, so OFF must be sent EXPLICITLY.
-     * evidence §A · 9d4d4f2e / 847822eb.
+     * Ref: 9d4d4f2e / 847822eb.
      */
     @Test
     fun `deepseek v4 explicitly disables when off`() {
@@ -485,7 +485,7 @@ class ThinkingRulesRegressionTest {
      * Rule: Ark/Azure re-host third-party families behind a uniform OpenAI surface where
      * thinking is controlled ONLY by `reasoning_effort` — the vendor-native `thinking:{}`
      * shape is not honoured there. Same model id, different endpoint, different shape.
-     * evidence §A "[Volcengine Ark / Azure] 统一 reasoning_effort" · ba055121.
+     * Ref: "[Volcengine Ark / Azure] unified reasoning_effort" · ba055121.
      */
     @Test
     fun `ark hosted deepseek uses uniform reasoning_effort not vendor thinking object`() {
@@ -504,7 +504,7 @@ class ThinkingRulesRegressionTest {
     /**
      * Rule: Qwen sends `enable_thinking`/`thinking_budget` at BOTH root and `extra_body`
      * (DashScope expects extra_body; vLLM/SGLang accept top-level).
-     * evidence §A "[Qwen] 根级 + extra_body 双发" · 25165700.
+     * Ref: "[Qwen] sent both at root level and in extra_body" · 25165700.
      */
     @Test
     fun `qwen dual-sends thinking params at root and extra_body`() {
@@ -521,7 +521,7 @@ class ThinkingRulesRegressionTest {
     /**
      * Rule: DashScope enforces `thinking_budget < max_completion_tokens` STRICTLY —
      * equal values are rejected too ("[16384] must be greater than [16384]").
-     * evidence §A "[Qwen / DashScope] …等值也拒" · 8db455ff → a5a0de20 · issues #35 / #641.
+     * Ref: "[Qwen / DashScope] …equal values rejected too" · 8db455ff → a5a0de20 · issues #35 / #641.
      */
     @Test
     fun `qwen thinking_budget stays strictly below max_tokens`() {
@@ -540,7 +540,7 @@ class ThinkingRulesRegressionTest {
     /**
      * Rule: pathological max_tokens leaves no room for a positive budget strictly below
      * max, so the field must be dropped rather than emitted invalid.
-     * evidence §A · a5a0de20 ("maxTokens < 2 → drop thinking_budget entirely").
+     * Ref: a5a0de20 ("maxTokens < 2 → drop thinking_budget entirely").
      */
     @Test
     fun `qwen drops thinking_budget when max_tokens leaves no room`() {
@@ -558,7 +558,7 @@ class ThinkingRulesRegressionTest {
      * Rule: MiMo/DeepSeek REQUIRE `reasoning_content` on assistant history — the exact
      * inverse of Mistral. Neither vendor advertises supportsReasoning, so capability
      * metadata cannot distinguish them; this is why echo policy must be per-provider.
-     * evidence §A "[DeepSeek / MiMo / GLM / Kimi] 思考内容必须原样回传" · 7f88321e.
+     * Ref: "[DeepSeek / MiMo / GLM / Kimi] thinking content must be echoed back verbatim" · 7f88321e.
      */
     @Test
     fun `interleaved model echoes reasoning_content on assistant history`() {
@@ -583,7 +583,7 @@ class ThinkingRulesRegressionTest {
      * Rule: MiMo ships BOTH spellings in the wild — catalog docs say `mimo-2.5` while the
      * live API returns `mimo-v2.5`. A rule matching one spelling silently misses the
      * other, letting xhigh through to a backend that 400s on it.
-     * evidence §A "[MiMo] 模型 id 拼写变体" · 72968c4f.
+     * Ref: "[MiMo] model id spelling variants" · 72968c4f.
      * (Covered for the OFF path by `mimo omits reasoning_effort entirely when off`,
      * which iterates both spellings; this asserts the clamp side.)
      */

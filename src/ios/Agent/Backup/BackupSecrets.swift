@@ -21,7 +21,7 @@ private let logger = AppLogger(category: "Backup")
 /// `Data.base64EncodedString()` produces, just without line breaks — and
 /// `base64EncodedString()` emits no line breaks by default, so the two are
 /// byte-identical). Deviating here would silently break interop, which §5.4
-/// explicitly warns against ("不再发明第二套").
+/// explicitly warns against ("do not invent a second scheme").
 struct BackupSecrets: Codable {
     var v: Int = 1
     var providers: [ProviderSecret] = []

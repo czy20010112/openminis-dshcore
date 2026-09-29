@@ -1475,7 +1475,7 @@ actor ChatStore {
         // real 100k-message / 1772-session DB, swapping LIKE→mask took it from
         // ~523ms to ~30-58ms (9×), each subquery a fast indexed
         // `SEARCH … USING idx_msg_sess_role_sort (session_id=? AND role=?)`.
-        // A window-function CTE (方案1) was tried and REJECTED: it materializes
+        // A window-function CTE (approach 1) was tried and REJECTED: it materializes
         // every assistant/user row across the whole table (MATERIALIZE asst),
         // clocking ~1100ms — 20× slower than the indexed subqueries here.
         let sql = Self.sessionListSQL(whereClause: "")

@@ -843,7 +843,7 @@ private struct CopyableURLCapsule: View {
     }
 }
 
-/// Full-screen live sheet — Manus-style layout with nav bar, live content, and bottom status/navigation.
+/// Full-screen live sheet — layout with a nav bar, live content, and bottom status/navigation.
 struct ToolLiveSheet: View {
     let toolBlocks: [AssistantBlock]
     @State var currentIdx: Int

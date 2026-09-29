@@ -1008,7 +1008,7 @@ enum RequestBodyPatcher {
     }
 
     /// Inject cache_control on the last tool definition so that tools + system
-    /// form a stable cached prefix (matching Claude Code's strategy).
+    /// form a stable cached prefix.
     static func injectToolsCacheControl(into request: NSMutableURLRequest) {
         guard let body = request.httpBody,
               bodyMentionsTools(body),
