@@ -418,7 +418,7 @@ private fun ConfigureProviderScreen(
     }
 
     var label by remember { mutableStateOf(defaultLabel) }
-    // [T-provider-name-chinese-34602, port iOS 7b283951] Flips true the
+    // [T-provider-name-chinese, port iOS 7b283951] Flips true the
     // first time the user types into the label field. While `false`, the
     // LaunchedEffect below keeps `label` glued to the auto-incremented
     // default, so adding a second OpenAI instance picks up "OpenAI 2"
@@ -428,7 +428,7 @@ private fun ConfigureProviderScreen(
     // clobber what they typed. Without this gate the `remember(config)`
     // recomputation, combined with Compose tearing down + recreating
     // ConfigureProviderScreen on step navigation, makes the field
-    // appear to reject Chinese — the iOS root cause Telegram 34602
+    // appear to reject Chinese — the iOS root cause a user
     // reported, with the same Android equivalent here.
     var labelEdited by remember { mutableStateOf(false) }
     androidx.compose.runtime.LaunchedEffect(defaultLabel, labelEdited) {

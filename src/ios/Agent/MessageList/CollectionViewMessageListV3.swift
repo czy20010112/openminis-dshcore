@@ -15,8 +15,8 @@ extension Notification.Name {
     ///
     /// The mount is a +70pt-per-row in-place content change on a cell whose
     /// item identity does not move, so nothing on the normal invalidation path
-    /// (reconfigure / prepareForReuse) runs. Device forensics (msg 5956CCDD,
-    /// log hash 1BFDAB45, 2026-08-08) showed the failure chain when the cell's
+    /// (reconfigure / prepareForReuse) runs. Device forensics (2026-08-08)
+    /// showed the failure chain when the cell's
     /// FIRST real self-size lands inside the pre-mount window: the tile-less
     /// height (~68pt) enters `heightCache`, every later correct re-seed is
     /// rejected by `setPrecalcHeight`'s occupied-slot guard, and the

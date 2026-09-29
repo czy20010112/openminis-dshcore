@@ -333,7 +333,7 @@ enum LLMProviderFactory {
 
     /// Kimi Code / Coding Plan — OpenAI-compatible coding upstream reached with
     /// the device-code OAuth bearer. Mirrors makeXAIProvider (custom base +
-    /// OAuth bearer through OpenAIProvider). See the Kimi Code OAuth design notes.
+    /// OAuth bearer through OpenAIProvider).
     /// [T-copilot-provider] GitHub Copilot. UNOFFICIAL — see CopilotConstants.
     ///
     /// Rides `OpenAIProvider` because the chat surface below

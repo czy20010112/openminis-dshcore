@@ -466,7 +466,7 @@ do {
 print("\n══ [10] the UTF-8 scan counts exactly what the scalar walk did ══")
 do {
     let samples = ["", "abc", "ls -la 1234", "自动压缩后继续", "😀 emoji", "é accented", "mixed 中文 and 123 😀 é\n\t{}",
-                   String(repeating: "drwxr-xr-x  13 ethan staff 416 Sep 22\n", count: 50)]
+                   String(repeating: "drwxr-xr-x  13 alice staff 416 Sep 22\n", count: 50)]
     check("identical on ASCII, CJK, emoji, accented, whitespace", samples.allSatisfy { estimateTokens($0) == estimateTokensByScalars($0) })
 }
 

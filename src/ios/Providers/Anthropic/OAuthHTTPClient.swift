@@ -641,15 +641,12 @@ private final class OAuthURLProtocol: URLProtocol, URLSessionDataDelegate {
         // Remove API key
         mutable.setValue(nil, forHTTPHeaderField: "x-api-key")
 
-        // Mimic the real Claude Code CLI as closely as possible. Anthropic's
-        // backend uses the *combination* of `anthropic-beta`, `User-Agent`,
-        // and `X-Stainless-*` headers to decide whether an OAuth-scoped
-        // (Claude Code) credential is being used by the official CLI or by a
-        // third-party client; non-CLI requests get downgraded (e.g. extra-
-        // usage billing, silently-disabled `thinking`/`adaptive`).
-        // The full beta set + Stainless headers below align with sub2api's
-        // FullClaudeCodeMimicryBetas / DefaultHeaders (see
-        // Wei-Shaw/sub2api backend/internal/pkg/claude/constants.go).
+        // Claude Code OAuth credentials are served with the Claude CLI's
+        // request profile: the `anthropic-beta` set, `User-Agent` and
+        // `X-Stainless-*` headers below. Without it some features (e.g.
+        // `thinking`/`adaptive`) are not enabled for these credentials.
+        // Values tracked from Wei-Shaw/sub2api
+        // backend/internal/pkg/claude/constants.go.
         let existing = mutable.value(forHTTPHeaderField: "anthropic-beta") ?? ""
         // [T-anthropic-redact-thinking] `redact-thinking-2026-02-12` is
         // intentionally OMITTED. With it, the server returns thinking content
@@ -657,12 +654,12 @@ private final class OAuthURLProtocol: URLProtocol, URLSessionDataDelegate {
         // populated — so Claude 4.6+ adaptive-thinking models (sonnet-5,
         // opus-4-8, …) reason (usage.thinking_tokens > 0) but the plaintext is
         // never shown in the UI. Claude Code's official CLI only pushes this beta
-        // when `showThinkingSummaries !== true` (de-obfuscated; anthropics/
+        // when `showThinkingSummaries !== true` (anthropics/
         // claude-code#31326; code.claude.com/docs model-config notes interactive
         // API sessions get redacted thinking by default unless
         // showThinkingSummaries: true). Dropping it = always the
         // showThinkingSummaries:true behavior, so thinking text is visible. The
-        // other 7 mimicry betas are unchanged.
+        // other 7 OAuth betas are unchanged.
         let mimicryBetas = [
             "claude-code-20250219",
             "oauth-2025-04-20",

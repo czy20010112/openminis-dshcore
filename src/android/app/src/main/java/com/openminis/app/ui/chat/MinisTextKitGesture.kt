@@ -531,7 +531,7 @@ fun SelectionDragTracker(
     //    against a new shard → dragIntent updated → another nudge piled
     //    on → handle position visually jumped → user micro-corrected →
     //    new pointer event → repeat. Symptom was "constant jitter + cannot scroll up"
-    //    (TG35696-35699 LeeeSe/𝙓𝙄𝙉).
+    //    (field reports).
     //
     // The tick loop reads the latest dragIntent point each frame
     // independently of pointer events, so a stationary finger inside the

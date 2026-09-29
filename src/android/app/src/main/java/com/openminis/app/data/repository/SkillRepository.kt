@@ -227,7 +227,7 @@ class SkillRepository(private val context: Context) {
      * session id ([toReal]) once `ensureSession()` creates the real DB row.
      * Without this hop, a pre-first-message skill toggle stays bound to the
      * draft key and becomes invisible the next time the chat is opened
-     * under its real id — exactly the symptom XIN reported. Paired with
+     * under its real id — exactly the symptom a user reported. Paired with
      * [MCPRepository.renameSessionOverrides].
      */
     fun renameSessionOverrides(fromDraft: String, toReal: String) {

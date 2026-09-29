@@ -17,7 +17,7 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
     case xAI
     /// Kimi Code / Coding Plan (Moonshot). RFC 8628 device-code OAuth,
     /// OpenAI-compatible coding upstream — flows through OpenAIProvider with
-    /// custom base URL + OAuth bearer, like xAI. See the Kimi Code OAuth design notes.
+    /// custom base URL + OAuth bearer, like xAI.
     case kimiCode
     /// [T-copilot-provider] GitHub Copilot via an UNOFFICIAL reverse-engineered
     /// integration: RFC 8628 device-code sign-in to GitHub, then a short-lived

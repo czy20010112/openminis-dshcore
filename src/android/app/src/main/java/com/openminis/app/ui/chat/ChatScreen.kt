@@ -1532,7 +1532,7 @@ fun ChatScreen(
         // Scan every row until the target's key shows up.
         //
         // The previous seek walked only toward HIGHER indices in viewport-sized
-        // strides, and that produced the user's dead tap: opening the 读屏
+        // strides, and that produced the user's dead tap: opening a long test
         // session and dragging slightly left the viewport on rows 0..8 with the
         // target user bubble at row 9 — just BELOW it. The stride seek jumped
         // 17 -> 41, straight past the target, found nothing, and fell into
@@ -1574,7 +1574,7 @@ fun ChatScreen(
         // scrollBy feedback loop is needed (both were tried and failed — anchor
         // granularity is ~130px, far coarser than the residual gap).
         //
-        // Calibrated on device (Pixel 4a, 读屏 session, 148px row, 1646px
+        // Calibrated on device (Pixel 4a, a long test session, 148px row, 1646px
         // viewport) by sweeping the parameter and reading the bubble's physical
         // top-y from uiautomator:
         //     scrollOffset  -400  ->  y=1254
@@ -3209,7 +3209,7 @@ fun ChatScreen(
                 // emitted (`hasFloatingTools` below) so reserve and bar
                 // visibility flip on the same frame.
                 // [T-android-chat-cannot-scroll-bottom-many-tools]
-                // Bug 𝙓𝙄𝙉 TG36286: with 7+ tools the user couldn't scroll the
+                // Bug (user report): with 7+ tools the user couldn't scroll the
                 // last messages above the floating tool status bar.
                 //
                 // Asymmetry between the bar's render condition and its

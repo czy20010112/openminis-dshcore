@@ -1256,7 +1256,7 @@ actor BackupExporter {
     ///
     /// [T-backup-package-name-device] Shape is
     /// `<device>-<yyyyMMdd>-<sortable-id>.minisbak`, e.g.
-    /// `Ethans-iPhone-20260823-mf3k9q2phz.minisbak`. Three deliberate changes
+    /// `Alexs-iPhone-20260823-mf3k9q2phz.minisbak`. Three deliberate changes
     /// from the old `backup-20260823-1259-f69c00.minisbak`:
     ///
     ///  - **Device first.** Several devices back up into one NAS folder and
@@ -1271,7 +1271,7 @@ actor BackupExporter {
     ///
     /// [T-backup-package-name-encrypted] An encrypted package additionally
     /// carries `-encrypted` before the extension, e.g.
-    /// `Ethans-iPhone-20260823-mf3k9q2phz-encrypted.minisbak`. Whether a
+    /// `Alexs-iPhone-20260823-mf3k9q2phz-encrypted.minisbak`. Whether a
     /// package needs its passphrase is otherwise invisible until someone tries
     /// to open it — which, for a backup found on a NAS months later, is
     /// exactly the wrong moment to find out. It goes AFTER the id rather than
@@ -1334,7 +1334,7 @@ actor BackupExporter {
         return time + encode(h, width: 3)
     }
 
-    /// A filename-safe, ASCII device token, e.g. `Ethans-iPhone`.
+    /// A filename-safe, ASCII device token, e.g. `Alexs-iPhone`.
     ///
     /// `UIDevice.current.name` is user-controlled and lands on SMB/exFAT
     /// shares, so it cannot go into a filename as-is: it may hold spaces,
@@ -1361,14 +1361,14 @@ actor BackupExporter {
                 lastWasSeparator = false
             } else if ch == "'" || ch == "\u{2019}" {
                 // Elide apostrophes rather than treating them as separators:
-                // the overwhelmingly common device name is "Ethan's iPhone",
-                // and splitting on the apostrophe yields `Ethan-s-iPhone`,
+                // the overwhelmingly common device name is "Alex's iPhone",
+                // and splitting on the apostrophe yields `Alex-s-iPhone`,
                 // which reads as three words. Both the ASCII quote and the
                 // curly one iOS substitutes are handled.
                 continue
             } else if !out.isEmpty && !lastWasSeparator {
                 // Collapse any run of spaces/punctuation/dropped non-ASCII into
-                // a single dash instead of emitting `Ethan--s---iPhone`.
+                // a single dash instead of emitting `Alex--s---iPhone`.
                 out.append("-")
                 lastWasSeparator = true
             }

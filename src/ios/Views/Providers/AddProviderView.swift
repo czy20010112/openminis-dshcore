@@ -146,8 +146,8 @@ struct AddProviderView: View {
     /// True once the user has manually edited the label. We use this to
     /// stop `defaultLabel(for:)` from clobbering a label the user just
     /// typed (often a Chinese / non-ASCII name) when they go back and
-    /// re-tap the provider-type row. The Telegram report
-    /// `T-provider-name-chinese-34602` originated from this footgun:
+    /// re-tap the provider-type row. The user report
+    /// `T-provider-name-chinese` originated from this footgun:
     /// users perceived the new-instance label as "ASCII only" because
     /// re-touching the provider type silently overwrote whatever they
     /// had typed.

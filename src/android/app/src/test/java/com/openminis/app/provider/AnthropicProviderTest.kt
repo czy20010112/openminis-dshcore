@@ -620,7 +620,7 @@ class AnthropicProviderTest {
             "anthropic-beta must not contain redact-thinking; was: $beta",
             !beta.contains("redact-thinking"),
         )
-        // Sanity: the OAuth mimicry betas we DO expect are still present.
+        // Sanity: the OAuth OAuth betas we DO expect are still present.
         assertTrue("oauth beta present", beta.contains("oauth-2025-04-20"))
     }
 }

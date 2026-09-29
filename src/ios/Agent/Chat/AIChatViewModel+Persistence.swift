@@ -890,7 +890,7 @@ extension AIChatViewModel {
         // store has no SessionModelBinding for them. Without a binding, the
         // resolver falls into step 2 (cachedSessionModelId lookup), which can
         // pick an entry that lives outside the default group — observed bug:
-        // synced session routes to Anthropic(wsvn63) whose OAuth token is
+        // synced session routes to Anthropic(account A) whose OAuth token is
         // org-blocked, even though Default Model group's only sonnet-4-6
         // member is Anthropic(53) (and that's what the UI subtitle showed).
         //

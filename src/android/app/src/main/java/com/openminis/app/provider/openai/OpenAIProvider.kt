@@ -191,7 +191,7 @@ class OpenAIProvider private constructor(
          * uploading, so a healthy-but-slow server looked like a dead
          * connection. See [STREAM_UPLOAD_CAP_MS] for the upload-phase bound.
          *
-         * Raised 30s -> 120s (user report, TG soyo): complex agent turns,
+         * Raised 30s -> 120s (user report): complex agent turns,
          * locally-hosted large models, and slow relay endpoints can legitimately
          * take well over 30s to emit the first response header, and the old
          * budget cancelled those healthy requests as false timeouts. readTimeout
@@ -2923,7 +2923,7 @@ class OpenAIProvider private constructor(
         // `encrypted_content` — the reasoning deltas arrive empty, so the
         // Thinking region never renders even though the model reasoned (token
         // usage shows it did). This was the Codex-OAuth "thinking on but UI
-        // shows nothing" bug (XIN). Mirrors iOS OpenAIAgentProvider.swift:415
+        // shows nothing" bug (user report). Mirrors iOS OpenAIAgentProvider.swift:415
         // (`["effort": effort, "summary": "auto"]`). OpenAI ignores the variant
         // it doesn't support and falls back to an auto-equivalent, so it's safe
         // on every Responses-flavor endpoint.

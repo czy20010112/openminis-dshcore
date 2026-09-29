@@ -3468,7 +3468,7 @@ struct ContentView: View {
                                 // row's selection gesture swallows the long-press (iPad)
                                 // / right-click (mac), so a contextMenu placed at the
                                 // list-row level never fires for the open session
-                                // (GH#30 / TG36272). Binding it to the SessionRow view
+                                // (GH#30). Binding it to the SessionRow view
                                 // itself puts it below the selection layer, so it
                                 // triggers on every row regardless of selection state.
                                 // iPhone uses `stackList` (no selection:) and is

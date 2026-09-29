@@ -393,8 +393,8 @@ struct UnifiedModelPicker: View {
         // global array's type-interleaving is invisible there. This picker
         // walked the same array FLAT, which exposed that interleaving and made
         // the two orders disagree (user report: management shows
-        // 球球 → 球球图片 → 球球Grok …, picker shows DeepSeek → 球球 → Codex CPA
-        // → 球球图片 …).
+        // RelayA → RelayA-Image → RelayA-Grok …, picker shows DeepSeek → RelayA → Codex CPA
+        // → RelayA-Image …).
         //
         // Reordering cannot fix this from the data side: `moveInstances`
         // deliberately permutes only WITHIN a type section and pins every other

@@ -3247,7 +3247,7 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
             // short-circuit (81e43b58) serve it for the rest of the turn —
             // the truncated bubble with a seemingly detached tile.
             //
-            // Field report 2026-08-09 (msg F70F81DD, image via the system share
+            // Field report 2026-08-09 (image via the system share
             // sheet) reproduced exactly this on a build where `AttachMount` had
             // zero hits across the whole log: est=48 attachCount=0 at insert,
             // est=118 attachCount=1 some 350ms later, and no idx=0 real measure
@@ -7216,7 +7216,7 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
                     // [T-ios-fable5-empty-response] Anthropic safety classifier declined the
                     // request (HTTP 200, stop_reason="refusal", input tokens billed, empty
                     // content). On Fable 5 this fires as a false-positive on ordinary turns
-                    // that carry the large Claude Code agentic system prompt + tool set — the
+                    // that carry the large agentic system prompt + tool set (OAuth path) — the
                     // exact reason the model detail page's Quick Test (no system prompt, no
                     // tools) succeeds while a real conversation returns empty. Retrying the
                     // identical request just gets declined again, so we surface it directly

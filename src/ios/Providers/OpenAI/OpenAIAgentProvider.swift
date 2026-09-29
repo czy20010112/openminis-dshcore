@@ -2075,7 +2075,7 @@ final class OpenAIAgentProvider: AgentProvider {
     /// goes out: every `function_call_output` must have a `function_call` with
     /// the same `call_id` EARLIER in the array, and vice versa.
     ///
-    /// Field report (𝙓𝙄𝙉, 2026-09): the upstream answered
+    /// Field report (2026-09): the upstream answered
     ///     No tool call found for function call output with call_id call_… .
     ///     (invalid_request_error)
     /// and, because the request array is rebuilt deterministically, it repeated

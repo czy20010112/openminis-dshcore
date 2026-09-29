@@ -1,7 +1,7 @@
 #!/usr/bin/env swift
 // [T-responses-orphan-tool-output, T-responses-tool-id-normalize]
 //
-// Field report (𝙓𝙄𝙉, 2026-09): a multi-turn session started answering
+// Field report (2026-09): a multi-turn session started answering
 //     {"error":{"message":"No tool call found for function call output with
 //      call_id call_M1ate3tSzXCh3c1lr8QCsild.","type":"invalid_request_error"}}
 // and, because the request array is rebuilt deterministically from the same

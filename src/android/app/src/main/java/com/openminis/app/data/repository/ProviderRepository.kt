@@ -2549,7 +2549,7 @@ class ProviderRepository(private val context: Context) {
                     put("manualOAuthToken", Base64.encodeToString(manual.toByteArray(), Base64.NO_WRAP))
                 }
             }
-            // [T-android-provider-export-oauth-token] (XIN 38955) Export the
+            // [T-android-provider-export-oauth-token] Export the
             // STRUCTURED OAuth-login credential (access_token / refresh_token /
             // expire_at) saved by the OAuth login flow under a separate pref than
             // apiKey / manualOAuthToken. Previously omitted, so an OAuth-logged-in
@@ -2880,7 +2880,7 @@ class ProviderRepository(private val context: Context) {
             mgr?.saveManualBearerToken(manualToken)
         }
 
-        // [T-android-provider-export-oauth-token] (XIN 38955) Restore the
+        // [T-android-provider-export-oauth-token] Restore the
         // structured OAuth-login credential so the imported instance is
         // authenticated. Decode base64 → JSON → write back via the OAuth
         // manager. Mirrors iOS 703ff4bc; purely additive alongside the

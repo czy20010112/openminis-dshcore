@@ -464,8 +464,8 @@ extension AIChatViewModel {
             //     binding row didn't sync), the older "first credentialed
             //     match across ALL instances" logic would land on whatever
             //     Anthropic instance came first in `store.modelEntries`. On a
-            //     device with multiple Anthropic OAuth logins (e.g. wsvn63 +
-            //     53), it could route to wsvn63 whose OAuth token is rejected
+            //     device with multiple Anthropic OAuth logins (e.g. account A +
+            //     account B), it could route to account A whose OAuth token is rejected
             //     by Anthropic at the org level — even though the UI showed
             //     "Anthropic(53)" and the default group would have picked 53.
             //     User experiences this as "open synced session → 403; switch

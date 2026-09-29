@@ -266,8 +266,8 @@ enum AgentStopReason: Sendable {
     /// input tokens billed, empty `content`). Distinct from `.endTurn` so the agent loop can
     /// surface an actionable message instead of a generic "empty response" and skip the
     /// pointless transient-retry path (a refusal is deterministic, not transient).
-    /// Fires as a false-positive on Fable 5 for benign turns carrying the large Claude Code
-    /// agentic system prompt + tool set. See [T-ios-fable5-empty-response].
+    /// Fires as a false-positive on Fable 5 for benign turns carrying the large agentic
+    /// system prompt + tool set (OAuth path). See [T-ios-fable5-empty-response].
     case refusal
 }
 

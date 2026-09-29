@@ -598,7 +598,7 @@ fun ProviderDetailScreen(
                             onLongClick = { menuEntryId = entry.id },
                         ),
                 ) {
-                    // [T-android-model-capability-output-tags] (XIN msg 38847)
+                    // [T-android-model-capability-output-tags]
                     // The list previously read INPUT modalities only, so a
                     // generator like gpt-image-2 (image_output) or an
                     // audio_output model showed no capability badge at all.

@@ -67,8 +67,8 @@ class AgentForegroundService : Service() {
 
         // [T-android-dynamic-island] Framework extras key read by
         // Notification.isRequestPromotedOngoing() (Android 16). Not exported as
-        // a public SDK constant; value verified by decompiling the on-device
-        // framework.jar (const-string "android.requestPromotedOngoing").
+        // a public SDK constant; this is the extras key the Android 16
+        // framework reads ("android.requestPromotedOngoing").
         private const val EXTRA_REQUEST_PROMOTED_ONGOING = "android.requestPromotedOngoing"
         private const val ACTION_STOP = "com.openminis.app.STOP_AGENT_SERVICE"
 
@@ -939,12 +939,12 @@ class AgentForegroundService : Service() {
         // promotion. The public builder method `setRequestPromotedOngoing(true)`
         // is NOT in the android-36 SDK stubs yet (@FlaggedApi / not exported),
         // and — importantly — this is NOT the same as FLAG_PROMOTED_ONGOING:
-        // decompiling the on-device framework showed
+        // the framework's
         // Notification.hasPromotableCharacteristics() gates on
         // isRequestPromotedOngoing(), which reads the extras boolean
         // "android.requestPromotedOngoing" — the FLAG is what the *system* sets
         // AFTER it decides to promote, not the request. So we set the extras
-        // key directly (verified against the decompiled getBoolean call).
+        // key directly (verified on device).
         builder.addExtras(android.os.Bundle().apply {
             putBoolean(EXTRA_REQUEST_PROMOTED_ONGOING, true)
         })

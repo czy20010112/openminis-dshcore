@@ -198,7 +198,7 @@ enum DeviceIdentity {
     }
 
     static let customNameKey = "device.customName"
-    /// Generous enough for "Ethan's Work iPhone 17 Pro", short enough that it
+    /// Generous enough for "Alex's Work iPhone 17 Pro", short enough that it
     /// cannot dominate a backup filename or a row in the sync device list.
     static let customNameMaxLength = 48
 

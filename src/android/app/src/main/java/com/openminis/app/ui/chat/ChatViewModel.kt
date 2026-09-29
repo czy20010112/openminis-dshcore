@@ -1136,7 +1136,7 @@ class ChatViewModel(
     // reads (the orphaned previous streamJob's tail block running on a different
     // dispatcher) see the latest assignment. Without it, an old job's
     // `if (streamJob === thisJob)` guard could read a cached reference and
-    // wrongly reset _isStreaming on the new live job — the exact race XIN hit
+    // wrongly reset _isStreaming on the new live job — the exact race a user hit
     // 2026-06-12 20:22:26 / 20:23:25 (cancel → resume → cancel → retry, where
     // the cancelled resume's finally fired ~2s after the new retry was already
     // streaming, hiding the Stop button while the new turn was live).
@@ -5706,7 +5706,7 @@ class ChatViewModel(
             // I/O) reaching this tail AFTER a fresh send/resume/retry has
             // already taken over would otherwise hide the Stop button while
             // the new turn is still streaming. See `var streamJob` KDoc and
-            // XIN 2026-06-12 log (20:22:26 / 20:23:25).
+            // Field log 2026-06-12 (20:22:26 / 20:23:25).
             if (streamJob === coroutineContext[Job]) {
                 AppLogger.info(TAG_STREAM, "$label _isStreaming=false (about to set)")
                 _isStreaming.value = false
@@ -9766,7 +9766,7 @@ class ChatViewModel(
             // same message in the same emit, so it cannot reach this
             // branch and the clear is safe.
             //
-            // 𝙓𝙄𝙉 TG36302 (0.10): user saw a red "timeout / retry" banner
+            // Field report (0.10): user saw a red "timeout / retry" banner
             // glued to the bottom of the conversation while the agent
             // continued running (LM Studio tool loop on 30/30, "Minis is
             // thinking" indicator). Caused by (a) the fallback-switch branch in
@@ -10826,7 +10826,7 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
 
     private fun generateSessionTitleIfNeeded() {
         // [T-android-titlegen-diag-logging] Unified "TitleGen" trail across
-        // every path of this function — XIN 40454 reported sessions silently
+        // every path of this function — a user reported sessions silently
         // staying "New Chat" and the failure paths were under-logged.
         // Logging only; no logic change.
         AppLogger.info(

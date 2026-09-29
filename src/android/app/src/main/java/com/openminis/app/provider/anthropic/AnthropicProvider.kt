@@ -904,13 +904,11 @@ class AnthropicProvider(
         // OkHttp forbids multiple values for the same header slot via `.header(...)`,
         // so build a combined anthropic-beta string and set it once.
         //
-        // For OAuth (Claude Code) credentials we mimic the real CLI as closely as
-        // possible — Anthropic's backend uses the *combination* of anthropic-beta,
-        // User-Agent, and X-Stainless-* headers to decide whether the request is
-        // coming from the official CLI or a third-party client. Non-CLI requests
-        // get downgraded (extra-usage billing, silently-disabled thinking on 4.7).
-        // Aligned with sub2api FullClaudeCodeMimicryBetas / DefaultHeaders
-        // (Wei-Shaw/sub2api backend/internal/pkg/claude/constants.go).
+        // OAuth (Claude Code) credentials are served with the Claude CLI's
+        // request profile — the anthropic-beta set, User-Agent and X-Stainless-*
+        // headers. Without it some features (e.g. thinking on 4.7) are not
+        // enabled for these credentials. Values tracked from Wei-Shaw/sub2api
+        // backend/internal/pkg/claude/constants.go.
         //
         // For API-key / custom endpoints we only carry the betas actually needed
         // by the request body; we must NOT include oauth-2025-04-20 or
@@ -919,16 +917,16 @@ class AnthropicProvider(
         val betaFlags = mutableListOf<String>()
         if (isOAuth) {
             // [T-anthropic-redact-thinking] Deliberately OMIT
-            // "redact-thinking-2026-02-12" from the Claude-Code mimicry betas.
+            // "redact-thinking-2026-02-12" from the Claude Code OAuth betas.
             // When present, Anthropic redacts the plaintext of `thinking` content
             // blocks (returns an empty `thinking` string with only a `signature`),
             // so a reasoning model runs (usage.thinking_tokens > 0) but the App
             // can't show any thinking text. The official Claude Code CLI only adds
-            // this beta when `showThinkingSummaries` is unset/false (confirmed via
-            // CLI de-obfuscation, anthropics/claude-code#31326, and the
+            // this beta when `showThinkingSummaries` is unset/false (per
+            // anthropics/claude-code#31326 and the
             // code.claude.com model-config docs); omitting it is equivalent to
             // `showThinkingSummaries: true` — pure UI visibility, no effect on
-            // reasoning quality or token budget. All other mimicry betas stay.
+            // reasoning quality or token budget. All other OAuth betas stay.
             betaFlags.addAll(listOf(
                 "claude-code-20250219",
                 "oauth-2025-04-20",

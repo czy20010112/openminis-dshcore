@@ -910,7 +910,7 @@ struct ProviderInstanceDetailView: View {
 
     private func modalityIcons(for model: LLMModel) -> some View {
         let modality = model.modalityOverride ?? model.capabilities.supportedModalities
-        // [T-ios-model-capability-output-tags] (XIN msg 38847) The list only
+        // [T-ios-model-capability-output-tags] The list only
         // rendered INPUT modalities (image/pdf/audio/video _input) — output
         // modalities were never iterated, so a generator like gpt-image-2
         // (image_output) or an audio_output model showed no capability badge.

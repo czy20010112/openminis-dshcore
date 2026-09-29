@@ -37,10 +37,9 @@ class KimiOAuthManager(
 
         /**
          * Official Kimi Code CLI OAuth client id (observed in CLIProxyAPI's
-         * public source). Compliance decision explicitly approved by the
-         * user: this borrows the first-party client identity under Moonshot
-         * ToS — rotation / rate-limit / revocation risk is known and
-         * accepted. Overridable via AndroidManifest meta-data
+         * public source). It is not issued to Minis, so it may be rotated,
+         * rate-limited or revoked upstream. Overridable via AndroidManifest
+         * meta-data
          * "KimiOAuthClientID" (the Android analog of iOS's Info.plist key);
          * when the meta-data is absent we fall back to this value rather
          * than disabling login (iOS lesson: an empty placeholder made the
