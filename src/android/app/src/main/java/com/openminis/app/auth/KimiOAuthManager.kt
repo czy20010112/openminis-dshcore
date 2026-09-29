@@ -187,7 +187,7 @@ class KimiOAuthManager(
         onDeviceCode: (KimiDeviceFlow.DeviceAuthorization) -> Unit,
     ): String {
         val auth = requestDeviceAuthorization()
-        Log.i(TAG, "Device code issued — user_code=${auth.userCode} interval=${auth.intervalSeconds}s expires=${auth.expiresInSeconds}s")
+        Log.i(TAG, "Device code issued — user_code=${OAuthLogRedaction.secret(auth.userCode)} interval=${auth.intervalSeconds}s expires=${auth.expiresInSeconds}s")
         withContext(Dispatchers.Main) { onDeviceCode(auth) }
         return pollForToken(auth)
     }
@@ -270,8 +270,9 @@ class KimiOAuthManager(
                         Log.w(TAG, "Stale invalid_grant ignored — refresh token was rotated concurrently; keeping new credentials")
                         return@withLock RefreshOutcome.SUCCESS
                     }
-                    Log.e(TAG, "Refresh token invalid — clearing credentials")
-                    logout()
+                    // [T-oauth-keep-credentials] Never delete: mark for re-login.
+                    Log.e(TAG, "Refresh token invalid — marking for re-login, credentials kept")
+                    markNeedsReauth(refreshTokenValue)
                     return@withLock RefreshOutcome.INVALID_GRANT
                 }
                 Log.w(TAG, "Token refresh transient failure — keeping token")
@@ -298,7 +299,7 @@ class KimiOAuthManager(
         when (refreshTokenClassified()) {
             RefreshOutcome.SUCCESS ->
                 loadStoredTokens()?.optString("access_token", "")?.ifEmpty { null }
-            RefreshOutcome.INVALID_GRANT -> null // logout() already ran
+            RefreshOutcome.INVALID_GRANT -> null // marked for re-login, credentials kept
             RefreshOutcome.TRANSIENT ->
                 if (expireAt in 1..now) null else token
             RefreshOutcome.NO_TOKEN -> null
