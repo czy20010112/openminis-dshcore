@@ -58,10 +58,11 @@ Buttons use the plain imperative, not a nominalised form.
 
 ## 4. Adding a locale
 
-Four things move together; missing any one fails silently:
+Five things move together; missing any one fails silently:
 
 1. `Localizable.xcstrings` — use `scripts/add_locale.py`, never `json.dump`
-   (a round-trip reflows all ~80k lines and collides with concurrent sessions).
+   (a round-trip reflows the whole catalog, producing a huge diff that
+   conflicts with any other in-flight change to the file).
 2. `project.pbxproj` — `knownRegions`, a `PBXFileReference`, and membership in
    the `InfoPlist.strings` `PBXVariantGroup`. A new `.lproj` does **not** join
    the target automatically.
