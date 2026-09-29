@@ -421,6 +421,75 @@ final class ThinkingRulesRegressionTests: XCTestCase {
         )
     }
 
+    // MARK: - [T-thinking-max-unreachable]
+
+    /// Rule: a declared set RAISES the ceiling but must never LOWER a known family rule.
+    /// models.dev often lists an incomplete set for a model we know reaches Max —
+    /// gpt-5.6-sol has an explicit `.max` rule yet commonly declares only
+    /// ["low","medium","high"] — and taking the declared top verbatim hid Max from the
+    /// picker for exactly the models the rule exists to describe (user report:
+    /// "模型组配了极高，会话里却不展示极高").
+    func testIncompleteDeclarationDoesNotLowerRuleCeiling() {
+        let m = model("gpt-5.6-sol", effortValues: ["low", "medium", "high"])
+        XCTAssertEqual(
+            ThinkingLevelCatalog.declaredMaxLevel(for: "gpt-5.6-sol"), .max,
+            "precondition: the family rule reaches .max"
+        )
+        XCTAssertEqual(
+            m.catalogMaxThinkingLevel, .max,
+            "an incomplete declaration must not cut the rule's ceiling down to .high"
+        )
+    }
+
+    /// The same shape one tier up: a declaration topping out at xhigh must not hide Max.
+    func testDeclarationToppingAtXHighKeepsMaxReachable() {
+        let m = model("gpt-5.6-sol", effortValues: ["high", "xhigh"])
+        XCTAssertEqual(m.catalogMaxThinkingLevel, .max)
+    }
+
+    /// A declaration reaching ABOVE the rule still wins — the original behaviour this
+    /// code was written for must survive the fix.
+    func testDeclarationAboveRuleStillRaisesCeiling() {
+        // gpt-5.5's rule caps at .xhigh; a ["high","max"] declaration lifts it.
+        XCTAssertEqual(ThinkingLevelCatalog.declaredMaxLevel(for: "gpt-5.5-turbo"), .xhigh)
+        let m = model("gpt-5.5-turbo", effortValues: ["high", "max"])
+        XCTAssertEqual(m.catalogMaxThinkingLevel, .max)
+    }
+
+    /// A non-reasoning model stays .off no matter what else is declared.
+    func testNonReasoningModelIgnoresBothSources() {
+        let m = model("gpt-5.6-sol", supportsReasoning: false, effortValues: ["high", "max"])
+        XCTAssertEqual(m.catalogMaxThinkingLevel, .off)
+    }
+
+    /// With the ceiling raised above every declared tier, the picker must OFFER the
+    /// levels above it — otherwise the ceiling is correct and Max is still unreachable.
+    /// Sparse tiers below the declared top stay collapsed (one option per wire value).
+    func testEntryOffersLevelsAboveASparseDeclaration() {
+        let entry = ModelEntry(
+            providerInstanceId: "inst",
+            model: model("gpt-5.6-sol", effortValues: ["high"])
+        )
+        let levels = entry.selectableThinkingLevels
+        XCTAssertTrue(levels.contains(.max), "Max must be offered: \(levels.map(\.rawValue))")
+        XCTAssertTrue(levels.contains(.xhigh), "XHigh must be offered: \(levels.map(\.rawValue))")
+        XCTAssertFalse(levels.contains(.low), "tiers below the declared top stay collapsed")
+        XCTAssertEqual(levels, levels.sorted(), "levels must stay ascending")
+    }
+
+    /// The offered list must not depend on the CURRENT selection — the reported
+    /// "switch to XHigh and Max disappears" would be this going wrong.
+    func testOfferedLevelsAreIndependentOfCurrentSelection() {
+        let entry = ModelEntry(
+            providerInstanceId: "inst",
+            model: model("gpt-5.6-sol", effortValues: ["low", "medium", "high"])
+        )
+        let first = entry.selectableThinkingLevels
+        let second = entry.selectableThinkingLevels
+        XCTAssertEqual(first, second)
+        XCTAssertTrue(first.contains(.max))
+    }
+
     /// Rule: sparse declarations must yield one option per DISTINCT wire tier, so every
     /// option the user can pick produces a different request. Verified on-device
     /// 2026-08-01: glm-5.2 sent "high" for Low AND Med AND High AND XHigh.
