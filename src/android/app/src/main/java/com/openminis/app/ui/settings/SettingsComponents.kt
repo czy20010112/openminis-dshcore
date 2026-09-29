@@ -83,6 +83,9 @@ fun SettingsScaffold(
     centerTitle: Boolean = false,
     floatingActionButton: @Composable (() -> Unit)? = null,
     scrollable: Boolean = true,
+    // [T-android-storage-usage-cache] Optional bottom action bar (e.g. a
+    // selection mode's actions). Null keeps every existing caller unchanged.
+    bottomBar: @Composable (() -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     Scaffold(
@@ -122,6 +125,7 @@ fun SettingsScaffold(
             }
         },
         floatingActionButton = { floatingActionButton?.invoke() },
+        bottomBar = { bottomBar?.invoke() },
         containerColor = MaterialTheme.colorScheme.background,
     ) { padding ->
         // T183: imePadding() shrinks the scroll container by the IME's
