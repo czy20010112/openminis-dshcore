@@ -162,7 +162,21 @@ enum BackupSecretsCollector {
         case .kimiCode:
             return ProviderKeychainHelper.loadOAuthToken(instanceId: id, as: KimiTokenStorage.self)
                 .flatMap { try? JSONEncoder().encode($0) }
-        default:
+        case .githubCopilot:
+            // [T-copilot-backup-token] Without this the `default` below swallowed
+            // Copilot, so a restored install lost the sign-in — while the login
+            // sheet's disclaimer explicitly tells the user "a backup you export
+            // yourself can include it". Only `githubToken` is load-bearing; the
+            // session token is short-lived and re-minted on demand, so an
+            // expired one in the blob costs nothing.
+            //
+            // Note this switch carries a `default`, so the compiler did NOT
+            // flag the new provider case here — the omission had to be found by
+            // reading. Any future provider with an OAuth blob must be added by
+            // hand, the same way.
+            return ProviderKeychainHelper.loadOAuthToken(instanceId: id, as: CopilotTokenStorage.self)
+                .flatMap { try? JSONEncoder().encode($0) }
+        case .antigravity, .openAIResponses, .openRouter, .unsupported:
             return nil
         }
     }
