@@ -29,6 +29,20 @@
 
 import Foundation
 
+// MARK: - Turn End Reason
+
+/// Why a turn ended.
+public enum DSHTurnEndReason: Sendable {
+    /// The model produced no further tool calls.
+    case completed
+    /// The driver was cancelled.
+    case cancelled
+    /// The step ceiling was reached.
+    case maxSteps
+    /// A tool result concluded the turn early.
+    case concluded
+}
+
 // MARK: - Delegate
 
 /// The driver's view of the outside world.
@@ -135,7 +149,9 @@ public final class DSHTurnDriver {
 
     public weak var delegate: (any DSHTurnDriverDelegate)?
 
-    public init(
+    /// `AgentProvider` is internal to the Minis target, so this initializer is
+    /// internal too — the driver is not a public API surface.
+    init(
         provider: any AgentProvider,
         registry: DSHToolRegistry,
         prompt: DSHSystemPrompt,
@@ -228,9 +244,8 @@ public final class DSHTurnDriver {
                     switch event {
                     case .textDelta(let text):
                         delegate?.driver(self, didEmitText: text)
-                        if case .text(var existing) = assistantParts.last {
-                            existing += text
-                            assistantParts[assistantParts.count - 1] = existing
+                        if let last = assistantParts.last, let existing = last as? DSHTextBlock {
+                            assistantParts[assistantParts.count - 1] = DSHTextBlock(text: existing.text + text)
                         } else {
                             assistantParts.append(DSHTextBlock(text: text))
                         }
