@@ -4780,9 +4780,17 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
                 activeGroupId = gid
             }
         }
-        let tools = makeAgentTools()
+        // DSH agent framework: the tool set comes from the DSH registry when
+        // enabled, so schemas and descriptions are declared once and rendered
+        // consistently. The handlers stay the existing ones.
+        let tools: [AgentToolDefinition]
+        if Self.useDSHAgentLoop {
+            tools = dshAgentTools()
+        } else {
+            tools = makeAgentTools()
+        }
 
-        var userSystemPrompt = baseSystemPrompt
+        var userSystemPrompt = Self.useDSHAgentLoop ? dshSystemPrompt : baseSystemPrompt
         let activeModel = ProviderConfigStore.shared.entry(for: entry.id)?.model ?? selectedModel
         if let capFragment = activeModel.capabilityPromptFragment {
             userSystemPrompt += "\n\n" + capFragment
@@ -5262,7 +5270,7 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
                 }
                 logger.info("🔀AGENT_LOOP provider updated after fallback: \(prevEntryId ?? "nil") → \(newEntryId)")
                 provider = await makeAgentProvider(for: newEntry)
-                userSystemPrompt = baseSystemPrompt
+                userSystemPrompt = Self.useDSHAgentLoop ? dshSystemPrompt : baseSystemPrompt
                 if let capFragment = newEntry.model.capabilityPromptFragment {
                     userSystemPrompt += "\n\n" + capFragment
                 }
