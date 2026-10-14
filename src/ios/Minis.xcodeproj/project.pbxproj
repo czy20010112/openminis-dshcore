@@ -1455,7 +1455,8 @@
 				E51000033 /* Preview Content */,
 				AA71B0212F44BEB200A28A5E /* Launch Screen.storyboard */,
 				AA26BD002F2E5F0A00AECF2D /* MinisApp-Bridging-Header.h */,
-			);
+							D5A1000100000000000000D51 /* DSH */,
+);
 			name = Minis;
 			sourceTree = "<group>";
 		};
@@ -1560,7 +1561,6 @@
 				F1A00018 /* Speech */,
 				F1A00013 /* Sync */,
 				E5LD00003 /* ToolLoopDetector.swift */,
-				D5A1000100000000000000D51 /* DSH */,
 			);
 			path = Agent;
 			sourceTree = "<group>";
@@ -1652,7 +1652,6 @@
 			isa = PBXGroup;
 			children = (
 				AA0838CB2F3CA8A900049557 /* Terminal */,
-				D5A1000100000000000000D51 /* DSH */,
 				AA26CCC02F31080100AECF2D /* ISHKernel.h */,
 				AA26CCBB2F31080100AECF2D /* ISHKernel.m */,
 				AA0838D42F3B941A00049557 /* CurrentRoot.h */,
@@ -2363,6 +2362,7 @@
 				E5H000080 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
+				D5A1000100000000000000D51 /* DSH */,
 				AA0838CB2F3CA8A900049557 /* Terminal */,
 			);
 			name = Minis;

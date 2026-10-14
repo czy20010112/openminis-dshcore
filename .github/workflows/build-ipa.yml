@@ -99,20 +99,21 @@ jobs:
       - name: Verify DSH agent module sources are present
         run: |
           # The DSH agent framework port is compiled through an Xcode
-          # file-system-synchronized group, so a missing file fails the build
-          # with an opaque linker error. Fail early with a clear message.
+          # file-system-synchronized group rooted at src/ios/DSH. A missing file
+          # fails the build with an opaque linker error, so check for the
+          # expected files first.
           expected=(
-            src/ios/Agent/DSH/DSHTypes.swift
-            src/ios/Agent/DSH/DSHSystemPrompt.swift
-            src/ios/Agent/DSH/DSHToolRegistry.swift
-            src/ios/Agent/DSH/DSHToolScheduler.swift
-            src/ios/Agent/DSH/DSHAgentLoop.swift
-            src/ios/Agent/DSH/DSHJSONSchema.swift
-            src/ios/Agent/DSH/DSHToolSchemaBridge.swift
-            src/ios/Agent/DSH/DSHMinisPrompt.swift
-            src/ios/Agent/DSH/DSHMinisTools.swift
-            src/ios/Agent/DSH/DSHPromptAdapter.swift
-            src/ios/Agent/DSH/DSHAgentRuntime.swift
+            src/ios/DSH/DSHTypes.swift
+            src/ios/DSH/DSHSystemPrompt.swift
+            src/ios/DSH/DSHToolRegistry.swift
+            src/ios/DSH/DSHToolScheduler.swift
+            src/ios/DSH/DSHAgentLoop.swift
+            src/ios/DSH/DSHJSONSchema.swift
+            src/ios/DSH/DSHToolSchemaBridge.swift
+            src/ios/DSH/DSHMinisPrompt.swift
+            src/ios/DSH/DSHMinisTools.swift
+            src/ios/DSH/DSHPromptAdapter.swift
+            src/ios/DSH/DSHAgentRuntime.swift
           )
           missing=0
           for f in "${expected[@]}"; do
@@ -123,6 +124,15 @@ jobs:
             exit 1
           fi
           echo "DSH agent module: ${#expected[@]} files present"
+
+          # The group must be wired into the Minis target, or Xcode silently
+          # compiles none of the sources and the build fails with
+          # 'cannot find dshSystemPrompt in scope'.
+          if ! grep -q "D5A1000100000000000000D51 /\* DSH \*/" src/ios/Minis.xcodeproj/project.pbxproj; then
+            echo "DSH synchronized group is not declared in project.pbxproj"
+            exit 1
+          fi
+          echo "DSH synchronized group is declared"
 
       - name: Build iOS App (Release)
         run: |
