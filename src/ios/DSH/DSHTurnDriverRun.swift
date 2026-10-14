@@ -78,7 +78,12 @@ extension AIChatViewModel {
             maxTokens: provider.defaultMaxTokens,
             enableLoopGuard: true,
             compactionRetainTokens: Self.dshCompactionRetainTokens,
-            compactionPressureTokens: Self.dshCompactionPressureTokens,
+            // Pressure is judged against the serving model's real window. A
+            // fixed 120k threshold fires on every step of a small-context model
+            // and compacts away the user's own request, so the model answers
+            // from nothing. Derive it from the window and skip compaction
+            // entirely when the window is unknown.
+            compactionPressureTokens: Self.dshCompactionPressureTokens(for: entry.model),
             autoCompactionEnabled: true
         )
 
@@ -108,7 +113,16 @@ extension AIChatViewModel {
     /// Compaction budgets. Deployment-varying values, so they are fields rather
     /// than constants in the driver.
     static var dshCompactionRetainTokens: Int { 20_000 }
-    static var dshCompactionPressureTokens: Int { 120_000 }
+
+    /// Pressure threshold for one model's context window.
+    ///
+    /// DSH compacts at roughly 80% of the window. An unknown window returns
+    /// `Int.max`, which disables automatic compaction rather than compacting on
+    /// a guess — compacting away the live request is worse than running long.
+    static func dshCompactionPressureTokens(for model: LLMModel) -> Int {
+        guard let window = model.contextWindow, window > 0 else { return Int.max }
+        return (window * 80) / 100
+    }
 
     // MARK: - Session Sync
 

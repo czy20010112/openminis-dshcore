@@ -70,6 +70,25 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
         arguments: [String: Any]
     ) {
         AppLogger(category: "DSHLoop").info("[DSH] tool start \(name) id=\(callId.prefix(20))")
+
+        // Create the block now so the user sees the call while it runs, and so
+        // `didFinishTool` has a block to fill. The status is `.running` until
+        // the result lands.
+        guard dshStreamingMsgIdx >= 0, dshStreamingMsgIdx < messages.count else { return }
+        let idx = dshStreamingMsgIdx
+        guard messages[idx].role == .assistant else { return }
+
+        // A re-emitted start for the same call id must not duplicate the block.
+        guard !messages[idx].blocks.contains(where: { $0.toolUseId == callId }) else { return }
+
+        let kind = DSHToolBlockKind.kind(for: name, arguments: arguments)
+        var block = AssistantBlock(kind: kind, content: "Executing...")
+        block.toolUseId = callId
+        block.toolStatus = .running
+        block.toolStartTime = Date()
+        messages[idx].blocks.append(block)
+        publishUnlessTransitioning()
+        scrollToBottomSignal.send()
     }
 
     public func driver(
@@ -82,6 +101,35 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
             "[DSH] tool done \(name) id=\(callId.prefix(20)) isError=\(result.isError) len=\(result.content.count)"
         )
         dshPendingToolResults[callId] = result
+        dshRenderToolResult(callId: callId)
+    }
+
+    /// Render a settled tool result onto its UI block.
+    ///
+    /// The driver settles results in model order but reports them one at a time,
+    /// so each is applied to the block carrying its call id. Matching by call id
+    /// rather than by position means a block appended by another path cannot
+    /// steal the result.
+    func dshRenderToolResult(callId: String) {
+        guard let result = dshPendingToolResults[callId] else { return }
+        guard dshStreamingMsgIdx >= 0, dshStreamingMsgIdx < messages.count else { return }
+        let idx = dshStreamingMsgIdx
+        guard messages[idx].role == .assistant else { return }
+
+        // Find the block this call created. The driver emits `willRunTool` before
+        // the call and `didFinishTool` after, so the block exists by now; if it
+        // does not, append one rather than dropping the result on the floor.
+        if let blockIdx = messages[idx].blocks.firstIndex(where: { $0.toolUseId == callId }) {
+            messages[idx].blocks[blockIdx].content = result.content
+            messages[idx].blocks[blockIdx].toolStatus = result.isError ? .failed : .success
+        } else {
+            var block = AssistantBlock(kind: .info, content: result.content)
+            block.toolUseId = callId
+            block.toolStatus = result.isError ? .failed : .success
+            messages[idx].blocks.append(block)
+        }
+        publishUnlessTransitioning()
+        scrollToBottomSignal.send()
     }
 
     public func driver(_ driver: DSHTurnDriver, didReportUsage usage: DSHTokenUsage) {
