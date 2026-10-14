@@ -1560,6 +1560,7 @@
 				F1A00018 /* Speech */,
 				F1A00013 /* Sync */,
 				E5LD00003 /* ToolLoopDetector.swift */,
+				D5A1000100000000000000D51 /* DSH */,
 			);
 			path = Agent;
 			sourceTree = "<group>";
