@@ -327,7 +327,7 @@ public final class DSHAgentLoop {
 
             for commit in outcome.commits {
                 let verdict = gate.check(toolName: commit.block.name, arguments: [:])
-                if verdict.level == .critical {
+                if verdict.level == DSHToolGate.Verdict.Level.critical {
                     recordBlocked(commit, verdict: verdict, turn: turn, step: step)
                     continue
                 }
@@ -451,7 +451,7 @@ public final class DSHAgentLoop {
         case .text(let text): return DSHTextBlock(text: text)
         case .toolUse(let id, let name, let input):
             return DSHToolCallBlock(id: id, name: name, arguments: encodeArguments(input))
-        case .toolResult(let id, let name, let content, let isError, _, _, _):
+        case .toolResult(let id, let name, let content, let isError, _, _, _, _):
             return DSHToolResultBlock(callId: id, name: name, content: content, isError: isError)
         case .imageData(let data, let mimeType, let path):
             return DSHImageBlock(data: data, mimeType: mimeType, path: path)
@@ -527,6 +527,12 @@ final class DSHToolGate: @unchecked Sendable {
     let enabled: Bool
     let warningThreshold: Int
     let criticalThreshold: Int
+
+    init(enabled: Bool, warningThreshold: Int, criticalThreshold: Int) {
+        self.enabled = enabled
+        self.warningThreshold = warningThreshold
+        self.criticalThreshold = criticalThreshold
+    }
 
     struct Verdict: Sendable {
         enum Level { case pass, warning, critical }

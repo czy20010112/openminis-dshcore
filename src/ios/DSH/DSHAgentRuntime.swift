@@ -75,7 +75,7 @@ public final class DSHAgentRuntime {
     // MARK: - Loop
 
     /// Start a loop over the given provider and delegate.
-    public func makeLoop(
+    func makeLoop(
         provider: any AgentProvider,
         delegate: (any DSHAgentLoopDelegate)?
     ) -> DSHAgentLoop {
@@ -92,7 +92,7 @@ public final class DSHAgentRuntime {
     // MARK: - Teardown
 
     /// Dispose every registration this runtime installed.
-    public func dispose() {
+    func dispose() {
         lock.lock()
         defer { lock.unlock() }
         for disposer in promptDisposers { disposer() }
@@ -100,8 +100,5 @@ public final class DSHAgentRuntime {
         promptDisposers.removeAll()
         toolDisposers.removeAll()
     }
-
-    deinit {
-        dispose()
-    }
+}
 }

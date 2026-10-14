@@ -58,7 +58,7 @@ public struct DSHPromptSection: Sendable {
     ) {
         self.name = name
         self.order = order
-        self.text = .static(text)
+        self.text = .fixed(text)
         self.interpolate = interpolate
         self.complete = complete
     }
@@ -92,7 +92,7 @@ public struct DSHPromptContext: Sendable {
     public init(name: String, order: Int, text: String) {
         self.name = name
         self.order = order
-        self.text = .static(text)
+        self.text = .fixed(text)
     }
 
     public init(name: String, order: Int, dynamic: @escaping @Sendable (DSHAssembleContext) -> String) {
