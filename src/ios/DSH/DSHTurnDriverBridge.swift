@@ -59,7 +59,7 @@ enum DSHSessionProjection {
                 continue
             }
         }
-        let message = AgentMessage(
+        var message = AgentMessage(
             role: entry.message.role == .user ? .user : .assistant,
             parts: parts
         )
