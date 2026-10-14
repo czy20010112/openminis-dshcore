@@ -76,9 +76,13 @@ enum DSHSessionProjection {
             case .text(let text):
                 blocks.append(DSHTextBlock(text: text))
             case .toolUse(let id, let name, let input):
-                let raw = (try? JSONSerialization.data(
-                    withJSONObject: input, options: [.sortedKeys]
-                ).flatMap { String(data: $0, encoding: .utf8) }) ?? "{}"
+                let raw: String
+                if let data = try? JSONSerialization.data(withJSONObject: input, options: [.sortedKeys]),
+                   let text = String(data: data, encoding: .utf8) {
+                    raw = text
+                } else {
+                    raw = "{}"
+                }
                 blocks.append(DSHToolCallBlock(id: id, name: name, arguments: raw))
             case .toolResult(let id, let name, let content, let isError, _, _, _, _):
                 blocks.append(DSHToolResultBlock(
