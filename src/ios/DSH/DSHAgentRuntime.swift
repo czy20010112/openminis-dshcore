@@ -101,4 +101,3 @@ public final class DSHAgentRuntime {
         toolDisposers.removeAll()
     }
 }
-}
