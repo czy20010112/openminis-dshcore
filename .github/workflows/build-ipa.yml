@@ -1,4 +1,4 @@
-name: Build iOS 15 IPA
+name: Build IPA
 
 on:
   push:
@@ -34,7 +34,10 @@ jobs:
         run: |
           echo "Available Xcode versions:"
           ls -d /Applications/Xcode* || true
-          if [ -d "/Applications/Xcode_16.2.app" ]; then
+          # objectVersion 70 needs Xcode 16+. Prefer the newest available.
+          if [ -d "/Applications/Xcode_16.4.app" ]; then
+            sudo xcode-select -s /Applications/Xcode_16.4.app
+          elif [ -d "/Applications/Xcode_16.2.app" ]; then
             sudo xcode-select -s /Applications/Xcode_16.2.app
           elif [ -d "/Applications/Xcode_16.1.app" ]; then
             sudo xcode-select -s /Applications/Xcode_16.1.app
@@ -93,6 +96,34 @@ jobs:
         run: |
           cp -n src/ios/Configs/ProviderCustomization.xcconfig.example src/ios/Configs/ProviderCustomization.xcconfig || true
 
+      - name: Verify DSH agent module sources are present
+        run: |
+          # The DSH agent framework port is compiled through an Xcode
+          # file-system-synchronized group, so a missing file fails the build
+          # with an opaque linker error. Fail early with a clear message.
+          expected=(
+            src/ios/Agent/DSH/DSHTypes.swift
+            src/ios/Agent/DSH/DSHSystemPrompt.swift
+            src/ios/Agent/DSH/DSHToolRegistry.swift
+            src/ios/Agent/DSH/DSHToolScheduler.swift
+            src/ios/Agent/DSH/DSHAgentLoop.swift
+            src/ios/Agent/DSH/DSHJSONSchema.swift
+            src/ios/Agent/DSH/DSHToolSchemaBridge.swift
+            src/ios/Agent/DSH/DSHMinisPrompt.swift
+            src/ios/Agent/DSH/DSHMinisTools.swift
+            src/ios/Agent/DSH/DSHPromptAdapter.swift
+            src/ios/Agent/DSH/DSHAgentRuntime.swift
+          )
+          missing=0
+          for f in "${expected[@]}"; do
+            if [ ! -f "$f" ]; then echo "MISSING: $f"; missing=1; fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "DSH agent module is incomplete — check the DSH synchronized group."
+            exit 1
+          fi
+          echo "DSH agent module: ${#expected[@]} files present"
+
       - name: Build iOS App (Release)
         run: |
           xcodebuild -project src/ios/Minis.xcodeproj \
@@ -116,38 +147,47 @@ jobs:
           echo "Found app bundle at: $APP_DIR"
           mkdir -p Payload
           cp -R "$APP_DIR" Payload/
-          
-          # Core iOS 15 build: omit optional extensions (Live Activity widget and Share Extension).
-          # The main app's chat/agent/shell features do not require either extension.
+
+          # Core iOS 15 build: omit optional extensions (Live Activity widget and
+          # Share Extension). The main app's chat/agent/shell features do not
+          # require either extension.
           rm -rf "Payload/Minis.app/PlugIns/AgentWidgetExtension.appex" "Payload/Minis.app/PlugIns/MinisShare.appex"
-          # Ad-hoc sign the remaining app bundle while preserving the capabilities
-          # used by startup storage. Signing with `-` without an entitlements file
-          # strips App Group access; the app then receives nil from containerURL.
+
+          # Ad-hoc sign the remaining bundle while preserving the entitlements
+          # startup storage needs. Signing with `-` and no entitlements file
+          # strips App Group access, and the app then gets nil from
+          # containerURL.
           codesign --force --deep --sign - \
             --entitlements src/ios/Minis.entitlements \
             "Payload/Minis.app"
-          
-          zip -r9 Minis-iOS15-unsigned.ipa Payload
-          ls -lh Minis-iOS15-unsigned.ipa
+
+          STAMP=$(date -u +%Y%m%d-%H%M%S)
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          OUT="Minis-DSH-${SHORT_SHA}-${STAMP}-unsigned.ipa"
+          zip -q -r9 "$OUT" Payload
+          echo "IPA_NAME=$OUT" >> $GITHUB_ENV
+          ls -lh "$OUT"
 
       - name: Upload IPA Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Minis-iOS15-IPA
-          path: Minis-iOS15-unsigned.ipa
-          retention-days: 14
+          name: Minis-DSH-IPA
+          path: Minis-DSH-*-unsigned.ipa
+          retention-days: 30
+          if-no-files-found: error
 
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && (github.event.inputs.create_release == true || github.event.inputs.create_release == 'true'))
         uses: softprops/action-gh-release@v2
         with:
-          files: Minis-iOS15-unsigned.ipa
-          name: Minis iOS 15 Build (${{ github.ref_name }})
+          files: Minis-DSH-*-unsigned.ipa
+          name: Minis DSH build (${{ github.ref_name }})
           tag_name: ${{ github.ref_name }}
           body: |
-            OpenMinis customized for iOS 15.0+ (iOS 15.8.8 compatible).
-            
-            - **Installation**: Use TrollStore 2 (recommended) or AltStore / SideStore / Sideloadly.
-            - **Target**: iOS 15.0+ (arm64)
+            Minis with the DSH agent framework port, built unsigned for iOS 15+ (arm64).
+
+            - **Install**: upload with ios-mcp (`POST /upload_file`) then `install_app`, or use TrollStore / Sideloadly.
+            - **Target**: iOS 15.0+ (arm64), tested on iPhone 13 / iOS 15.3.1.
+            - **Agent core**: DSH port under `src/ios/Agent/DSH`. Toggle with `AIChatViewModel.useDSHAgentLoop`.
           draft: false
           prerelease: false
