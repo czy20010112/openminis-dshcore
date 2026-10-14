@@ -111,6 +111,11 @@ jobs:
             src/ios/DSH/DSHSession.swift
             src/ios/DSH/DSHCompaction.swift
             src/ios/DSH/DSHTurnDriver.swift
+            src/ios/DSH/DSHTurnDriverBridge.swift
+            src/ios/DSH/DSHTurnDriverAdapter.swift
+            src/ios/DSH/DSHTurnDriverRun.swift
+            src/ios/DSH/DSHToolHandlers.swift
+            src/ios/DSH/DSHToolHandlerImpl.swift
             src/ios/DSH/DSHJSONSchema.swift
             src/ios/DSH/DSHToolSchemaBridge.swift
             src/ios/DSH/DSHToolDispatchBridge.swift
