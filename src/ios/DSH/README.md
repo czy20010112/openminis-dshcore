@@ -94,13 +94,38 @@ Matches DSH's `selectCompactableRange`:
 
 ## Wiring
 
-`DSHTurnDriver` is the full replacement loop. It is complete and compiles, but
-the UI still drives `AIChatViewModel.runAgentLoop()`. Connecting the driver means
-adapting its delegate onto the streaming presentation layer, which is the
-remaining work.
+`DSHTurnDriver` is wired in. `AIChatViewModel.runDSHTurn()` builds the registry,
+prompt, and session, then drives the turn; `runAgentLoop()`'s call sites branch
+on `AIChatViewModel.useDSHAgentLoop` (default true) so the original loop is
+still reachable for A/B comparison.
 
-`AIChatViewModel.useDSHAgentLoop` (default true) toggles the DSH-assembled
-prompt and tool set against the originals for A/B comparison.
+The driver owns the five core segments. `AIChatViewModel` keeps streaming
+presentation, persistence, image budgeting, group fallback, queued prompts,
+cancel cleanup, TTS, and the UI.
+
+Identity: `ChatMessage.dshSeq` carries the session seq the row was projected
+from, so the streaming target is resolved by seq rather than by array index.
+
+Tool blocks are created on `willRunTool` and filled on `didFinishTool`, matched
+by call id, so a block appended by another path cannot steal the result.
+`DSHToolBlockKind` maps a tool name plus arguments onto the block kind that
+renders it.
+
+## Verified on device
+
+iPhone 13 / iOS 15.3.1, installed via ios-mcp over AppSync Unified. A single
+turn exercising all five tools produced real results:
+
+| Tool | Observed |
+|---|---|
+| `shell_execute` | `DSH_TOOL_TEST_OK` |
+| `file_write` | `Wrote to /root/dsh_verify.txt (5 bytes)` |
+| `file_read` | `[/root/dsh_verify.txt \| 5 bytes \| 1 lines \| showing lines 1-1 of 1]` |
+| `file_edit` | `Edited /root/dsh_verify.txt (1 replacement, 6 bytes)` |
+| `file_read` | `[/root/dsh_verify.txt \| 6 bytes \| 1 lines ...]` + content `SECOND` |
+
+The byte-count change (5 → 6) confirms the edit landed rather than being
+narrated.
 
 ## Not ported
 
