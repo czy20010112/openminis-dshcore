@@ -163,13 +163,50 @@ jobs:
           # require either extension.
           rm -rf "Payload/Minis.app/PlugIns/AgentWidgetExtension.appex" "Payload/Minis.app/PlugIns/MinisShare.appex"
 
+          # Re-sign every embedded framework individually, innermost first.
+          #
+          # The "Strip Third-Party VAD Framework Symbols" build phase runs
+          # `strip -x` on RealTimeCutVADCXXLibrary.framework and only re-signs
+          # when EXPANDED_CODE_SIGN_IDENTITY is set. This build runs with
+          # CODE_SIGNING_ALLOWED=NO, so that re-sign is skipped and the
+          # framework ships with a signature its stripped binary no longer
+          # satisfies. dyld then refuses to load it and the app dies at launch
+          # with "Library not loaded: ... (code signature invalid)".
+          #
+          # `codesign --deep` does not fix this: it signs the outer bundle and
+          # leaves nested Mach-Os carrying their broken signatures. Each
+          # framework needs its own --force pass, deepest first.
+          if [ -d "Payload/Minis.app/Frameworks" ]; then
+            find "Payload/Minis.app/Frameworks" -mindepth 1 -depth -type d -name "*.framework" | while read -r fw; do
+              echo "re-signing $fw"
+              codesign --force --sign - --timestamp=none "$fw" || {
+                echo "ERROR: failed to re-sign $fw"
+                exit 1
+              }
+            done
+            # Verify every nested binary now passes verification.
+            find "Payload/Minis.app/Frameworks" -type f -name "*.framework" -prune -o -true >/dev/null
+            for fw in "Payload/Minis.app/Frameworks"/*.framework; do
+              [ -d "$fw" ] || continue
+              codesign --verify "$fw" || { echo "ERROR: $fw failed verification"; exit 1; }
+            done
+          fi
+
           # Ad-hoc sign the remaining bundle while preserving the entitlements
           # startup storage needs. Signing with `-` and no entitlements file
           # strips App Group access, and the app then gets nil from
           # containerURL.
-          codesign --force --deep --sign - \
+          codesign --force --sign - \
             --entitlements src/ios/Minis.entitlements \
             "Payload/Minis.app"
+
+          # Final gate: the whole bundle must verify, or dyld will reject a
+          # nested binary at launch and the app will die with no visible error.
+          codesign --verify --deep --strict "Payload/Minis.app" || {
+            echo "ERROR: app bundle failed signature verification"
+            exit 1
+          }
+          echo "note: app bundle signature verified"
 
           STAMP=$(date -u +%Y%m%d-%H%M%S)
           SHORT_SHA=$(git rev-parse --short HEAD)
