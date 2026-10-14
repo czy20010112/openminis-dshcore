@@ -121,11 +121,15 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
         // does not, append one rather than dropping the result on the floor.
         if let blockIdx = messages[idx].blocks.firstIndex(where: { $0.toolUseId == callId }) {
             messages[idx].blocks[blockIdx].content = result.content
-            messages[idx].blocks[blockIdx].toolStatus = result.isError ? .failed : .success
+            messages[idx].blocks[blockIdx].toolStatus = result.isError
+                ? .failed(message: "Tool failed")
+                : .success
         } else {
             var block = AssistantBlock(kind: .info, content: result.content)
             block.toolUseId = callId
-            block.toolStatus = result.isError ? .failed : .success
+            block.toolStatus = result.isError
+                ? .failed(message: "Tool failed")
+                : .success
             messages[idx].blocks.append(block)
         }
         publishUnlessTransitioning()
