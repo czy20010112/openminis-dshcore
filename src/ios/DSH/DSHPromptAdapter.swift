@@ -117,7 +117,7 @@ extension AIChatViewModel {
             name: "shell_execute",
             description: "Execute a command in an isolated Linux process (iSH/Alpine Linux). The command runs via /bin/sh -c with stdout and stderr captured separately via pipes. Each invocation spawns a fresh process — there is no shared terminal session. Default timeout is 15 minutes.",
             parameters: DSHMinisTools.shellExecuteSchema(),
-            executionMode: .exclusive,
+            executionMode: DSHToolDispatch.mode(for: "shell_execute"),
             handler: { _, _ in DSHToolExecutionResult.error("handler wired at call site") }
         )))
 
@@ -126,21 +126,21 @@ extension AIChatViewModel {
             name: "file_read",
             description: "Read a file from the Linux filesystem. Faster than shell_execute for reading files — no shell overhead. Returns file content with metadata. Rejects binary files.",
             parameters: DSHMinisTools.fileReadSchema(),
-            executionMode: .parallel,
+            executionMode: DSHToolDispatch.mode(for: "file_read"),
             handler: { _, _ in DSHToolExecutionResult.error("handler wired at call site") }
         )))
         disposers.append(registry.register(DSHMinisTools.make(
             name: "file_write",
             description: "Write content to a file on the Linux filesystem. Faster than shell_execute for writing files. Creates the file if it doesn't exist. Use append mode to add to existing files.\n\nIMPORTANT for large files (roughly >8KB): do NOT emit it as one call. Every byte of `content` is generated and streamed as tool arguments, so one huge call is slow and frequently dies mid-request. Instead either (a) write the first chunk, then extend it with further calls using append: true, or (b) when the content is repetitive or computable, write a short script and run it with shell_execute.",
             parameters: DSHMinisTools.fileWriteSchema(),
-            executionMode: .exclusive,
+            executionMode: DSHToolDispatch.mode(for: "file_write"),
             handler: { _, _ in DSHToolExecutionResult.error("handler wired at call site") }
         )))
         disposers.append(registry.register(DSHMinisTools.make(
             name: "file_edit",
             description: "Make targeted edits to an existing file using exact string replacement. ALWAYS use file_read first to see the current file contents before editing. Prefer file_edit over file_write when modifying existing files — only the changed part needs to be specified. The old_string must match exactly one location in the file (including whitespace/indentation), unless replace_all is true.",
             parameters: DSHMinisTools.fileEditSchema(),
-            executionMode: .exclusive,
+            executionMode: DSHToolDispatch.mode(for: "file_edit"),
             handler: { _, _ in DSHToolExecutionResult.error("handler wired at call site") }
         )))
 
@@ -157,7 +157,7 @@ extension AIChatViewModel {
                     ],
                     required: ["tool_title", "content"]
                 ),
-                executionMode: .exclusive,
+                executionMode: DSHToolDispatch.mode(for: "memory_write"),
                 handler: { _, _ in DSHToolExecutionResult.error("handler wired at call site") }
             )))
             disposers.append(registry.register(DSHMinisTools.make(
@@ -171,7 +171,7 @@ extension AIChatViewModel {
                     ],
                     required: ["tool_title"]
                 ),
-                executionMode: .parallel,
+                executionMode: DSHToolDispatch.mode(for: "memory_get"),
                 handler: { _, _ in DSHToolExecutionResult.error("handler wired at call site") }
             )))
         }
@@ -190,7 +190,7 @@ extension AIChatViewModel {
                     ],
                     required: ["tool_title", "path"]
                 ),
-                executionMode: .parallel,
+                executionMode: DSHToolDispatch.mode(for: "read_image"),
                 handler: { _, _ in DSHToolExecutionResult.error("handler wired at call site") }
             )))
         }

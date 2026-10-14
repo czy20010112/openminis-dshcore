@@ -107,13 +107,16 @@ jobs:
             src/ios/DSH/DSHSystemPrompt.swift
             src/ios/DSH/DSHToolRegistry.swift
             src/ios/DSH/DSHToolScheduler.swift
-            src/ios/DSH/DSHAgentLoop.swift
+            src/ios/DSH/DSHToolGate.swift
+            src/ios/DSH/DSHSession.swift
+            src/ios/DSH/DSHCompaction.swift
+            src/ios/DSH/DSHTurnDriver.swift
             src/ios/DSH/DSHJSONSchema.swift
             src/ios/DSH/DSHToolSchemaBridge.swift
+            src/ios/DSH/DSHToolDispatchBridge.swift
             src/ios/DSH/DSHMinisPrompt.swift
             src/ios/DSH/DSHMinisTools.swift
             src/ios/DSH/DSHPromptAdapter.swift
-            src/ios/DSH/DSHAgentRuntime.swift
           )
           missing=0
           for f in "${expected[@]}"; do

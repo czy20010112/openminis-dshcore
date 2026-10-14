@@ -1,0 +1,551 @@
+//
+//  DSHTurnDriver.swift
+//  Minis
+//
+//  The agent loop, ported from DeepSeek Harness
+//  (packages/core/agent-loop/src/agent.ts, tool-calls.ts).
+//
+//  This replaces OpenMinis' `runAgentLoop()`. What it keeps is the iOS
+//  presentation contract: the same provider seam, the same stream events, the
+//  same delegate callbacks the UI already renders. What it replaces is the
+//  decision core:
+//
+//  - Requests are derived from the session surface, not from a mutable array
+//    indexed by a counter. A compaction landing mid-turn cannot desynchronize
+//    the request from the conversation, because the surface is recomputed from
+//    the log each step.
+//  - Tool calls are scheduled by declared concurrency mode — exclusive calls
+//    form a barrier, parallel calls run in a bounded pool — and results commit
+//    in model order regardless of which call finished first.
+//  - Loop guards run before a call fires, so a repeated no-progress call is
+//    blocked with a concrete reason instead of burning several rounds first.
+//  - Compaction is selected by DSH's rule (system head excluded, recent tail
+//    retained, cut walked to a tool-pairing balanced position) rather than by
+//    walking user turns backwards and hoping the boundary is safe.
+//
+//  The driver holds no UIKit types and no `ChatStore` references. Persistence
+//  and rendering stay in the presentation layer, which observes the delegate.
+//
+
+import Foundation
+
+// MARK: - Delegate
+
+/// The driver's view of the outside world.
+///
+/// Isolated to the main actor: every callback drives UI or persistence, both of
+/// which are main-actor state in this app.
+@MainActor
+public protocol DSHTurnDriverDelegate: AnyObject {
+    /// A step started.
+    func driver(_ driver: DSHTurnDriver, didStartStep turn: Int, step: Int)
+    /// A text delta arrived.
+    func driver(_ driver: DSHTurnDriver, didEmitText text: String)
+    /// A reasoning delta arrived.
+    func driver(_ driver: DSHTurnDriver, didEmitReasoning text: String)
+    /// A tool call started.
+    func driver(_ driver: DSHTurnDriver, willRunTool name: String, callId: String, arguments: [String: Any])
+    /// A tool call settled.
+    func driver(_ driver: DSHTurnDriver, didFinishTool name: String, callId: String, result: DSHToolExecutionResult)
+    /// Token usage was reported.
+    func driver(_ driver: DSHTurnDriver, didReportUsage usage: DSHTokenUsage)
+    /// The surface was compacted.
+    func driver(_ driver: DSHTurnDriver, didCompact outcome: DSHCompactionOutcome)
+    /// The turn ended.
+    func driver(_ driver: DSHTurnDriver, didEndTurn reason: DSHTurnEndReason)
+    /// The turn failed.
+    func driver(_ driver: DSHTurnDriver, didFail failure: DSHFailure)
+}
+
+// MARK: - Configuration
+
+/// Driver configuration. Deployment-varying values are fields, not constants.
+public struct DSHTurnDriverConfig: Sendable {
+    /// Bound on the parallel tool pool.
+    public var maxParallelToolCalls: Int
+    /// Maximum steps in one turn before the driver stops and reports.
+    public var maxStepsPerTurn: Int
+    /// Maximum tokens for one model response.
+    public var maxTokens: Int
+    /// Whether loop guards run before each tool call.
+    public var enableLoopGuard: Bool
+    /// Loop-guard warning threshold (repeated identical calls).
+    public var loopWarningThreshold: Int
+    /// Loop-guard critical threshold.
+    public var loopCriticalThreshold: Int
+    /// Recent-tail budget retained verbatim by a compaction.
+    public var compactionRetainTokens: Int
+    /// Total surface tokens above which a compaction is worth doing.
+    public var compactionPressureTokens: Int
+    /// Whether automatic compaction is enabled.
+    public var autoCompactionEnabled: Bool
+    /// Ordered tool names, with the rest marker exactly once. nil means
+    /// lexicographic order.
+    public var toolOrder: [String]?
+
+    public init(
+        maxParallelToolCalls: Int = 4,
+        maxStepsPerTurn: Int = 200,
+        maxTokens: Int = 32_000,
+        enableLoopGuard: Bool = true,
+        loopWarningThreshold: Int = 10,
+        loopCriticalThreshold: Int = 20,
+        compactionRetainTokens: Int = 20_000,
+        compactionPressureTokens: Int = 120_000,
+        autoCompactionEnabled: Bool = true,
+        toolOrder: [String]? = nil
+    ) {
+        self.maxParallelToolCalls = max(1, maxParallelToolCalls)
+        self.maxStepsPerTurn = max(1, maxStepsPerTurn)
+        self.maxTokens = maxTokens
+        self.enableLoopGuard = enableLoopGuard
+        self.loopWarningThreshold = max(1, loopWarningThreshold)
+        self.loopCriticalThreshold = max(self.loopWarningThreshold + 1, loopCriticalThreshold)
+        self.compactionRetainTokens = max(0, compactionRetainTokens)
+        self.compactionPressureTokens = max(1, compactionPressureTokens)
+        self.autoCompactionEnabled = autoCompactionEnabled
+        self.toolOrder = toolOrder
+    }
+}
+
+// MARK: - Driver
+
+/// Drives one session through turn and step boundaries.
+///
+/// Main-actor isolated rather than an actor: the providers it drives are
+/// main-actor types, and every delegate callback touches main-actor state.
+/// Keeping one isolation domain avoids `Sendable` annotations on provider state
+/// that is not `Sendable`.
+@MainActor
+public final class DSHTurnDriver {
+
+    private let provider: any AgentProvider
+    private let registry: DSHToolRegistry
+    private let prompt: DSHSystemPrompt
+    private let session: DSHSession
+    private var config: DSHTurnDriverConfig
+
+    /// Loop-guard state, one instance per driver so counters accumulate across a
+    /// turn's steps.
+    private let gate: DSHToolGate
+
+    private var currentTurn = 0
+    private var isRunning = false
+    private var cancelled = false
+
+    public weak var delegate: (any DSHTurnDriverDelegate)?
+
+    public init(
+        provider: any AgentProvider,
+        registry: DSHToolRegistry,
+        prompt: DSHSystemPrompt,
+        session: DSHSession,
+        config: DSHTurnDriverConfig = DSHTurnDriverConfig()
+    ) {
+        self.provider = provider
+        self.registry = registry
+        self.prompt = prompt
+        self.session = session
+        self.config = config
+        self.gate = DSHToolGate(
+            enabled: config.enableLoopGuard,
+            warningThreshold: config.loopWarningThreshold,
+            criticalThreshold: config.loopCriticalThreshold
+        )
+    }
+
+    // MARK: - Configuration
+
+    public func updateConfig(_ config: DSHTurnDriverConfig) {
+        self.config = config
+    }
+
+    // MARK: - Turn
+
+    /// Cancel the running turn at the next step boundary.
+    public func cancel() {
+        cancelled = true
+    }
+
+    /// Seed the conversation with a user turn.
+    public func submitUserMessage(_ text: String) {
+        session.append(DSHMessage(role: .user, blocks: [DSHTextBlock(text: text)]), turn: nil)
+    }
+
+    /// Run one turn to completion.
+    @discardableResult
+    public func run() async -> DSHTurnEndReason {
+        guard !isRunning else { return .cancelled }
+        isRunning = true
+        cancelled = false
+        currentTurn += 1
+        defer { isRunning = false }
+
+        let turn = currentTurn
+        var step = 0
+
+        while step < config.maxStepsPerTurn {
+            if cancelled {
+                delegate?.driver(self, didEndTurn: .cancelled)
+                return .cancelled
+            }
+
+            step += 1
+            delegate?.driver(self, didStartStep: turn, step: step)
+
+            // Automatic compaction, before the request is built. Running it here
+            // rather than inside the request builder keeps the surface the model
+            // sees consistent with the surface the driver just measured.
+            if config.autoCompactionEnabled {
+                await maybeCompact(turn: turn)
+            }
+
+            let request = buildRequest()
+
+            let stream: AsyncThrowingStream<AgentStreamEvent, Error>
+            do {
+                stream = try await provider.streamAgentMessageClamped(
+                    messages: request.messages,
+                    systemPrompt: request.systemPrompt,
+                    tools: request.tools,
+                    maxTokens: request.maxTokens,
+                    thinkingLevel: request.thinkingLevel
+                )
+            } catch {
+                let failure = error as? DSHFailure
+                    ?? DSHFailure(message: String(describing: error), code: "PROVIDER_ERROR")
+                delegate?.driver(self, didFail: failure)
+                return .cancelled
+            }
+
+            var assistantParts: [DSHContentBlock] = []
+            var toolCalls: [DSHToolCallBlock] = []
+            var stopReason: AgentStopReason = .endTurn
+            var usage = DSHTokenUsage()
+
+            do {
+                for try await event in stream {
+                    switch event {
+                    case .textDelta(let text):
+                        delegate?.driver(self, didEmitText: text)
+                        if case .text(var existing) = assistantParts.last {
+                            existing += text
+                            assistantParts[assistantParts.count - 1] = existing
+                        } else {
+                            assistantParts.append(DSHTextBlock(text: text))
+                        }
+
+                    case .thinkingDelta(let text):
+                        delegate?.driver(self, didEmitReasoning: text)
+
+                    case .reasoningContent, .reasoningEcho, .contentBlockStart, .toolInputDelta:
+                        // Provider-private payloads and previews. The driver
+                        // commits on toolCallComplete, so these are not
+                        // model-visible state the driver owns.
+                        break
+
+                    case .toolCallComplete(let id, let name, let args, _):
+                        let block = DSHToolCallBlock(
+                            id: id, name: name, arguments: encodeArguments(args)
+                        )
+                        toolCalls.append(block)
+                        assistantParts.append(block)
+
+                    case .usage(let reported):
+                        usage.inputTokens += reported.inputTokens
+                        usage.outputTokens += reported.outputTokens
+                        if let v = reported.cacheCreationInputTokens {
+                            usage.cacheWriteTokens = (usage.cacheWriteTokens ?? 0) + v
+                        }
+                        if let v = reported.cacheReadInputTokens {
+                            usage.cacheReadTokens = (usage.cacheReadTokens ?? 0) + v
+                        }
+                        delegate?.driver(self, didReportUsage: usage)
+
+                    case .done(let reason):
+                        stopReason = reason
+                    }
+                }
+            } catch {
+                let failure = error as? DSHFailure
+                    ?? DSHFailure(message: String(describing: error), code: "STREAM_ERROR")
+                delegate?.driver(self, didFail: failure)
+                return .cancelled
+            }
+
+            // Commit the assistant turn before any tool results, so the
+            // conversation stays provider-valid (tool_use then tool_result).
+            if !assistantParts.isEmpty {
+                session.append(
+                    DSHMessage(role: .assistant, blocks: assistantParts),
+                    turn: turn
+                )
+            }
+
+            delegate?.driver(self, didReportUsage: usage)
+
+            if toolCalls.isEmpty {
+                let reason: DSHTurnEndReason
+                switch stopReason {
+                case .endTurn, .refusal, .toolUse: reason = .completed
+                case .maxTokens: reason = .maxSteps
+                }
+                delegate?.driver(self, didEndTurn: reason)
+                return reason
+            }
+
+            // Schedule the calls by their declared concurrency mode.
+            let token = DSHCancellationToken()
+            let outcome = await DSHToolScheduler.execute(
+                registry: registry,
+                turn: turn,
+                step: step,
+                toolCalls: toolCalls,
+                signal: token,
+                maxParallel: config.maxParallelToolCalls
+            )
+
+            if cancelled || outcome.aborted {
+                // Unstarted calls already received a synthetic result, so the
+                // surface stays replayable.
+                delegate?.driver(self, didEndTurn: .cancelled)
+                return .cancelled
+            }
+
+            for commit in outcome.commits {
+                let verdict = gate.check(
+                    toolName: commit.block.name, arguments: [:],
+                    warningThreshold: config.loopWarningThreshold,
+                    criticalThreshold: config.loopCriticalThreshold
+                )
+                if verdict.level == DSHToolGate.Verdict.Level.critical {
+                    recordBlocked(commit, verdict: verdict, turn: turn)
+                    continue
+                }
+                commitResult(commit, turn: turn)
+            }
+
+            if outcome.concluded {
+                delegate?.driver(self, didEndTurn: .concluded)
+                return .concluded
+            }
+
+            await Task.yield()
+        }
+
+        delegate?.driver(self, didEndTurn: .maxSteps)
+        return .maxSteps
+    }
+
+    // MARK: - Compaction
+
+    /// Compact the surface when it is under pressure.
+    private func maybeCompact(turn: Int) async {
+        guard config.autoCompactionEnabled else { return }
+
+        let surface = session.surface()
+        let total = DSHTokenEstimate.total(surface)
+        guard total >= config.compactionPressureTokens else { return }
+
+        let result = await DSHCompaction.compact(
+            session: session,
+            turn: turn,
+            retainTokens: config.compactionRetainTokens,
+            pressureThreshold: config.compactionPressureTokens,
+            model: provider.model.id,
+            provider: provider.name
+        ) { [weak self] shadowedText in
+            guard let self else { throw DSHCompactionError.summaryFailed("driver deallocated") }
+            return try await self.summarize(shadowedText)
+        }
+
+        if case .success(let outcome) = result {
+            delegate?.driver(self, didCompact: outcome)
+        }
+    }
+
+    /// Ask the model to summarize the shadowed content.
+    private func summarize(_ text: String) async throws -> String {
+        let instruction = """
+        Summarize the conversation excerpt below. Preserve: decisions made, facts \
+        established, file paths and identifiers, current task state, and anything \
+        the next turn must know to continue. Drop: repeated attempts that failed, \
+        verbose tool output already superseded, and pleasantries.
+
+        Be concrete and terse. Do not address the user. Do not invent facts not \
+        present in the excerpt.
+
+        <excerpt>
+        \(text)
+        </excerpt>
+        """
+
+        let messages = [AgentMessage(role: .user, parts: [.text(instruction)])]
+        let stream = try await provider.streamAgentMessageClamped(
+            messages: messages,
+            systemPrompt: "You are a precise conversation summarizer.",
+            tools: [],
+            maxTokens: 4096,
+            thinkingLevel: .off
+        )
+
+        var summary = ""
+        for try await event in stream {
+            if case .textDelta(let delta) = event { summary += delta }
+        }
+        return summary
+    }
+
+    // MARK: - Request Building
+
+    private struct LoopRequest {
+        var messages: [AgentMessage]
+        var systemPrompt: String?
+        var tools: [AgentToolDefinition]
+        var maxTokens: Int
+        var thinkingLevel: ThinkingLevel
+    }
+
+    /// Build one step's request from the current surface.
+    ///
+    /// The surface is recomputed every step, so a compaction that landed
+    /// mid-turn is reflected here without any index bookkeeping.
+    private func buildRequest() -> LoopRequest {
+        let schemas = registry.schemas()
+        let context = DSHAssembleContext(
+            model: provider.model.id,
+            provider: provider.name,
+            cwd: nil,
+            toolNames: schemas.map(\.name),
+            isHelper: false
+        )
+
+        let assembly = prompt.assemble(
+            tools: schemas,
+            context: context,
+            toolOrder: config.toolOrder
+        )
+
+        var systemPrompt = DSHSystemPrompt.renderPrompt(assembly)
+        let snapshot = DSHSystemPrompt.renderContextSnapshot(assembly)
+        if !snapshot.isEmpty {
+            systemPrompt += "\n\n" + snapshot
+        }
+
+        return LoopRequest(
+            messages: projectMessages(session.surfaceMessages()),
+            systemPrompt: systemPrompt.isEmpty ? nil : systemPrompt,
+            tools: schemas.map(DSHToolSchemaBridge.toAgentToolDefinition),
+            maxTokens: config.maxTokens,
+            thinkingLevel: .off
+        )
+    }
+
+    /// Project the surface's messages into the provider's message type.
+    private func projectMessages(_ messages: [DSHMessage]) -> [AgentMessage] {
+        messages.compactMap { message -> AgentMessage? in
+            var parts: [AgentContentPart] = []
+            for block in message.blocks {
+                switch block {
+                case let text as DSHTextBlock:
+                    parts.append(.text(text.text))
+                case let reasoning as DSHReasoningBlock:
+                    parts.append(.text(reasoning.text))
+                case let call as DSHToolCallBlock:
+                    let args = (try? JSONSerialization.jsonObject(
+                        with: Data(call.arguments.utf8)
+                    )) as? [String: Any] ?? [:]
+                    parts.append(.toolUse(id: call.id, name: call.name, input: args))
+                case let result as DSHToolResultBlock:
+                    parts.append(.toolResult(
+                        id: result.callId,
+                        name: result.name,
+                        content: result.content,
+                        isError: result.isError,
+                        imageData: nil,
+                        imageMimeType: nil,
+                        pageURL: nil,
+                        imageLinuxPath: nil
+                    ))
+                case let image as DSHImageBlock:
+                    parts.append(.imageData(
+                        data: image.data, mimeType: image.mimeType, linuxPath: image.path
+                    ))
+                case let file as DSHFileBlock:
+                    parts.append(.text("[file: \(file.name) (\(file.size) bytes)]"))
+                default:
+                    continue
+                }
+            }
+            guard !parts.isEmpty else { return nil }
+            return AgentMessage(role: message.role == .user ? .user : .assistant, parts: parts)
+        }
+    }
+
+    // MARK: - Result Commit
+
+    private func commitResult(_ commit: DSHToolCommit, turn: Int) {
+        delegate?.driver(
+            self,
+            didFinishTool: commit.block.name,
+            callId: commit.block.id,
+            result: commit.result
+        )
+
+        var content = commit.result.content
+        if commit.started {
+            let verdict = gate.record(
+                toolName: commit.block.name,
+                result: commit.result.content,
+                errorMessage: commit.result.isError ? commit.result.content : nil,
+                warningThreshold: config.loopWarningThreshold,
+                criticalThreshold: config.loopCriticalThreshold
+            )
+            if let warning = verdict.message {
+                content += "\n\n" + warning
+            }
+        }
+
+        session.append(DSHMessage(role: .tool, blocks: [
+            DSHToolResultBlock(
+                callId: commit.block.id,
+                name: commit.block.name,
+                content: content,
+                isError: commit.result.isError
+            ),
+        ]), turn: turn)
+    }
+
+    /// Record a call the loop guard blocked.
+    private func recordBlocked(_ commit: DSHToolCommit, verdict: DSHToolGate.Verdict, turn: Int) {
+        let result = DSHToolExecutionResult(
+            content: verdict.message ?? "Error: blocked by loop guard",
+            isError: true
+        )
+        delegate?.driver(
+            self,
+            didFinishTool: commit.block.name,
+            callId: commit.block.id,
+            result: result
+        )
+        session.append(DSHMessage(role: .tool, blocks: [
+            DSHToolResultBlock(
+                callId: commit.block.id,
+                name: commit.block.name,
+                content: result.content,
+                isError: true
+            ),
+        ]), turn: turn)
+    }
+
+    // MARK: - Helpers
+
+    private func encodeArguments(_ args: [String: Any]) -> String {
+        guard JSONSerialization.isValidJSONObject(args),
+              let data = try? JSONSerialization.data(withJSONObject: args, options: [.sortedKeys]),
+              let text = String(data: data, encoding: .utf8) else {
+            return "{}"
+        }
+        return text
+    }
+}
