@@ -13,10 +13,14 @@
 import Foundation
 
 /// Bridges DSH tool schemas onto OpenMinis' provider-facing tool definitions.
-public enum DSHToolSchemaBridge {
+///
+/// `AgentToolDefinition` is internal to the Minis target, so these converters
+/// are internal too — they exist for the loop inside this target, not as public
+/// API.
+enum DSHToolSchemaBridge {
 
     /// Convert one schema.
-    public static func toAgentToolDefinition(_ schema: DSHToolSchema) -> AgentToolDefinition {
+    static func toAgentToolDefinition(_ schema: DSHToolSchema) -> AgentToolDefinition {
         let properties = schema.parameters["properties"] as? [String: Any] ?? [:]
         let required = schema.parameters["required"] as? [String] ?? []
 
@@ -41,7 +45,7 @@ public enum DSHToolSchemaBridge {
     }
 
     /// Convert a list of schemas.
-    public static func toAgentToolDefinitions(_ schemas: [DSHToolSchema]) -> [AgentToolDefinition] {
+    static func toAgentToolDefinitions(_ schemas: [DSHToolSchema]) -> [AgentToolDefinition] {
         schemas.map(toAgentToolDefinition)
     }
 

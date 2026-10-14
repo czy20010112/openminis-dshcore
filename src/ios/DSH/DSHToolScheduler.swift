@@ -249,9 +249,8 @@ public enum DSHToolScheduler {
 
                 // Suspend until at least one in-flight call finishes, then
                 // commit every result that is ready in model order.
-                let finished = await waitForAny(inFlight)
+                await waitForAny(inFlight)
                 inFlight.removeAll { $0.isFinished }
-                _ = finished
                 commitReady()
                 if signal.isCancelled { aborted = true }
             }

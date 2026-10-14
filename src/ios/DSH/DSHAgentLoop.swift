@@ -132,7 +132,7 @@ public final class DSHAgentLoop {
 
     // MARK: Init
 
-    public init(
+    init(
         provider: any AgentProvider,
         registry: DSHToolRegistry,
         prompt: DSHSystemPrompt,
@@ -257,10 +257,7 @@ public final class DSHAgentLoop {
                         break
 
                     case .toolCallComplete(let id, let name, let args, _):
-                        let raw = (try? JSONSerialization.data(
-                            withJSONObject: args,
-                            options: [.sortedKeys]
-                        ).flatMap { String(data: $0, encoding: .utf8) }) ?? "{}"
+                        let raw = Self.encodeArguments(args)
                         let block = DSHToolCallBlock(id: id, name: name, arguments: raw)
                         toolCalls.append(block)
                         assistantParts.append(.toolUse(id: id, name: name, input: args))
@@ -268,10 +265,8 @@ public final class DSHAgentLoop {
                     case .usage(let reported):
                         usage.inputTokens += reported.inputTokens
                         usage.outputTokens += reported.outputTokens
-                        if let total = reported.totalTokens { usage.totalTokens = (usage.totalTokens ?? 0) + total }
-                        if let cr = reported.cacheReadTokens { usage.cacheReadTokens = (usage.cacheReadTokens ?? 0) + cr }
-                        if let cw = reported.cacheWriteTokens { usage.cacheWriteTokens = (usage.cacheWriteTokens ?? 0) + cw }
-                        if let rt = reported.reasoningTokens { usage.reasoningTokens = (usage.reasoningTokens ?? 0) + rt }
+                        if let v = reported.cacheCreationInputTokens { usage.cacheWriteTokens = (usage.cacheWriteTokens ?? 0) + v }
+                        if let v = reported.cacheReadInputTokens { usage.cacheReadTokens = (usage.cacheReadTokens ?? 0) + v }
                         delegate?.loop(self, didReportUsage: usage)
 
                     case .done(let reason):
@@ -288,7 +283,7 @@ public final class DSHAgentLoop {
             // Commit the assistant turn before any tool results, so the
             // conversation stays provider-valid (tool_use then tool_result).
             if !assistantParts.isEmpty {
-                messages.append(DSHMessage(role: .assistant, blocks: assistantParts))
+                messages.append(DSHMessage(role: .assistant, blocks: assistantParts.map(Self.toBlock)))
             }
 
             delegate?.loop(self, didReportUsage: usage)
@@ -438,6 +433,31 @@ public final class DSHAgentLoop {
     // MARK: Delegate Dispatch
 
 
+    /// Serialize tool arguments to a stable JSON string. Falls back to `{}`
+    /// when the provider handed us something JSONSerialization rejects, because
+    /// the loop still needs a well-formed arguments payload to persist.
+    private static func encodeArguments(_ args: [String: Any]) -> String {
+        guard JSONSerialization.isValidJSONObject(args),
+              let data = try? JSONSerialization.data(withJSONObject: args, options: [.sortedKeys]),
+              let text = String(data: data, encoding: .utf8) else {
+            return "{}"
+        }
+        return text
+    }
+
+    /// Project one provider content part onto the loop's block vocabulary.
+    private static func toBlock(_ part: AgentContentPart) -> any DSHContentBlock {
+        switch part {
+        case .text(let text): return DSHTextBlock(text: text)
+        case .toolUse(let id, let name, let input):
+            return DSHToolCallBlock(id: id, name: name, arguments: encodeArguments(input))
+        case .toolResult(let id, let name, let content, let isError, _, _, _):
+            return DSHToolResultBlock(callId: id, name: name, content: content, isError: isError)
+        case .imageData(let data, let mimeType, let path):
+            return DSHImageBlock(data: data, mimeType: mimeType, path: path)
+        }
+    }
+
     // MARK: Result Commit
 
     private func commitResult(
@@ -503,12 +523,12 @@ public final class DSHAgentLoop {
 ///
 /// A blocked call returns an error result rather than executing, so the model
 /// gets a concrete reason to change approach instead of retrying.
-struct DSHToolGate {
+final class DSHToolGate: @unchecked Sendable {
     let enabled: Bool
     let warningThreshold: Int
     let criticalThreshold: Int
 
-    struct Verdict {
+    struct Verdict: Sendable {
         enum Level { case pass, warning, critical }
         let level: Level
         let message: String?
@@ -519,7 +539,7 @@ struct DSHToolGate {
     private var warningBuckets: [String: Int] = [:]
 
     /// Check before a call fires.
-    mutating func check(toolName: String, arguments: [String: Any]) -> Verdict {
+    func check(toolName: String, arguments: [String: Any]) -> Verdict {
         guard enabled else { return Verdict(level: .pass, message: nil) }
         let key = "\(toolName):\(stableHash(arguments))"
         let count = (history[key] ?? 0) + 1
@@ -546,7 +566,7 @@ struct DSHToolGate {
     }
 
     /// Record a settled call.
-    mutating func record(
+    func record(
         toolName: String,
         result: String?,
         errorMessage: String?

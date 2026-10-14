@@ -45,7 +45,7 @@ public struct DSHPromptSection: Sendable {
     public let complete: Bool
 
     public enum DSHSectionText: Sendable {
-        case static(String)
+        case fixed(String)
         case dynamic(@Sendable (DSHAssembleContext) -> String)
     }
 
@@ -85,7 +85,7 @@ public struct DSHPromptContext: Sendable {
     public let text: DSHPromptContext.ContextText
 
     public enum ContextText: Sendable {
-        case static(String)
+        case fixed(String)
         case dynamic(@Sendable (DSHAssembleContext) -> String)
     }
 
@@ -192,10 +192,6 @@ public final class DSHSystemPrompt: @unchecked Sendable {
             lock.unlock()
             preconditionFailure("prompt section \"\(section.name)\" is already registered")
         }
-        guard section.order.isFinite else {
-            lock.unlock()
-            preconditionFailure("prompt section \"\(section.name)\" order must be finite")
-        }
         sections.append(section)
         lock.unlock()
         return { [weak self] in
@@ -213,10 +209,6 @@ public final class DSHSystemPrompt: @unchecked Sendable {
         if contexts.contains(where: { $0.name == context.name }) {
             lock.unlock()
             preconditionFailure("prompt context \"\(context.name)\" is already registered")
-        }
-        guard context.order.isFinite else {
-            lock.unlock()
-            preconditionFailure("prompt context \"\(context.name)\" order must be finite")
         }
         contexts.append(context)
         lock.unlock()
@@ -250,7 +242,7 @@ public final class DSHSystemPrompt: @unchecked Sendable {
 
     /// Suppress every dynamic runtime-context contribution.
     @discardableResult
-    public func suppressRuntimeContext() -> () -> Void {
+    public func disableRuntimeContext() -> () -> Void {
         lock.lock()
         suppressRuntimeContext = true
         lock.unlock()
@@ -300,7 +292,7 @@ public final class DSHSystemPrompt: @unchecked Sendable {
         for def in sectionDefs {
             let raw: String
             switch def.text {
-            case .static(let text): raw = text
+            case .fixed(let text): raw = text
             case .dynamic(let provider): raw = provider(context)
             }
             let assembled = DSHAssembledSection(
@@ -315,7 +307,7 @@ public final class DSHSystemPrompt: @unchecked Sendable {
         let resolvedContexts: [DSHAssembledContext] = runtimeSuppressed ? [] : contextDefs.map { def in
             let raw: String
             switch def.text {
-            case .static(let text): raw = text
+            case .fixed(let text): raw = text
             case .dynamic(let provider): raw = provider(context)
             }
             return DSHAssembledContext(name: def.name, text: raw)

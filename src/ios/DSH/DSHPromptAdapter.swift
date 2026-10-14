@@ -21,6 +21,21 @@
 
 import Foundation
 
+// MARK: - Feature Flag
+
+extension AIChatViewModel {
+    /// Whether the DSH-assembled system prompt and tool set replace the
+    /// built-in ones.
+    ///
+    /// Defaults on: the DSH assembly is the replacement core. Turn it off to
+    /// compare behaviour against the original prompt and tool list on the
+    /// device without rebuilding.
+    static var useDSHAgentLoop: Bool {
+        get { UserDefaults.standard.object(forKey: "minis.useDSHAgentLoop") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "minis.useDSHAgentLoop") }
+    }
+}
+
 // MARK: - Prompt Assembly
 
 extension AIChatViewModel {

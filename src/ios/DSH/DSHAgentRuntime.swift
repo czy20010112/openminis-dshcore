@@ -12,7 +12,11 @@
 import Foundation
 
 /// The composed DSH agent runtime for one conversation.
-public final class DSHAgentRuntime: @unchecked Sendable {
+///
+/// Main-actor isolated: it builds a `DSHAgentLoop`, which is main-actor
+/// isolated because the providers it drives are main-actor types.
+@MainActor
+public final class DSHAgentRuntime {
 
     /// Tools available to the loop.
     public let registry: DSHToolRegistry
