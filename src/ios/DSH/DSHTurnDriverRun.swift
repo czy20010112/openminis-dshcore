@@ -191,7 +191,7 @@ extension AIChatViewModel {
     }
 
     /// Commit buffered text onto the streaming assistant block.
-    private func dshFlushPendingText(_ snapshot: String? = nil) {
+    func dshFlushPendingText(_ snapshot: String? = nil) {
         let text = snapshot ?? dshPendingText
         guard !text.isEmpty else { return }
         dshPendingText = ""

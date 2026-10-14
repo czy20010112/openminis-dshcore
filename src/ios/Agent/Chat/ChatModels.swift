@@ -78,6 +78,16 @@ final class ChatMessage: Identifiable, ObservableObject {
     var lastSourceSortOrder: Int?
     /// Links back to the QueuedPrompt so we can withdraw it.
     var queuedPromptId: UUID?
+    /// Session-log seq this message was projected from, when the DSH agent core
+    /// owns the conversation.
+    ///
+    /// nil for a UI-only row — a divider, a status row, or a streaming
+    /// placeholder not yet committed to the session. Once stamped it never
+    /// changes, so an array rebuild (iCloud reload, compaction, user delete) is
+    /// reconciled by seq rather than by index. That is the defect the DSH core
+    /// removes: an index could silently detach the row a running loop was
+    /// streaming into.
+    var dshSeq: Int?
     let timestamp = Date()
 
     init(role: ChatMessageRole, content: String, blocks: [AssistantBlock] = [], isQueued: Bool = false) {

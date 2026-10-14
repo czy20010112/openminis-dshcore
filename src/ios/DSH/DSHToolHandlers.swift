@@ -39,7 +39,7 @@ extension AIChatViewModel {
             handler: { [weak self] args, _ in
                 guard let self else { return DSHToolExecutionResult.error("view model released") }
                 let command = DSHToolArguments.string(args, "command", or: "")
-                let timeout = DSHToolArguments.int(args, "timeout", or: 900)
+                let timeout = TimeInterval(DSHToolArguments.int(args, "timeout", or: 900))
                 let output = await self.dshRunShell(command: command, timeout: timeout)
                 return DSHToolExecutionResult(content: output, isError: false)
             }

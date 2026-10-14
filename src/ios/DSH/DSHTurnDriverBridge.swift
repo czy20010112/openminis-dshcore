@@ -80,7 +80,7 @@ enum DSHSessionProjection {
                     withJSONObject: input, options: [.sortedKeys]
                 ).flatMap { String(data: $0, encoding: .utf8) }) ?? "{}"
                 blocks.append(DSHToolCallBlock(id: id, name: name, arguments: raw))
-            case .toolResult(let id, let name, let content, let isError, _, _, _):
+            case .toolResult(let id, let name, let content, let isError, _, _, _, _):
                 blocks.append(DSHToolResultBlock(
                     callId: id, name: name, content: content, isError: isError
                 ))
@@ -92,6 +92,17 @@ enum DSHSessionProjection {
             role: message.role == .user ? .user : .assistant,
             blocks: blocks
         )
+    }
+
+    /// Project a session entry onto a provider message, preserving the seq the
+    /// caller already knows.
+    ///
+    /// `AgentMessage` is a struct, so the returned copy is the only place the
+    /// caller's stamp can land — it is assigned on the result, not on the input.
+    static func toAgentMessage(_ entry: DSHLogEntry, seq: Int?) -> AgentMessage {
+        var message = toAgentMessage(entry)
+        message.dshSeq = seq
+        return message
     }
 }
 
