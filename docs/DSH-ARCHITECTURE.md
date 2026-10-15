@@ -324,6 +324,143 @@ flowchart TB
 
 ---
 
+## 5.5 压缩的持久化：让压缩活过重启
+
+**这是整次移植里最"必须想清楚"的一处。** DSH 的会话是内存对象，压缩（shadow）也只存在于内存里。如果不管它，重启后会发生什么：
+
+1. App 从数据库重建对话 → 完整的一整条，压缩成果没了；
+2. 驱动再次从完整历史起跑，表面立刻又超过 80% 窗口；
+3. 于是**每一轮都在压缩**，而且如果单次压缩后仍然装不下（保留尾 + 摘要 > 窗口），请求直接报错。
+
+### 不要另造一套：Minis 已经有对的东西
+
+Minis 自己的压缩持久化模型和 DSH 的形状**完全一致**：
+
+| | DSH | Minis |
+|---|---|---|
+| 边界 | `shadows: ClosedRange<DSHSeq>` | `CompactMarker.lastCompactedMessageId`（v2：**到此为止（含）都是被压缩的**） |
+| 摘要 | shadow 范围内的一条 summary entry | `CompactMarker.summary` |
+| 模型可见 | `surface()` 穿过 shadow 集合 | `effectiveAgentHistory()` 把摘要**注入到 anchor 之后第一条 user 消息** |
+
+所以正确做法不是新写一套落库格式，而是**把 DSH 的压缩翻译成 Minis 的 marker**：
+
+```mermaid
+flowchart TB
+    A["DSHTurnDriver.maybeCompact()<br/>选范围 → 摘要 → session.appendCompaction"] --> B["delegate.didCompact(outcome)<br/>（同步，此时被 shadow 的行还在 agentHistory 里）"]
+    B --> C["dshResolveCompactionMarker<br/>锚点 = 被 shadow 的最后一个 seq 的 dbMessageId"]
+    C --> D["回合末：dshWriteCompactionMarker<br/>deleteCompactMarkers → insertCompactMarker(v2)"]
+    D --> E["effectiveAgentHistory()<br/>= 最近 N 轮 + 摘要 + anchor 之后"]
+    E --> F["下次启动：dshSeedSession 用它建会话<br/>→ 压缩自动成立，无需重新压缩"]
+    E --> G["同一次运行内：cachedLatestMarker 同步更新"]
+```
+
+三个关键点：
+
+**① 锚点是数据库 id，而 reconcile 会重建 `agentHistory`。** 所以标记在 `didCompact` 里**当场解析**（那时被 shadow 的行还在数组里），写库推到回合末（store 是 actor，不能同步 await）。同时 reconcile 改成**按 seq 把 dbMessageId 带过去**——否则同一次运行内的第二次压缩根本找不到锚点。
+
+**② 一次只留一个 marker。** DSH 的摘要是**累进**的：上一次的 summary 本身就在下一次 shadow 的范围内，会被渲染进摘要模型的输入。所以最新的摘要天然覆盖"从头到锚点"，正好就是 v2 marker 的语义。写新的之前先 `deleteCompactMarkers`，而不是堆叠。
+
+**③ 摘要本身不再作为消息落库。** 它由 marker 承载；再存一行会让重启后**摘要和被它顶掉的原消息同时出现**。
+
+### 顺带修掉的会话生命周期 bug
+
+`dshSession` 原来是"每个 ViewModel 建一次、永不重建"——切换会话会**继承上一个会话的历史**。现在按 `sessionId` 记名（`dshSessionOwner`），换会话即重建。
+
+### 播种时的两个 bug（探针诊断行抓出来的）
+
+第一版播种写完，压缩确实写进了库、也确实活过了重启、分隔行也渲染了——**但重启后驱动看到的还是整条对话**，于是每次启动都把同一段对话重新压一遍。这类问题从库、从截图、从崩溃日志都看不出来，所以探针行里加了一行种子诊断：
+
+```
+DSH surface: 66 entries, ~2566 tokens (compact at 2000)
+  | seed: sess=… marker v2 anchor=… anchorResolves=false history=33(withDbId=33) effective=33
+```
+
+一行就说明了全部。两个 bug：
+
+**① 播种没有把 seq 写回 `agentHistory`。** 紧接着的同步按 seq 判断"这行在不在会话里"，于是把每一行都当成缺失、**又追加了一遍**——整个会话翻倍（33 行 → 66 条）。这就是诊断行里 `66 ≈ 33 × 2` 的来源。修法：播种时逐行回写 seq。
+
+**② 播种后没有让 `agentHistory` 与之一致。** 播种取自 `effectiveAgentHistory()`（它应用了压缩标记），所以它**排除掉的行就是被压缩的前缀**；这些行留在 `agentHistory` 里，同一个同步会把它们追加回来，把刚做完的压缩抹掉。修法：播种后直接 `agentHistory = seeded`——既防复活，又保住 `dbMessageId`（下一次压缩的锚点靠它解析）。
+
+修完之后同一行变成：
+
+```
+seed: sess=FCC5341C marker v2 anchor=4CAEAF2A anchorResolves=true history=11(withDbId=11) effective=11
+```
+
+`anchorResolves=true`、surface 11 条（不再翻倍）、压缩在重启后**确实被应用**。
+
+教训写在这里：**"压缩写进库了"和"压缩生效了"是两件事**，中间那段路只能靠一条能读到的诊断行来证明。
+
+---
+
+## 5.6 重跑：retry / resume / 消息级重跑
+
+原实现里 `retry()`、`resume()`、`retryFromMessage()`、`retryFromToolBlock()` 直接调 `runAgentLoop(resumingAt:committedBlocks:)`。后果有两层：
+
+- 点"重试/继续"时**跑的是另一个循环**，却拿着 DSH 的提示词和 DSH 的名册（`runAgentLoopCore` 里按开关取 `dshSystemPrompt` / `dshAgentTools()`），界面没有任何提示；
+- 那一轮产出的行没有 `dshSeq`，下一次 reconcile 会**整批丢掉**——屏幕上有，模型看不到。
+
+现在**6 个入口全部**按 `useDSHAgentLoop` 分派（send / retry / resume / resumeUnansweredUserTurn / launchRerunAgentLoop / drainQueuedPrompts）。
+
+重跑需要 append-only 的反面，所以 `DSHSession` 加了显式截断：
+
+```swift
+@discardableResult
+public func truncate(after seq: DSHSeq?) -> Int
+```
+
+- 丢掉 `seq` 之后的所有条目，以及**摘要或 shadow 范围被一起丢掉的压缩记录**；
+- **不回退 `nextSeq`**：seq 在会话生命周期内永不重用，避免"旧 seq 被当成新条目"；
+- 只在**没有循环在跑**时调用——此时没人持有 seq。这正是 append-only 要消除的失效模式，所以它必须是显式的、有名字的、带注释的例外，而不是随手 `removeAll`。
+
+`runDSHRedrive(afterSeq:)` 在此之上再丢掉 `messages` 里对应的行（按 seq，以及末尾无 seq 的 assistant 行），否则重试后屏幕上会出现两份回答。
+
+| 入口 | 截断点 |
+|---|---|
+| `retry()` / `resume()` | 最后一条 user 条目（把这次失败尝试追加的一切都退掉） |
+| `retryFromMessage` / `retryFromToolBlock` | 那条消息的 `dshSeq`；会话不认识该行时退回"最后一条 user" |
+| `send` / `drainQueued` | 不截断（用户消息已追加在末尾） |
+
+---
+
+## 5.7 怎么验证压缩（探针是构建输入）
+
+压缩的正式阈值是"服务模型窗口的 80%"——这台机器上是 209715 token。要在真机上触发它，得先灌满 20 万 token；而 `input_text` 有 7000～8000 字符上限，靠手打灌不进去。
+
+所以有个编译期探针：把压力阈值降到 2000 token、保留尾部降到 400，几次普通工具回合就能触发。
+
+**它现在是工作流输入，不是源码里的 `false`**：
+
+```yaml
+workflow_dispatch:
+  inputs:
+    compaction_probe:
+      description: 'TEST BUILD: lower the compaction thresholds'
+      type: boolean
+      default: false
+```
+
+```bash
+gh workflow run build-ipa.yml -f compaction_probe=true -f build_ios26=false -f create_release=false
+```
+
+- 探针是**编译期条件**（`DSH_COMPACTION_PROBE` + `SWIFT_ACTIVE_COMPILATION_CONDITIONS`），因为运行期开关在这个 app 里活不下来——它启动时注册自己的 defaults 字典并整份重写 plist；
+- 探针构建的产物叫 `…-probe-unsigned.ipa`，打 warning 注解，并且 **publish job 直接跳过**，所以它不可能污染 Release。
+
+之前它是源码里写死的 `false`，意味着"要验证就得改代码、发一版、再记得改回来"——这种验证最后不会被执行。
+
+---
+
+## 5.8 验证时抓出的三个"只在真机才看得见"的问题
+
+**① 文本块每次 flush 都被覆盖成最后一片。** `setStreamingTextBlockContent` 是**替换**语义，原 loop 传的是整轮累积文本；DSH 路径传的是"本次待刷的增量"，于是每刷一次，块内容就被换成自己的最后一片。表现：回答以 ` ``` ` 结尾时，屏幕上只剩一个空的 `text` 块——**数据库里答案是对的**，只有 UI 是空的。这正是"只看截图会误判、只看数据库也会误判"的那种 bug。
+
+**② 取消后 UI 给的是「重试」而不是「继续」。** 验证脚本一开始找 `继续`/`Interrupted`，什么都没找到就报"没有恢复控件"。控件名要以 app 实际画的为准，不能按猜的来。
+
+**③ 会话对象每个 ViewModel 只建一次。** 切换会话会继承上一个会话的历史。现在按 `sessionId` 记名重建。
+
+---
+
 ## 6. 系统提示词：字符串拼接 → 有序 section 注册表
 
 ```mermaid
@@ -420,9 +557,9 @@ flowchart LR
     H --> I["DSHSessionProjection<br/>→ AgentContentPart.toolResult"]
 ```
 
-### 同一轮补齐的另外七个缺陷
+### 同一轮补齐的另外八个缺陷
 
-这七个都是"验证 agent 全部能力"时才暴露出来的，不是顺手看到的：
+这八个都是"验证 agent 全部能力"时才暴露出来的，不是顺手看到的：
 
 **① 完全没有持久化。** `src/ios/DSH/` 里没有任何 `persistAgentMessage` 调用。DSH 模式下助手回复和工具结果**从不写进数据库**——屏幕上好好的，下次启动就没了，因为转录是从数据库重建的。现在每轮结束把本轮追加的条目写库（带本轮工具快照），并把数据库 id 回填到行上。
 
@@ -437,6 +574,21 @@ flowchart LR
 **⑥ 思考块从不渲染。** `didEmitReasoning` 只往 `dshPendingReasoning` 里累加，没有任何地方读它。现在按原实现的形状做：每段连续推理自成一个 `.thinking` 块、按到达顺序交错、用自适应节流刷到 `content`，收尾时强制冲刷尾部。
 
 **⑦ 朗读（TTS）从不触发。** 原 loop 是**边流边读**——每凑齐一个完整句子就交给动态窗口合成。DSH 驱动自己消费流，于是 `extractNewSentences` / `feedDynamicTTS` / `stopSpeechForThisSession` 一次都没被调用，开着"朗读回复"也没有声音。现在在 `didEmitText` 里接回同一条路径（`speakEnabled` 实时读取而非回合开始快照，本会话上一轮朗读只在真的有新文本时才被打断），收尾时 `force: true` 冲刷尾部。
+
+**⑧ 思考等级被写死 `.off`。** `buildRequest()` 里 `thinkingLevel: .off` 是个字面量。原 loop 从会话的 inference config 取值并夹到模型允许的上限，DSH 驱动两件都没做——于是**每个 DSH 回合都关着思考**，包括那些全部意义就在推理的模型，而且毫无痕迹。现在是配置字段，由调用方按原路径的同一套规则求值。
+
+### 验证脚本本身也要被验证
+
+这一轮的教训：第一版验证驱动**自己就是错的**，而它错的方式让"看起来很忙"和"什么都没测到"长得一模一样。
+
+它每次采样都调用 `Get-BatchTailRows`，而那个 helper 内部会调 `Clear-BatchConversationView`——**6 次 swipe**。于是设备每 20 秒可视地滚一次，用户看到的就是"一直在下滑"。同时它测的东西也是错的：
+
+- 签名取自**最后 4 行**，但这个 app 把一整轮合并成**一个**消息、工具块还是横向分页器（`‹ 3/3 ›`），所以尾部 4 行是分页器外壳，几乎立刻就不变了；
+- 它还要求提示词前 12 个字符出现在那 4 行里。提示词一旦滚出可视区，这个条件**永远不可能成立**，于是循环必然跑满 900 秒超时。
+
+重写后的驱动：采样只读 `get_ui_elements`，**回合期间一次都不碰屏幕**（列表停在贴底处就会一直自动跟随），签名取整流可视文本，并把**每次采样的文本都留下**再做并集断言——中途滚出视野的行也是证据。
+
+结论：断言必须能区分"没通过"和"没测到"，否则验证会给出虚假的安心。
 
 
 ### 分页修复的真机验证
