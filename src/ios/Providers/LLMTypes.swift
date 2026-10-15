@@ -831,7 +831,12 @@ struct SessionModelBinding: Codable, Hashable {
 // MARK: - Session Inference Config
 
 /// Thinking intensity level.
-enum ThinkingLevel: String, Codable, Hashable, CaseIterable, Comparable {
+/// Extended-thinking levels, oldest model first.
+///
+/// Public so a public configuration type can carry one: the DSH turn driver's
+/// config exposes the level it was built with, and a public property cannot use
+/// an internal type. Inside an app target this changes nothing else.
+public enum ThinkingLevel: String, Codable, Hashable, CaseIterable, Comparable {
     case off
     case low
     case medium
