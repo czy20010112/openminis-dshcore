@@ -83,6 +83,11 @@ extension AIChatViewModel {
             // and compacts away the user's own request, so the model answers
             // from nothing. Derive it from the window and skip compaction
             // entirely when the window is unknown.
+            //
+            // An explicit override exists so the behaviour can be exercised on a
+            // device without filling a 262k window: set `minis.dshCompactOverride`
+            // to a token count and compaction fires there instead. Leave it unset
+            // in normal use.
             compactionPressureTokens: Self.dshCompactionPressureTokens(for: entry.model),
             autoCompactionEnabled: true
         )
@@ -119,7 +124,15 @@ extension AIChatViewModel {
     /// DSH compacts at roughly 80% of the window. An unknown window returns
     /// `Int.max`, which disables automatic compaction rather than compacting on
     /// a guess — compacting away the live request is worse than running long.
+    ///
+    /// `UserDefaults["minis.dshCompactOverride"]` replaces the derived value when
+    /// set, so the behaviour can be exercised on a device without filling the
+    /// model's whole window. Intended for testing only.
     static func dshCompactionPressureTokens(for model: LLMModel) -> Int {
+        if let override = UserDefaults.standard.object(forKey: "minis.dshCompactOverride") as? Int,
+           override > 0 {
+            return override
+        }
         guard let window = model.contextWindow, window > 0 else { return Int.max }
         return (window * 80) / 100
     }

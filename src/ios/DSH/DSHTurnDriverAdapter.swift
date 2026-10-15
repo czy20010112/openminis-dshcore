@@ -147,6 +147,19 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
             + "(shrink \(Int(outcome.shrinkRatio * 100))%)"
         )
         dshLastCompaction = outcome
+
+        // Surface the compaction in the transcript. A silent context rewrite is
+        // indistinguishable from the model forgetting, so the row says what was
+        // replaced and what it cost.
+        let row = ChatMessage(role: .compactDivider, content: "")
+        row.compactSummary = """
+        Compacted \(outcome.range.shadowedSeqs.count) earlier entries into one summary.
+        Context \(outcome.beforeTokens) -> \(outcome.afterTokens) tokens (\(Int(outcome.shrinkRatio * 100))% smaller).
+        Retained tail: \(outcome.range.retainedTokenCount) tokens.
+        """
+        messages.append(row)
+        publishUnlessTransitioning()
+        scrollToBottomSignal.send()
     }
 
     public func driver(_ driver: DSHTurnDriver, didEndTurn reason: DSHTurnEndReason) {
