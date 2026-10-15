@@ -92,6 +92,50 @@ Matches DSH's `selectCompactableRange`:
 4. Shadow the resulting range with one summary entry, and only when the summary
    actually costs less than what it replaces.
 
+The threshold is 80% of the serving model's context window. An unknown window
+disables automatic compaction rather than compacting on a guess — compacting
+away the live request is worse than running long.
+
+## Compaction verified on device
+
+The probe (`dshCompactionProbeEnabled`) lowers the thresholds so a realistic
+conversation trips compaction without filling a 262k window. With it on, one
+turn on the iPhone 13 produced:
+
+| | Before | After |
+|---|---|---|
+| Surface entries | 18 | **9** |
+| Estimated tokens | 2026 | **1330** |
+
+Nine earlier entries were shadowed into one summary — a 34% reduction — and the
+`shell_execute` call in that same turn still completed, with the model answering
+correctly from the summary afterwards. The probe ships `false`.
+
+Selection was also probed independently over synthetic surfaces (Python port of
+the same rule, `_testdata/compaction_probe.py`):
+
+| Surface | Result |
+|---|---|
+| Long tool output (20 × 20k-char results) | 94% smaller, boundaries balanced |
+| Image blocks | 73% smaller, boundaries balanced |
+| Barely over pressure | 45% smaller, boundaries balanced |
+| Retain budget larger than the surface | correctly declines |
+| Session too small | correctly declines |
+| No system head | correctly declines |
+
+Every accepted cut was tool-pairing balanced, so a compaction cannot strand a
+tool call from its result.
+
+## Two device-only facts worth knowing
+
+**External `UserDefaults` injection does not work.** The app registers its own
+defaults dictionary at launch and rewrites the whole plist, so a key written
+from outside is discarded. Test thresholds therefore have to be compile-time.
+
+**The app's own logs are not reachable.** `get_syslog` does not carry its NSLog
+output and the on-disk log keeps only the last 20 lines. Diagnostics that need
+to be observed go into the transcript as rows.
+
 ## Wiring
 
 `DSHTurnDriver` is wired in. `AIChatViewModel.runDSHTurn()` builds the registry,
