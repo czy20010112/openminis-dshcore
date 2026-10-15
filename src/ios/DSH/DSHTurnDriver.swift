@@ -120,6 +120,7 @@ public struct DSHTurnDriverConfig: Sendable {
         self.maxParallelToolCalls = max(1, maxParallelToolCalls)
         self.maxStepsPerTurn = max(1, maxStepsPerTurn)
         self.maxTokens = maxTokens
+        self.thinkingLevel = thinkingLevel
         self.enableLoopGuard = enableLoopGuard
         self.loopWarningThreshold = max(1, loopWarningThreshold)
         self.loopCriticalThreshold = max(self.loopWarningThreshold + 1, loopCriticalThreshold)
