@@ -48,10 +48,18 @@ extension AIChatViewModel {
         }
         guard let session = dshSession else { return }
 
-        // Build the tool registry from the same schema source the loop uses, so
-        // the model sees one set of definitions.
+        // The tool roster is Minis' — `makeAgentTools()` is the only place that
+        // knows the gating. The DSH registry adds the declared concurrency, and
+        // one image budget per turn, matching the original loop's per-turn
+        // allocation so concurrent image reads cannot collectively exceed the
+        // context image cap.
+        let definitions = dshAgentTools()
+        let batchBudget = BatchImageBudget(initial: Self.kImageContextKeepCount)
+        dshToolBlockIndex.removeAll()
+        dshPendingSnapshots.removeAll()
+
         let registry = DSHToolRegistry()
-        for tool in dshAgentRegistry() {
+        for tool in dshAgentRegistry(definitions: definitions, batchBudget: batchBudget) {
             _ = registry.register(tool)
         }
 
@@ -140,14 +148,102 @@ extension AIChatViewModel {
             messages.append(info)
         }
 
+        let logCountBeforeTurn = session.logCount
         _ = await driver.run()
+
+        // Persist what this turn added, then rebuild the UI array from the
+        // surface. The driver owns conversation identity but not storage:
+        // nothing under src/ios/DSH/ writes to ChatStore, so without this the
+        // turn renders on screen and is gone at the next launch — the transcript
+        // is rebuilt from the database.
+        let persisted = await dshPersistSurface(
+            session,
+            fromIndex: logCountBeforeTurn,
+            modelEntryId: entry.id
+        )
 
         // Reconcile the UI array against the session surface, so agentHistory
         // reflects any compaction the driver applied.
         dshReconcileFromSession(session)
 
+        // Record the database ids the reconcile just made addressable. The row a
+        // later edit or delete targets is found by these.
+        for i in agentHistory.indices {
+            guard let seq = agentHistory[i].dshSeq, let dbId = persisted[seq] else { continue }
+            agentHistory[i].dbMessageId = dbId
+        }
+
         dshStreamingMsgIdx = -1
         dshPendingToolResults.removeAll()
+        dshToolBlockIndex.removeAll()
+        dshPendingSnapshots.removeAll()
+    }
+
+    /// Persist the session entries this turn appended.
+    ///
+    /// Only entries from `fromIndex` on are written: the head of the session is
+    /// rows restored from the database, which already have rows of their own, and
+    /// re-appending them would duplicate the conversation. The user's own message
+    /// is excluded too — `send()` persisted it before the turn began.
+    ///
+    /// - Returns: seq → database id, for rows the caller still has to stamp.
+    private func dshPersistSurface(
+        _ session: DSHSession,
+        fromIndex: Int,
+        modelEntryId: String?
+    ) async -> [Int: String] {
+        let entries = session.allEntries()
+        guard fromIndex >= 0, fromIndex < entries.count else { return [:] }
+
+        let usage = minisTokenUsage(dshTurnUsage)
+        var persisted: [Int: String] = [:]
+
+        for entry in entries[fromIndex...] {
+            // A system or developer entry is context, not a conversation row.
+            switch entry.message.role {
+            case .system, .developer:
+                continue
+            case .user, .assistant, .tool:
+                break
+            }
+
+            let message = DSHSessionProjection.toAgentMessage(entry)
+            // A reasoning-only or empty assistant turn has nothing to store, and
+            // writing it would put a blank bubble in the transcript on reload.
+            guard message.parts.contains(where: { part in
+                if case .text(let text) = part { return !text.isEmpty }
+                return true
+            }) else { continue }
+
+            if let dbId = await persistAgentMessage(
+                message,
+                tokenUsage: entry.message.role == .assistant ? usage : nil,
+                snapshots: dshPendingSnapshots,
+                modelEntryId: modelEntryId
+            ) {
+                persisted[entry.seq.value] = dbId
+            } else {
+                AppLogger(category: "DSHLoop").warning(
+                    "[DSH] persist FAILED for seq=\(entry.seq.value) role=\(entry.message.role.rawValue)"
+                )
+            }
+        }
+        return persisted
+    }
+
+    /// Map the driver's usage accounting onto the row type the store reads.
+    private func minisTokenUsage(_ usage: DSHTokenUsage) -> TokenUsage {
+        var out = TokenUsage()
+        out.inputTokens = usage.inputTokens
+        out.outputTokens = usage.outputTokens
+        out.cacheCreationTokens = usage.cacheWriteTokens ?? 0
+        out.cacheReadTokens = usage.cacheReadTokens ?? 0
+        // "Context size of the latest API call", which is the input plus
+        // whatever was served from or written to cache.
+        out.latestContextTokens = usage.inputTokens
+            + out.cacheCreationTokens
+            + out.cacheReadTokens
+        return out
     }
 
     /// Compaction budgets. Deployment-varying values, so they are fields rather

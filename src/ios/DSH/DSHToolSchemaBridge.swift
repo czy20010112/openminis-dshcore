@@ -40,7 +40,7 @@ enum DSHToolSchemaBridge {
             description: schema.description,
             parameters: params,
             required: required,
-            propertyOrdering: nil
+            propertyOrdering: schema.propertyOrdering
         )
     }
 

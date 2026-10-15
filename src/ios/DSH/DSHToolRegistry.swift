@@ -35,6 +35,8 @@ public final class DSHTool: @unchecked Sendable {
     public let executionMode: DSHToolExecutionMode
     /// Result context this tool contributes back into the conversation.
     public let resultRole: DSHMessage.Role
+    /// The order this tool's parameters are presented in, when it declares one.
+    public let propertyOrdering: [String]?
     private let body: @Sendable ([String: Any], DSHToolRunContext) async throws -> DSHToolExecutionResult
 
     public init(
@@ -42,6 +44,7 @@ public final class DSHTool: @unchecked Sendable {
         description: String,
         parameters: [String: Any],
         executionMode: DSHToolExecutionMode = .exclusive,
+        propertyOrdering: [String]? = nil,
         body: @escaping @Sendable ([String: Any], DSHToolRunContext) async throws -> DSHToolExecutionResult
     ) {
         self.name = name
@@ -49,6 +52,7 @@ public final class DSHTool: @unchecked Sendable {
         self.parameters = parameters
         self.executionMode = executionMode
         self.resultRole = .tool
+        self.propertyOrdering = propertyOrdering
         self.body = body
     }
 
@@ -66,7 +70,8 @@ public final class DSHTool: @unchecked Sendable {
             name: name,
             description: description,
             parameters: parameters,
-            deferLoading: deferLoading
+            deferLoading: deferLoading,
+            propertyOrdering: propertyOrdering
         )
     }
 }

@@ -2649,6 +2649,19 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
     /// onto their UI blocks.
     var dshPendingToolResults: [String: DSHToolExecutionResult] = [:]
 
+    /// Position of each in-flight call's transcript block, keyed by call id.
+    ///
+    /// Minis' tool executor addresses a block by position, and the position of a
+    /// block shifts while a turn runs (a tool result appends a row, compaction
+    /// inserts a divider). A call id is what survives that.
+    var dshToolBlockIndex: [String: Int] = [:]
+
+    /// Tool snapshots this turn produced, keyed by call id.
+    ///
+    /// Persistence reads media out of these, so a tool that produced an image
+    /// keeps it across a reload.
+    var dshPendingSnapshots: [String: (toolName: String, snapshot: ToolSnapshot)] = [:]
+
     /// Usage reported by the driver for the current turn.
     var dshTurnUsage = DSHTokenUsage()
 

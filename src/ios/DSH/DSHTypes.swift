@@ -219,17 +219,26 @@ public struct DSHToolSchema: Sendable {
     public let parameters: [String: Any]
     /// Requests deferred loading of the tool definition into model context.
     public let deferLoading: Bool
+    /// The order the tool's parameters should be presented in.
+    ///
+    /// `parameters` is a dictionary, so it has no order of its own. Providers
+    /// that support it (Gemini) instruct the model to emit arguments in a
+    /// declared order, and Minis' tool definitions carry that order; without
+    /// this field the round trip through JSON Schema would silently drop it.
+    public let propertyOrdering: [String]?
 
     public init(
         name: String,
         description: String,
         parameters: [String: Any],
-        deferLoading: Bool = false
+        deferLoading: Bool = false,
+        propertyOrdering: [String]? = nil
     ) {
         self.name = name
         self.description = description
         self.parameters = parameters
         self.deferLoading = deferLoading
+        self.propertyOrdering = propertyOrdering
     }
 }
 

@@ -2,174 +2,87 @@
 //  DSHMinisTools.swift
 //  Minis
 //
-//  Bridges OpenMinis' existing tools into the DSH tool registry.
+//  Bridges OpenMinis' own tool definitions into the DSH registry.
 //
-//  The tools themselves are untouched: this adapter only wraps each existing
-//  handler as a DSH `DSHTool` with a declared execution mode. Interaction and
-//  tool behaviour are preserved; only the scheduling semantics change.
+//  The tool surface is Minis'. `makeAgentTools()` owns which tools exist, their
+//  descriptions, their parameters and their gating — all of it shaped by
+//  settings toggles, the configured Vision Group, and the sub-agent switch. The
+//  DSH port replaces the *scheduling* of those tools, not their declaration, so
+//  the registry is built from that same list rather than from a second,
+//  hand-maintained copy of the schemas.
+//
+//  The copy is what this file used to be, and it drifted: `browser_use` and the
+//  iOS 26 line's delegation tool were never re-declared, so the model simply
+//  never saw them, and nothing reported that. Deriving the registry removes the
+//  possibility rather than the instance — a tool Minis offers is offered here,
+//  with the same description and the same parameters, by construction.
+//
+//  Declared concurrency is the one thing Minis does not have an opinion about,
+//  and it stays here: `DSHToolDispatch.mode(for:)` says whether a tool may run
+//  alongside another.
 //
 
 import Foundation
 
-/// Bridges OpenMinis' existing tool handlers into the DSH registry.
-public enum DSHMinisTools {
+/// Bridges Minis' tool definitions into the DSH registry.
+enum DSHMinisTools {
 
     /// A handler that executes one tool call and returns a result.
-    public typealias Handler = @Sendable ([String: Any], DSHToolRunContext) async throws -> DSHToolExecutionResult
+    typealias Handler = @Sendable ([String: Any], DSHToolRunContext) async throws -> DSHToolExecutionResult
 
-    /// Build a DSH tool from a name, schema, and existing handler.
-    public static func make(
-        name: String,
-        description: String,
-        parameters: [String: Any],
+    /// Build a DSH tool from a Minis tool definition.
+    static func make(
+        from definition: AgentToolDefinition,
         executionMode: DSHToolExecutionMode,
         handler: @escaping Handler
     ) -> DSHTool {
         DSHTool(
-            name: name,
-            description: description,
-            parameters: parameters,
+            name: definition.name,
+            description: definition.description,
+            parameters: jsonSchema(from: definition),
             executionMode: executionMode,
+            propertyOrdering: definition.propertyOrdering,
             body: handler
         )
     }
 
-    // MARK: - Shared parameter Schemas
-
-    /// The `tool_title` parameter every Minis tool accepts.
-    public static func toolTitleParam() -> (name: String, schema: [String: Any]) {
-        (
-            "tool_title",
-            DSHJSONSchema.string(
-                description: "A concise 5-10 word summary of what this call does, shown to the user in the transcript. Use the user's language."
-            )
-        )
+    /// Render a Minis tool definition as the JSON Schema a DSHTool carries.
+    static func jsonSchema(from definition: AgentToolDefinition) -> [String: Any] {
+        let properties = parameterNames(of: definition).compactMap { name -> (name: String, schema: [String: Any])? in
+            guard let param = definition.parameters[name] else { return nil }
+            return (name, schema(for: param))
+        }
+        return DSHJSONSchema.object(properties: properties, required: definition.required)
     }
 
-    /// Object schema for a shell command.
-    public static func shellExecuteSchema() -> [String: Any] {
-        DSHJSONSchema.object(
-            properties: [
-                toolTitleParam(),
-                (
-                    "command",
-                    DSHJSONSchema.string(
-                        description: "The shell command to run, passed to /bin/sh -c. Multi-line commands are fine. For a long script, write it with file_write first and run the file.",
-                        maxLength: 100_000
-                    )
-                ),
-                (
-                    "timeout",
-                    DSHJSONSchema.integer(
-                        description: "Timeout in seconds (default 900).",
-                        minimum: 1,
-                        maximum: 3600,
-                        default: 900
-                    )
-                ),
-                (
-                    "delay",
-                    DSHJSONSchema.integer(
-                        description: "Seconds to wait before starting, without holding the shell.",
-                        minimum: 0,
-                        maximum: 600
-                    )
-                ),
-            ],
-            required: ["tool_title", "command"]
-        )
+    /// Every parameter name, in the order it should be presented.
+    ///
+    /// `AgentToolDefinition.parameters` is a dictionary and therefore unordered,
+    /// so the declared order comes from `propertyOrdering`. Anything it does not
+    /// name is appended; the order of those is unspecified, but the ordering
+    /// that providers act on is the declared one, which travels separately.
+    private static func parameterNames(of definition: AgentToolDefinition) -> [String] {
+        var names = definition.propertyOrdering ?? []
+        for name in definition.parameters.keys where !names.contains(name) {
+            names.append(name)
+        }
+        return names
     }
 
-    /// Object schema for reading a file.
-    public static func fileReadSchema() -> [String: Any] {
-        DSHJSONSchema.object(
-            properties: [
-                toolTitleParam(),
-                (
-                    "path",
-                    DSHJSONSchema.string(
-                        description: "Absolute Linux path to read."
-                    )
-                ),
-                (
-                    "offset",
-                    DSHJSONSchema.integer(
-                        description: "1-based line to start from. Use the next_offset a truncated read reports.",
-                        minimum: 1
-                    )
-                ),
-                (
-                    "lines",
-                    DSHJSONSchema.integer(
-                        description: "Maximum lines to return.",
-                        minimum: 1
-                    )
-                ),
-                (
-                    "direction",
-                    DSHJSONSchema.string(
-                        description: "Read from the start or the end of the file.",
-                        enumValues: ["head", "tail"]
-                    )
-                ),
-                (
-                    "max_length",
-                    DSHJSONSchema.integer(
-                        description: "Maximum characters of content to return.",
-                        minimum: 100,
-                        default: 15_000
-                    )
-                ),
-            ],
-            required: ["tool_title", "path"]
-        )
+    private static func schema(for param: AgentToolParam) -> [String: Any] {
+        var schema: [String: Any] = ["type": typeName(param.type)]
+        if !param.description.isEmpty { schema["description"] = param.description }
+        if let values = param.enumValues, !values.isEmpty { schema["enum"] = values }
+        return schema
     }
 
-    /// Object schema for writing a file.
-    public static func fileWriteSchema() -> [String: Any] {
-        DSHJSONSchema.object(
-            properties: [
-                toolTitleParam(),
-                ("path", DSHJSONSchema.string(description: "Absolute Linux path to write.")),
-                ("content", DSHJSONSchema.string(description: "Text content to write.")),
-                (
-                    "append",
-                    DSHJSONSchema.boolean(
-                        description: "Append instead of overwrite.",
-                        default: false
-                    )
-                ),
-                (
-                    "create_dirs",
-                    DSHJSONSchema.boolean(
-                        description: "Create parent directories.",
-                        default: false
-                    )
-                ),
-            ],
-            required: ["tool_title", "path", "content"]
-        )
-    }
-
-    /// Object schema for a targeted edit.
-    public static func fileEditSchema() -> [String: Any] {
-        DSHJSONSchema.object(
-            properties: [
-                toolTitleParam(),
-                ("path", DSHJSONSchema.string(description: "Absolute Linux path to edit.")),
-                (
-                    "old_string",
-                    DSHJSONSchema.string(
-                        description: "Exact text to find, including whitespace. Must be unique unless replace_all is true."
-                    )
-                ),
-                ("new_string", DSHJSONSchema.string(description: "Replacement text. Empty deletes.")),
-                (
-                    "replace_all",
-                    DSHJSONSchema.boolean(description: "Replace every occurrence.", default: false)
-                ),
-            ],
-            required: ["tool_title", "path", "old_string", "new_string"]
-        )
+    /// `AgentParamType` has no `number` case, so a numeric parameter is an
+    /// integer on the wire. That mirrors what the original loop sent.
+    private static func typeName(_ type: AgentParamType) -> String {
+        switch type {
+        case .string: return "string"
+        case .integer: return "integer"
+        case .boolean: return "boolean"
+        }
     }
 }

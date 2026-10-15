@@ -200,6 +200,9 @@ public final class DSHTurnDriver {
         let turn = currentTurn
         var step = 0
 
+        // Counters are per turn, so a call repeated across turns is not a loop.
+        gate.reset()
+
         while step < config.maxStepsPerTurn {
             if cancelled {
                 delegate?.driver(self, didEndTurn: .cancelled)
@@ -316,13 +319,50 @@ public final class DSHTurnDriver {
                 return reason
             }
 
+            // Pre-dispatch loop guard.
+            //
+            // The guard keys on the tool name AND the arguments, so it has to be
+            // given the real arguments: with an empty dictionary every call to
+            // the same tool hashes identically, and the twentieth `file_read` of
+            // a turn is treated as a repeat of the first.
+            //
+            // It also has to run before dispatch. Checking after the call
+            // returned cannot prevent the duplicate execution, and treating a
+            // settled result as "blocked" means discarding real output and
+            // handing the model a refusal in its place.
+            var blocked: [String: DSHToolGate.Verdict] = [:]
+            var admissible: [DSHToolCallBlock] = []
+            for call in toolCalls {
+                let verdict = gate.check(
+                    toolName: call.name,
+                    arguments: decodeArguments(call.arguments),
+                    warningThreshold: config.loopWarningThreshold,
+                    criticalThreshold: config.loopCriticalThreshold
+                )
+                if config.enableLoopGuard, verdict.level == DSHToolGate.Verdict.Level.critical {
+                    // Announce the call before refusing it, so its transcript
+                    // block carries the tool's own header and renders as a
+                    // refused call rather than an anonymous note.
+                    let arguments = decodeArguments(call.arguments)
+                    delegate?.driver(
+                        self,
+                        willRunTool: call.name,
+                        callId: call.id,
+                        arguments: arguments
+                    )
+                    blocked[call.id] = verdict
+                } else {
+                    admissible.append(call)
+                }
+            }
+
             // Schedule the calls by their declared concurrency mode.
             let token = DSHCancellationToken()
             let outcome = await DSHToolScheduler.execute(
                 registry: registry,
                 turn: turn,
                 step: step,
-                toolCalls: toolCalls,
+                toolCalls: admissible,
                 signal: token,
                 maxParallel: config.maxParallelToolCalls
             )
@@ -334,17 +374,18 @@ public final class DSHTurnDriver {
                 return .cancelled
             }
 
-            for commit in outcome.commits {
-                let verdict = gate.check(
-                    toolName: commit.block.name, arguments: [:],
-                    warningThreshold: config.loopWarningThreshold,
-                    criticalThreshold: config.loopCriticalThreshold
-                )
-                if verdict.level == DSHToolGate.Verdict.Level.critical {
-                    recordBlocked(commit, verdict: verdict, turn: turn)
-                    continue
+            // Commit in the model's own order, interleaving the blocked calls
+            // with the executed ones so the result sequence still mirrors the
+            // call sequence.
+            var commitsById: [String: DSHToolCommit] = [:]
+            for commit in outcome.commits { commitsById[commit.block.id] = commit }
+
+            for call in toolCalls {
+                if let verdict = blocked[call.id] {
+                    recordBlocked(callId: call.id, name: call.name, verdict: verdict, turn: turn)
+                } else if let commit = commitsById[call.id] {
+                    commitResult(commit, turn: turn)
                 }
-                commitResult(commit, turn: turn)
             }
 
             if outcome.concluded {
@@ -542,22 +583,30 @@ public final class DSHTurnDriver {
         ]), turn: turn)
     }
 
-    /// Record a call the loop guard blocked.
-    private func recordBlocked(_ commit: DSHToolCommit, verdict: DSHToolGate.Verdict, turn: Int) {
+    /// Record a call the loop guard refused to dispatch.
+    ///
+    /// The call never ran, so the model gets the reason as its result rather
+    /// than a duplicate execution.
+    private func recordBlocked(
+        callId: String,
+        name: String,
+        verdict: DSHToolGate.Verdict,
+        turn: Int
+    ) {
         let result = DSHToolExecutionResult(
             content: verdict.message ?? "Error: blocked by loop guard",
             isError: true
         )
         delegate?.driver(
             self,
-            didFinishTool: commit.block.name,
-            callId: commit.block.id,
+            didFinishTool: name,
+            callId: callId,
             result: result
         )
         session.append(DSHMessage(role: .tool, blocks: [
             DSHToolResultBlock(
-                callId: commit.block.id,
-                name: commit.block.name,
+                callId: callId,
+                name: name,
                 content: result.content,
                 isError: true
             ),
@@ -573,5 +622,14 @@ public final class DSHTurnDriver {
             return "{}"
         }
         return text
+    }
+
+    /// Recover a committed call's arguments, for the loop guard's key.
+    private func decodeArguments(_ json: String) -> [String: Any] {
+        guard let data = json.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return [:]
+        }
+        return object
     }
 }

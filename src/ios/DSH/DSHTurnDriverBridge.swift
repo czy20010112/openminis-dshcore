@@ -60,11 +60,23 @@ enum DSHSessionProjection {
             }
         }
         var message = AgentMessage(
-            role: entry.message.role == .user ? .user : .assistant,
+            role: DSHSessionProjection.agentRole(for: entry.message.role),
             parts: parts
         )
         message.dshSeq = entry.seq.value
         return message
+    }
+
+    /// Map a session role onto the provider-facing role.
+    ///
+    /// Only `.assistant` is an assistant turn. A tool result is carried in a
+    /// **user** message — that is the shape Minis' original loop produced
+    /// (`AgentMessage(role: .user, parts: toolResultParts)`), and it is what the
+    /// Anthropic path requires: a `tool_result` block inside an assistant message
+    /// is rejected. Collapsing `.tool` into `.assistant`, as this did, happens to
+    /// survive the OpenAI-compatible path and breaks everywhere else.
+    static func agentRole(for role: DSHMessage.Role) -> AgentMessage.Role {
+        role == .assistant ? .assistant : .user
     }
 
     /// Project a UI message back onto a session entry, for seeding a session
@@ -75,7 +87,7 @@ enum DSHSessionProjection {
             switch part {
             case .text(let text):
                 blocks.append(DSHTextBlock(text: text))
-            case .toolUse(let id, let name, let input, _):
+            case .toolUse(let id, let name, let input):
                 let raw: String
                 if let data = try? JSONSerialization.data(withJSONObject: input, options: [.sortedKeys]),
                    let text = String(data: data, encoding: .utf8) {
@@ -85,7 +97,7 @@ enum DSHSessionProjection {
                 }
                 blocks.append(DSHToolCallBlock(id: id, name: name, arguments: raw))
             // v1.14 grew `.toolResult` to nine associated values by adding
-            // `isOffloadReadback`; the three image/page values before it are the
+            // `isOffloadReadback`; the image and page values before it are the
             // ones this bridge projects. See DSHTurnDriver.swift for the other
             // place v1.14's enum arity differs from the iOS 15 line.
             case .toolResult(let id, let name, let content, let isError,
