@@ -80,13 +80,27 @@ text = open(pbx_path, encoding="utf-8").read()
 
 failures = []
 
-# Top-level entries look like:
-#     <id> /* <name> */ = {
-#         ...
-#     };
-entries = re.findall(
-    r"\n\t\t([0-9A-Fa-f]{10,24}) /\* (.*?) \*/ = \{\n(.*?)\n\t\t\};", text, re.S
-)
+# Split the file into top-level entries. An entry starts with
+#   <id> /* <name> */ = {
+# and ends at the matching close brace. Braces are counted rather than matched
+# with a non-greedy regex for two reasons: ids here range from 9 to 25
+# characters, and a synchronized root group is written on a single line while a
+# target spans dozens. Both shapes have to parse.
+entries = []
+for m in re.finditer(r"\n\t\t([0-9A-Za-z]{6,40}) /\* (.*?) \*/ = \{", text):
+    start = m.end() - 1
+    depth = 0
+    i = start
+    while i < len(text):
+        ch = text[i]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                break
+        i += 1
+    entries.append((m.group(1), m.group(2), text[start + 1 : i]))
 
 # 1. The group must be declared as a synchronized root group.
 group = [e for e in entries if e[0] == group_id]
@@ -101,19 +115,15 @@ else:
     if "path = DSH" not in body:
         failures.append(f"{group_id} does not carry 'path = DSH'")
     else:
-        print("DSH synchronized group is declared with path = DSH")
+        print(f"DSH synchronized group declared as {group[0][1]}, path = DSH")
 
     # 2. Its parent group must not redirect the resolution.
     child_ref = f"{group_id} /* DSH */,"
-    parents = [
-        e
-        for e in entries
-        if "isa = PBXGroup" in e[2] and child_ref in e[2]
-    ]
+    parents = [e for e in entries if "isa = PBXGroup" in e[2] and child_ref in e[2]]
     if not parents:
         failures.append(
-            "the DSH group is not a child of any PBXGroup, so Xcode cannot "
-            "resolve its path"
+            f"the DSH group is not a child of any PBXGroup, so Xcode cannot "
+            f"resolve 'path = DSH' to src/ios/DSH"
         )
     else:
         for pid, pname, pbody in parents:
@@ -123,15 +133,14 @@ else:
                     f"'path = DSH' resolves relative to it instead of src/ios"
                 )
             else:
-                print(f"DSH group is parented by {pid} /* {pname} */ (no 'path =')")
+                print(f"DSH group parented by {pid} /* {pname} */ (no 'path =')")
 
 # 3. The Minis app target must attach the group, or Xcode compiles nothing.
-targets = [
-    e for e in entries if "isa = PBXNativeTarget" in e[2]
-]
+targets = [e for e in entries if "isa = PBXNativeTarget" in e[2]]
 minis = [t for t in targets if re.search(r"^\s*name = Minis;$", t[2], re.M)]
 if not minis:
-    failures.append("no PBXNativeTarget named Minis")
+    names = ", ".join(t[1] for t in targets) or "<none>"
+    failures.append(f"no PBXNativeTarget named Minis (found: {names})")
 else:
     tbody = minis[0][2]
     if "fileSystemSynchronizedGroups" not in tbody:
@@ -142,7 +151,7 @@ else:
             "compile none of its sources"
         )
     else:
-        print("DSH synchronized group is attached to the Minis target")
+        print("DSH group attached to the Minis app target")
 
 # 4. The DSH sources must not ALSO be listed individually in a Sources phase;
 #    doing both produces duplicate-symbol link errors.

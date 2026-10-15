@@ -44,10 +44,10 @@ enum DSHSessionProjection {
                     name: result.name,
                     content: result.content,
                     isError: result.isError,
-                    imageData: nil,
-                    imageMimeType: nil,
-                    pageURL: nil,
-                    imageLinuxPath: nil
+                    imageData: result.imageData,
+                    imageMimeType: result.imageMimeType,
+                    pageURL: result.pageURL,
+                    imageLinuxPath: result.imageLinuxPath
                 ))
             case let image as DSHImageBlock:
                 parts.append(.imageData(
@@ -84,9 +84,17 @@ enum DSHSessionProjection {
                     raw = "{}"
                 }
                 blocks.append(DSHToolCallBlock(id: id, name: name, arguments: raw))
-            case .toolResult(let id, let name, let content, let isError, _, _, _, _):
+            case .toolResult(let id, let name, let content, let isError,
+                             let imageData, let imageMimeType, let pageURL, let imageLinuxPath):
                 blocks.append(DSHToolResultBlock(
-                    callId: id, name: name, content: content, isError: isError
+                    callId: id,
+                    name: name,
+                    content: content,
+                    isError: isError,
+                    imageData: imageData,
+                    imageMimeType: imageMimeType,
+                    pageURL: pageURL,
+                    imageLinuxPath: imageLinuxPath
                 ))
             case .imageData(let data, let mimeType, let path):
                 blocks.append(DSHImageBlock(data: data, mimeType: mimeType, path: path))
