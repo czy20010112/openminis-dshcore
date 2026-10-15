@@ -84,16 +84,8 @@ extension AIChatViewModel {
             toolSnapshots.append(snapshotItem)
         }
 
-        if case let .toolResult(_, _, content, isError,
-                                imageData, imageMimeType, pageURL, imageLinuxPath) = outcome.resultPart {
-            return DSHToolExecutionResult(
-                content: content,
-                isError: isError,
-                imageData: imageData,
-                imageMimeType: imageMimeType,
-                pageURL: pageURL,
-                imageLinuxPath: imageLinuxPath
-            )
+        if let result = DSHSessionProjection.toolExecutionResult(from: outcome.resultPart) {
+            return result
         }
         return DSHToolExecutionResult.error("tool produced no result part")
     }

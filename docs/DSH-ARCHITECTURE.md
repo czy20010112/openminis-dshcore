@@ -383,48 +383,54 @@ flowchart LR
     end
 ```
 
-一点关键：**handler 一行没改。** `DSHToolHandlerImpl.swift` 里的 `dshRunShell` / `dshReadFile` / `dshWriteFile` / `dshEditFile` / `dshReadImage` / `dshWriteMemory` / `dshGetMemory` 只是把 `AIChatViewModel` 既有的能力包成 `DSHToolExecutionResult`。所以"工具的行为"与"工具的声明"第一次分开了：改 schema 在 `DSHMinisTools.swift`，改行为在 `DSHToolHandlerImpl.swift`。
+一点关键：**工具实现一行没改，而且不再被重新实现一遍。** 每个 `DSHTool` 的 body 直接调用 `executeSingleToolUse`——那是 Minis 完整的单次调用实现：流式输出写进块、图片预算、超长输出截断与 offload、loop detector、参数预检、工具快照。DSH 决定"什么时候跑"和"结果按什么顺序落盘"，不决定"这次调用做什么"。
 
-### 工具面一致性：两条不变量
+### 工具面一致性
 
-把调度换掉、把工具实现留下，就意味着**任何一处清单或参数的分歧，都是模型手里凭空少掉的能力**。所以这里有两条硬规则：
+把调度换掉、把工具实现留下，就意味着**任何一处清单或参数的分歧，都是模型手里凭空少掉的能力**，而且不报错。这里踩过两次同一类坑，两次都是"抄了一份"：
 
-**规则一：注册与门控必须逐字对照 `makeAgentTools()`。** 少注册一个工具，或把门控写窄一点，模型就再也看不到它，而且没有任何报错。
-
-| 工具 | 门控 | 出处 |
+| 坑 | 现象 | 现在的做法 |
 |---|---|---|
-| `shell_execute` / `file_read` / `file_write` / `file_edit` | 总是注册 | 两边一致 |
-| `read_image` | `activeModelHasNativeVision \|\| VisionGroupResolver.isConfigured` | `[T-ios-vision-group #182]` |
-| `memory_write` / `memory_get` | `memoryEnabled` | `[T-memory-toggle-gates-injection-and-tools-ios]` |
-| `browser_use` | `Self.toolEnabled(.browser)` | **尚未迁移，见下** |
+| 抄了一份 schema | `dshAgentRegistry()` 和 `dshAgentTools()` 各手写一遍工具声明，两份都漏了 `browser_use` 和 iOS 26 线的 `subagent_task`——模型从未见过它们 | 名册来自 `makeAgentTools()`，`DSHMinisTools` 只负责把定义桥接成 `DSHTool`。**结构上不可能再漂移** |
+| 抄了一份 handler | 适配器只挑自己认识的参数字段转发，`offset`/`lines`/`direction`/`max_length`/`create_dirs`/`delay` 全被吞掉，`read_image` 只回一句"图片 12 KB" | 执行走 `executeSingleToolUse`，参数整份转发 |
+
+门控也只有一处：`makeAgentTools()` 是唯一知道内存开关、设置项开关、Vision Group、子代理开关的地方。
+
+| 工具 | 门控 |
+|---|---|
+| `shell_execute` / `file_read` / `file_write` / `file_edit` | 总是注册 |
+| `read_image` | `activeModelHasNativeVision \|\| VisionGroupResolver.isConfigured`（`[T-ios-vision-group #182]`） |
+| `memory_write` / `memory_get` | `memoryEnabled` |
+| `browser_use` | `Self.toolEnabled(.browser)` |
+| `subagent_task`（仅 iOS 26 线） | `!isHelper && Self.toolEnabled(.agents)` |
 
 `isConfigured` 必须在 `||` **之前**求值：短路会跳过这次读取，而这次读取正是维持 `isConfiguredCached` 镜像新鲜的来源（离屏占位构造依赖它）。
 
-**规则二：handler 必须把整个参数字典转发下去，不能只挑自己认识的字段。**
-
-Minis 的工具实现本来就是围绕"模型的原始 JSON"写的（`executeFileRead(from:)`、`executeFileWrite(from:)`、`executeMemoryWrite(from:)`），所以原样重序列化既是最短的适配器，也是唯一不会丢参数的适配器。这里踩过的坑很典型：适配器读了 `path` 就把 `file_read` 交给实现，`offset` / `lines` / `direction` / `max_length` 全部被丢弃——schema 还在对模型宣称这些参数可用，而大文件翻页已经不能用了。`file_write` 的 `create_dirs`、`shell_execute` 的 `delay` 同理。
-
-**工具结果不只是文本。** `read_image` 给模型的是图片，`browser_use` 给的是页面截图加落地 URL。这些字节挂在 **tool_result 这个 part 自己身上**（和原实现一致），不是单独一条消息——所以 `DSHToolResultBlock` 与 `DSHToolExecutionResult` 都带 `imageData` / `imageMimeType` / `pageURL` / `imageLinuxPath`，驱动在提交时写进去，投影时读出来。曾经这里被硬编码成 `nil`，结果是 `read_image` 只回一句"图片 12 KB"，模型根本看不到图。
+**工具结果不只是文本。** `read_image` 给模型的是图片，`browser_use` 给的是页面截图加落地 URL。这些字节挂在 **tool_result 这个 part 自己身上**（和原实现一致），不是单独一条消息——所以 `DSHToolResultBlock` 与 `DSHToolExecutionResult` 都带 `imageData` / `imageMimeType` / `pageURL` / `imageLinuxPath`，驱动在提交时写进去，投影时读出来。
 
 ```mermaid
 flowchart LR
     A["工具参数 JSON<br/>（模型原样给出）"] --> B["DSHTool.body"]
-    B --> C["dshToolArgumentsJSON(args)<br/>整份转发"]
-    C --> D["executeFileRead / Write / Edit<br/>executeMemoryWrite / Get<br/>executeCommand"]
-    D --> E["DSHToolExecutionResult<br/>content + imageData + pageURL"]
-    E --> F["DSHTurnDriver.commitResult"]
-    F --> G["DSHToolResultBlock<br/>（带图）"]
-    G --> H["DSHSessionProjection<br/>→ AgentContentPart.toolResult<br/>imageData 原样带上"]
+    B --> C["dshExecuteMinisTool<br/>整份转发 + 定位调用块"]
+    C --> D["executeSingleToolUse<br/>（Minis 完整实现）"]
+    D --> E["流式输出 / 超长截断+offload<br/>图片预算 / loop detector / 快照"]
+    D --> F["DSHToolExecutionResult<br/>content + imageData + pageURL"]
+    F --> G["DSHTurnDriver.commitResult"]
+    G --> H["DSHToolResultBlock<br/>（带图）"]
+    H --> I["DSHSessionProjection<br/>→ AgentContentPart.toolResult"]
 ```
 
-### 尚未迁移的工具（已知缺口）
+### 同一轮补齐的另外四个缺陷
 
-| 工具 | 影响 | 成本 |
-|---|---|---|
-| `browser_use` | DSH 模式下模型看不到浏览器工具 | 其 handler 内联在 `executeSingleToolUse` 里（含接管、下载上报、截图落盘），要迁移得先把那段抽成可复用函数 |
-| `delegate` / 子代理工具（仅 iOS 26 线） | v1.14 新增的 `[T-sub-agents-v1]` 委派能力在 DSH 模式下不可用 | 需要新增 schema、`DSHToolBlockKind` 映射与 handler |
+这四个都是"验证 agent 全部能力"时才暴露出来的，不是顺手看到的：
 
-这两个都不是"挑错字段"级别的修复，而是要把一段内联在 8000 行文件里的执行逻辑抽出来。放在这里明确记账，不假装它已经一致。
+**① 完全没有持久化。** `src/ios/DSH/` 里没有任何 `persistAgentMessage` 调用。DSH 模式下助手回复和工具结果**从不写进数据库**——屏幕上好好的，下次启动就没了，因为转录是从数据库重建的。现在每轮结束把本轮追加的条目写库（带本轮工具快照），并把数据库 id 回填到行上。
+
+**② 工具结果被投影成 assistant 消息。** Minis 原 loop 把工具结果放在 **user** 消息里（`AgentMessage(role: .user, parts: toolResultParts)`），Anthropic 也要求 `tool_result` 不能出现在 assistant 轮里。原来的投影是 `role == .user ? .user : .assistant`，`.tool` 落进了 assistant——只因为 OpenAI 兼容路径宽容才没炸。
+
+**③ loop guard 拿到的是空参数。** `gate.check(arguments: [:])` 意味着**同名工具的每次调用哈希都一样**：一轮里第 20 次 `file_read` 会被判成"重复调用"，它真实的返回被丢弃、换成一句拒绝。而且它在派发**之后**跑，本来就拦不住任何东西。现在按真实参数哈希、在调度前判定，被拒的调用也会先宣告一次，让它以工具自己的 block 头渲染。
+
+**④ `propertyOrdering` 在 JSON Schema 往返里丢了。** 会用到它的 provider（Gemini）因此失去参数声明顺序。
 
 ### 分页修复的真机验证
 
@@ -439,6 +445,7 @@ flowchart LR
 修复前这两次读取都会返回 `showing lines 1-N of 201`——参数被适配器吞掉，schema 却还在对模型宣称可用。模型随后正确指出文件末尾多了一个空行，说明它读到的是真实的文件内容而不是记忆里的猜测。
 
 证据：`shots/dsh-fix-02-paging.jpg`。
+
 
 
 
@@ -463,27 +470,27 @@ flowchart LR
 | `DSHToolDispatchBridge.swift` | — | 工具名 → 并发模式（Minis 策略） |
 | `DSHToolBlockKind.swift` | — | 工具名 + 参数 → `AssistantBlockKind` |
 | `DSHMinisPrompt.swift` | — | Minis 专属提示词段 + 运行时上下文段 |
-| `DSHMinisTools.swift` | — | 7 个工具的 schema 与注册 |
-| `DSHPromptAdapter.swift` | — | 对外两个入口 + `useDSHAgentLoop` 开关 |
-| `DSHTurnDriverRun.swift` | — | `runDSHTurn()`、阈值推导、session 同步、文本节流 |
-| `DSHTurnDriverAdapter.swift` | — | `DSHTurnDriverDelegate` 实现、工具结果渲染、分隔行 |
-| `DSHTurnDriverBridge.swift` | — | `DSHSessionProjection`（双向）+ `DSHToolHandler` |
-| `DSHToolHandlers.swift` | — | 用注册表组装 `[DSHTool]` |
-| `DSHToolHandlerImpl.swift` | — | 复用既有 Minis 能力的 7 个 handler 实现 |
+| `DSHMinisTools.swift` | — | Minis 工具定义 → `DSHTool`（schema 桥接，含 `propertyOrdering`） |
+| `DSHPromptAdapter.swift` | — | 提示词入口 + `dshAgentTools()`（= `makeAgentTools()`）+ `useDSHAgentLoop` 开关 |
+| `DSHTurnDriverRun.swift` | — | `runDSHTurn()`、阈值推导、session 同步、**持久化**、文本节流 |
+| `DSHTurnDriverAdapter.swift` | — | `DSHTurnDriverDelegate` 实现、调用块创建、工具结果渲染、分隔行 |
+| `DSHTurnDriverBridge.swift` | — | `DSHSessionProjection`（双向，含 role 映射）+ `DSHToolHandler` |
+| `DSHToolHandlers.swift` | — | 按 `makeAgentTools()` 名册组装 `[DSHTool]` |
+| `DSHToolHandlerImpl.swift` | — | 单次调用 → `executeSingleToolUse`（Minis 完整实现） |
 
 ### 修改（3 个源文件 + 工程文件）
 
 | 文件 | 改动 |
 |---|---|
-| `src/ios/Agent/Chat/AIChatViewModel.swift` | +DSH 状态块（8 个属性）；3 个 `runAgentLoop()` 调用点分支；2 处 `private func` → `func`；工具集与提示词各 2 处改为条件取值 |
+| `src/ios/Agent/Chat/AIChatViewModel.swift` | +DSH 状态块（10 个属性）；3 个 `runAgentLoop()` 调用点分支；2 处 `private func` → `func`；工具集与提示词各 2 处改为条件取值 |
 | `src/ios/Agent/Chat/ChatModels.swift` | `ChatMessage.dshSeq: Int?` |
 | `src/ios/Providers/AgentProvider.swift` | `AgentMessage.dshSeq: Int?` |
 | `src/ios/Minis.xcodeproj/project.pbxproj` | 新增 `PBXFileSystemSynchronizedRootGroup`，挂到 Minis target 的 `fileSystemSynchronizedGroups` |
-| `.github/workflows/build-ipa.yml` | 构建前校验 20 个文件存在 + 校验 pbxproj 里同步组已声明 |
+| `.github/workflows/build-ipa.yml` | 双线构建（ios15 / ios26）+ 自动 Release + 构建前校验模块接入 |
 
-### 未被触及（刻意）
+### 未被改写（刻意）
 
-`AIChatViewModel+Compaction.swift`（1084 行）、`+Persistence.swift`（1827 行）、`+ConcurrentTools.swift`、`+ToolDefinitions.swift`、`+SSEStream.swift`、`ContextPolicy.swift` 全部原样保留——当 `useDSHAgentLoop == false` 时它们仍然是对的路径，这就是 A/B 对比的基础。
+`AIChatViewModel+Compaction.swift`（1084 行）、`+Persistence.swift`（1827 行）、`+ConcurrentTools.swift`、`+ToolDefinitions.swift`、`+SSEStream.swift`、`ContextPolicy.swift` 全部原样保留——当 `useDSHAgentLoop == false` 时它们仍然是对的路径，这就是 A/B 对比的基础。DSH 侧是**调用**它们，不是复制它们。
 
 ---
 
@@ -494,12 +501,12 @@ flowchart TB
     K["AIChatViewModel.useDSHAgentLoop<br/>UserDefaults: minis.useDSHAgentLoop<br/>默认 true"]
     K -->|true| D1["runDSHTurn()<br/>DSH 内核：提示词 / 工具面 / 调度 / 会话 / 压缩 / turn 循环"]
     K -->|false| D2["runAgentLoop()<br/>原实现：baseSystemPrompt / makeAgentTools /<br/>withTaskGroup / agentHistory 裸索引 / +Compaction.swift"]
-    D1 --> S["共享：流式呈现 · 持久化 · 图片预算 · UI · 每个工具的 handler"]
+    D1 --> S["共享：流式呈现 · 持久化 · 图片预算 · UI · 工具实现（executeSingleToolUse）"]
     D2 --> S
 ```
 
 - 开关是**类级静态属性**，不在会话或消息粒度上；同一进程内一致。
-- 两个分支共用同一套持久化与 UI，所以切换不会产生两套数据。
+- 两个分支共用同一套持久化、UI 与工具实现，所以切换不会产生两套数据，也不会产生两种工具行为。
 - 测试用阈值是**编译期**的（`dshCompactionProbeEnabled`），出厂值 `false`。原因是外部写 `UserDefaults` 无效：App 启动时注册自己的 defaults 字典并整份重写 plist，外部写入的 key 会被丢掉。
 
 ---

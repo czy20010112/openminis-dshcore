@@ -128,9 +128,45 @@ enum DSHSessionProjection {
         message.dshSeq = seq
         return message
     }
+
+    /// Lift a settled tool result out of the executor's outcome part.
+    ///
+    /// This lives here, and not in the tool handler, because it is the one place
+    /// in the module that pattern-matches the provider's content part — and that
+    /// enum's shape is precisely what differs between the iOS 15 and iOS 26
+    /// lines. Confining the branch difference to this file keeps the other
+    /// nineteen identical, so the core can be fixed once and verified once.
+    static func toolExecutionResult(from part: AgentContentPart) -> DSHToolExecutionResult? {
+        guard case let .toolResult(_, _, content, isError,
+                                   imageData, imageMimeType, pageURL, imageLinuxPath) = part else {
+            return nil
+        }
+        return DSHToolExecutionResult(
+            content: content,
+            isError: isError,
+            imageData: imageData,
+            imageMimeType: imageMimeType,
+            pageURL: pageURL,
+            imageLinuxPath: imageLinuxPath
+        )
+    }
 }
 
 // MARK: - Tool Handler Adapter
+
+/// Block kinds that exist on only one of the two source lines.
+///
+/// `DSHToolBlockKind` is shared between the iOS 15 and iOS 26 lines, and the two
+/// lines do not have the same `AssistantBlockKind` cases: v1.14 added
+/// `delegateTool(title:)` for its sub-agent tool, and the iOS 15 line's enum has
+/// no such case. Returning nil here is the correct answer on this line.
+extension DSHToolBlockKind {
+
+    /// The block kind for a tool this line may not have.
+    static func lineSpecificKind(for name: String, arguments: [String: Any]) -> AssistantBlockKind? {
+        nil
+    }
+}
 
 /// Runs one DSH tool call through the ViewModel's existing handler.
 ///
