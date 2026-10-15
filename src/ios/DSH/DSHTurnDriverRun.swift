@@ -57,6 +57,8 @@ extension AIChatViewModel {
         let batchBudget = BatchImageBudget(initial: Self.kImageContextKeepCount)
         dshToolBlockIndex.removeAll()
         dshPendingSnapshots.removeAll()
+        dshThinkingBlockIdx = -1
+        dshPendingReasoning = ""
 
         let registry = DSHToolRegistry()
         for tool in dshAgentRegistry(definitions: definitions, batchBudget: batchBudget) {

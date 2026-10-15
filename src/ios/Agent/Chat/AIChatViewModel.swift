@@ -2645,6 +2645,16 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
     /// Reasoning text awaiting delivery to the thinking block.
     var dshPendingReasoning = ""
 
+    /// Position of the reasoning block currently being streamed, or -1 when no
+    /// reasoning segment is open.
+    ///
+    /// Remembered rather than re-derived: a tool call can append to the same row
+    /// mid-segment, and "the last thinking block" would then be the wrong one.
+    var dshThinkingBlockIdx: Int = -1
+
+    /// Last time the reasoning buffer was flushed, for the adaptive throttle.
+    var dshLastThinkingFlush = Date.distantPast
+
     /// Tool results the driver settled, keyed by call id, waiting to be rendered
     /// onto their UI blocks.
     var dshPendingToolResults: [String: DSHToolExecutionResult] = [:]

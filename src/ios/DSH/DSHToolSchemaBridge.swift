@@ -44,11 +44,6 @@ enum DSHToolSchemaBridge {
         )
     }
 
-    /// Convert a list of schemas.
-    static func toAgentToolDefinitions(_ schemas: [DSHToolSchema]) -> [AgentToolDefinition] {
-        schemas.map(toAgentToolDefinition)
-    }
-
     private static func paramType(_ raw: Any?) -> AgentParamType {
         switch raw as? String {
         case "integer", "number": return .integer
