@@ -25,20 +25,37 @@ import Foundation
 
 extension AIChatViewModel {
 
-    /// Build a session from what the model is supposed to see.
+    /// Seed the session from what the model is supposed to see, and make
+    /// `agentHistory` agree with it.
     ///
-    /// `effectiveAgentHistory()` rather than `agentHistory`: it is the one that
-    /// applies the persisted compaction marker, so a conversation compacted
-    /// before the last launch comes back as [recent tail + summary] instead of
-    /// coming back whole. Seeding from the raw history is why a compaction used
-    /// to die with the process — and why the first turn after a relaunch could
-    /// start on a conversation that no longer fit the window.
-    private func dshSeedSession() -> DSHSession {
+    /// Two things have to happen together, and the earlier version did neither:
+    ///
+    /// 1. **Each seeded row is stamped with the seq it landed on.** Without that
+    ///    the sync that follows sees every row as "not in the session" and
+    ///    appends all of them again — the whole conversation arrives twice, on
+    ///    the first turn after every launch. The probe row showed it plainly: 33
+    ///    loaded rows and a 66-entry surface.
+    /// 2. **`agentHistory` becomes exactly what was seeded.** The seed is taken
+    ///    from `effectiveAgentHistory()`, which applies the compaction marker, so
+    ///    the rows it left out are the compacted prefix. Leaving them in
+    ///    `agentHistory` invites the same sync to append them back and undo the
+    ///    compaction. Assigning also preserves `dbMessageId`, which is what the
+    ///    next compaction's anchor is resolved from.
+    ///
+    /// `effectiveAgentHistory()` rather than `agentHistory` for the content,
+    /// because it is the one that applies a persisted marker — seeding from the
+    /// raw history is why a compaction used to die with the process.
+    private func dshSeedSession() {
         let session = DSHSession()
+        var seeded: [AgentMessage] = []
         for message in effectiveAgentHistory() {
-            session.append(DSHSessionProjection.toDSHMessage(message), turn: nil)
+            let seq = session.append(DSHSessionProjection.toDSHMessage(message), turn: nil)
+            var stamped = message
+            stamped.dshSeq = seq.value
+            seeded.append(stamped)
         }
-        return session
+        dshSession = session
+        agentHistory = seeded
     }
 
     /// Re-drive the current turn through the DSH core, for a retry or a resume.
@@ -169,7 +186,7 @@ extension AIChatViewModel {
         // ViewModel and then reused it for whatever session happened to be open,
         // so switching chats inherited the other chat's history.
         if dshSession == nil || dshSessionOwner != sessionId {
-            dshSession = dshSeedSession()
+            dshSeedSession()
             dshSessionOwner = sessionId
         }
         guard let session = dshSession else { return }
@@ -291,14 +308,17 @@ extension AIChatViewModel {
             // itself rather than its result.
             let seed: String
             if let marker = cachedLatestMarker {
-                let anchorResolves = marker.lastCompactedMessageId.map { id in
+                let anchor = marker.lastCompactedMessageId
+                let anchorResolves = anchor.map { id in
                     agentHistory.contains { $0.dbMessageId == id }
                 } ?? false
-                seed = "marker v\(marker.version) anchorResolves=\(anchorResolves) "
+                seed = "sess=\(sessionId?.prefix(8) ?? "nil") marker v\(marker.version) "
+                    + "anchor=\(anchor?.prefix(8) ?? "nil") anchorResolves=\(anchorResolves) "
                     + "history=\(agentHistory.count)(withDbId=\(agentHistory.filter { $0.dbMessageId != nil }.count)) "
                     + "effective=\(effectiveAgentHistory().count)"
             } else {
-                seed = "marker=none history=\(agentHistory.count)"
+                seed = "sess=\(sessionId?.prefix(8) ?? "nil") marker=none history=\(agentHistory.count) "
+                    + "effective=\(effectiveAgentHistory().count)"
             }
             info.content = "DSH surface: \(surfaceBefore.count) entries, ~\(tokensBefore) tokens "
                 + "(compact at \(config.compactionPressureTokens)) | seed: \(seed)"
