@@ -43,6 +43,10 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
         let idx = dshStreamingMsgIdx
         guard messages[idx].role == .assistant else { return }
 
+        // Text ends the current reasoning segment, so the next thinking delta
+        // opens a new block rather than appending behind the answer.
+        dshThinkingBlockIdx = -1
+
         // Append to the trailing text block, mirroring how the provider stream
         // was folded before. Markdown parsing stays off the main thread and the
         // flush stays throttled — that machinery is unchanged.
@@ -58,9 +62,39 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
     }
 
     public func driver(_ driver: DSHTurnDriver, didEmitReasoning text: String) {
-        // Reasoning is rendered by the existing thinking-block path; the driver
-        // reports it, it does not own its presentation.
+        guard dshStreamingMsgIdx >= 0, dshStreamingMsgIdx < messages.count else { return }
+        let idx = dshStreamingMsgIdx
+        guard messages[idx].role == .assistant else { return }
+
+        // Each contiguous reasoning segment becomes its own block, appended in
+        // arrival order so thinking interleaves naturally with text and tool
+        // blocks — the same shape a reload from the store produces.
+        //
+        // The block position is remembered rather than re-derived: a tool call
+        // can append to this row mid-segment, and searching for "the last
+        // thinking block" would then find a different one, or none.
+        if dshThinkingBlockIdx < 0 || dshThinkingBlockIdx >= messages[idx].blocks.count
+            || messages[idx].blocks[dshThinkingBlockIdx].kind != .thinking {
+            messages[idx].blocks.append(AssistantBlock(kind: .thinking, content: ""))
+            dshThinkingBlockIdx = messages[idx].blocks.count - 1
+            dshPendingReasoning = ""
+        }
+        let blockIdx = dshThinkingBlockIdx
+
         dshPendingReasoning += text
+        messages[idx].blocks[blockIdx].appendThinkingDelta(text)
+
+        // Throttled flush to the published `content`, with the interval widening
+        // as the thinking grows: dense reasoning streams would otherwise trigger
+        // a view rebuild and a scroll per delta.
+        let now = Date()
+        let interval = AssistantBlock.thinkingFlushInterval(forLength: dshPendingReasoning.count)
+        if now.timeIntervalSince(dshLastThinkingFlush) >= interval {
+            dshLastThinkingFlush = now
+            messages[idx].blocks[blockIdx].flushThinkingBuffer()
+            publishUnlessTransitioning()
+            if isNearBottom { scrollToBottomSignal.send() }
+        }
     }
 
     public func driver(
@@ -70,6 +104,9 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
         arguments: [String: Any]
     ) {
         AppLogger(category: "DSHLoop").info("[DSH] tool start \(name) id=\(callId.prefix(20))")
+
+        // A tool call ends the current reasoning segment.
+        dshThinkingBlockIdx = -1
 
         // Create the block now so the user sees the call while it runs, and so
         // the executor has a row to stream into. The status is `.running` until
@@ -221,6 +258,15 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
         guard dshStreamingMsgIdx >= 0, dshStreamingMsgIdx < messages.count else { return }
         let idx = dshStreamingMsgIdx
         messages[idx].isAwaitingModelResponse = false
+
+        // The throttle holds the tail of the reasoning in an unpublished buffer,
+        // so seal it here or the last second of thinking never appears.
+        if dshThinkingBlockIdx >= 0, dshThinkingBlockIdx < messages[idx].blocks.count {
+            messages[idx].blocks[dshThinkingBlockIdx].flushThinkingBuffer()
+        }
+        dshThinkingBlockIdx = -1
+        dshPendingReasoning = ""
+
         for i in messages[idx].blocks.indices {
             switch messages[idx].blocks[i].toolStatus {
             case .streaming, .running:

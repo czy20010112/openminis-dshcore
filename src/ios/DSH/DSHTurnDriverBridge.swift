@@ -168,34 +168,3 @@ extension DSHToolBlockKind {
     }
 }
 
-/// Runs one DSH tool call through the ViewModel's existing handler.
-///
-/// The handlers are unchanged. This adapter only supplies the concurrency mode
-/// the scheduler needs and routes the result back as a `DSHToolExecutionResult`.
-@MainActor
-enum DSHToolHandler {
-
-    /// Execute one tool call.
-    ///
-    /// - Parameters:
-    ///   - name: the tool being called.
-    ///   - arguments: parsed arguments.
-    ///   - run: the existing per-tool handler, which owns streaming output into
-    ///     the UI block and returns the final content.
-    /// - Returns: the settled result.
-    static func execute(
-        name: String,
-        arguments: [String: Any],
-        run: @MainActor @escaping ([String: Any]) async throws -> String
-    ) async -> DSHToolExecutionResult {
-        do {
-            let content = try await run(arguments)
-            return DSHToolExecutionResult(content: content, isError: false)
-        } catch {
-            return DSHToolExecutionResult(
-                content: "Error: \(String(describing: error))",
-                isError: true
-            )
-        }
-    }
-}

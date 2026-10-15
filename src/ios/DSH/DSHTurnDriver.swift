@@ -333,20 +333,26 @@ public final class DSHTurnDriver {
                     criticalThreshold: config.loopCriticalThreshold
                 )
                 if config.enableLoopGuard, verdict.level == DSHToolGate.Verdict.Level.critical {
-                    // Announce the call before refusing it, so its transcript
-                    // block carries the tool's own header and renders as a
-                    // refused call rather than an anonymous note.
-                    let arguments = decodeArguments(call.arguments)
-                    delegate?.driver(
-                        self,
-                        willRunTool: call.name,
-                        callId: call.id,
-                        arguments: arguments
-                    )
                     blocked[call.id] = verdict
                 } else {
                     admissible.append(call)
                 }
+            }
+
+            // Announce every call before anything runs.
+            //
+            // The executor streams a tool's output into a transcript block and
+            // addresses that block by position, so the block has to exist before
+            // the call starts. Announcing here — rather than inside the
+            // scheduler — also gives a refused call a block carrying its own
+            // header, instead of the anonymous note it would otherwise get.
+            for call in toolCalls {
+                delegate?.driver(
+                    self,
+                    willRunTool: call.name,
+                    callId: call.id,
+                    arguments: decodeArguments(call.arguments)
+                )
             }
 
             // Schedule the calls by their declared concurrency mode.

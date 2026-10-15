@@ -420,9 +420,9 @@ flowchart LR
     H --> I["DSHSessionProjection<br/>→ AgentContentPart.toolResult"]
 ```
 
-### 同一轮补齐的另外四个缺陷
+### 同一轮补齐的另外六个缺陷
 
-这四个都是"验证 agent 全部能力"时才暴露出来的，不是顺手看到的：
+这六个都是"验证 agent 全部能力"时才暴露出来的，不是顺手看到的：
 
 **① 完全没有持久化。** `src/ios/DSH/` 里没有任何 `persistAgentMessage` 调用。DSH 模式下助手回复和工具结果**从不写进数据库**——屏幕上好好的，下次启动就没了，因为转录是从数据库重建的。现在每轮结束把本轮追加的条目写库（带本轮工具快照），并把数据库 id 回填到行上。
 
@@ -431,6 +431,11 @@ flowchart LR
 **③ loop guard 拿到的是空参数。** `gate.check(arguments: [:])` 意味着**同名工具的每次调用哈希都一样**：一轮里第 20 次 `file_read` 会被判成"重复调用"，它真实的返回被丢弃、换成一句拒绝。而且它在派发**之后**跑，本来就拦不住任何东西。现在按真实参数哈希、在调度前判定，被拒的调用也会先宣告一次，让它以工具自己的 block 头渲染。
 
 **④ `propertyOrdering` 在 JSON Schema 往返里丢了。** 会用到它的 provider（Gemini）因此失去参数声明顺序。
+
+**⑤ `willRunTool` 是死线。** `DSHToolScheduler.runCall` **从不调用**它——委托里有这个方法，但没有任何地方触发。也就是说工具块一直是 `dshRenderToolResult` 在结果落地时兜底建的 `.info` 块，从来没有工具自己的表头。改成由驱动在派发**之前**统一宣告每个调用（也让被 guard 拒绝的调用有个像样的块）。这个缺陷原来不可见，直到执行器开始按 call id 找块，它立刻变成每个工具都报 `no transcript block for call_...`，模型只好无限重试（设备上跑到 89 次）。
+
+**⑥ 思考块从不渲染。** `didEmitReasoning` 只往 `dshPendingReasoning` 里累加，没有任何地方读它。现在按原实现的形状做：每段连续推理自成一个 `.thinking` 块、按到达顺序交错、用自适应节流刷到 `content`，收尾时强制冲刷尾部。
+
 
 ### 分页修复的真机验证
 
@@ -513,12 +518,23 @@ flowchart TB
 
 ## 10. 移植到不同源码线的成本
 
-| 层 | 需要改吗 | 说明 |
-|---|---|---|
-| `src/ios/DSH/` 20 个文件 | **原样复制** | 内核不认识 `AIChatViewModel`，只认识 DSH 词表 |
-| 4 个 Bridge 文件 | 可能要适配 | 唯一接触 Minis 类型的地方（`AgentContentPart` 的 `toolResult` 关联值、`AssistantBlockKind` 的 case、`LLMUsage` 字段） |
-| 3 个调用点 | 按上下文重贴 | 上游源码行号不同，要按局部上下文重新定位 |
-| `dshSeq` 两个字段 | 各一行 | |
-| pbxproj 分组 | 3 处编辑 | 父组必须无 `path =`，否则 `path = DSH` 解析到错目录，报 `cannot find dshSystemPrompt in scope` |
+实测结论：**21 个模块文件里只有 2 个必须逐行不同**，其余 19 个字节一致。
 
-这就是为什么同一份内核对 iOS 15 线与 iOS 26 线能用同一套移植流程。
+| 文件 | 为什么不同 |
+|---|---|
+| `DSHTurnDriver.swift` | v1.14 给 `AgentStreamEvent` 加了 `.responseModel`，switch 必须穷尽；`AgentContentPart` 的构造点虽然带标签可省，模式匹配不行 |
+| `DSHTurnDriverBridge.swift` | 唯一对 `AgentContentPart` 做**模式匹配**的地方（`.toolUse` 3→4 元、`.toolResult` 8→9 元），外加 `lineSpecificKind` —— iOS 26 线的 `AssistantBlockKind` 有 `delegateTool(title:)`，iOS 15 线没有 |
+
+把这两件事都限制在一个文件里是有意的：**分支差异只允许出现在"接触 Minis 类型"的那一层**，内核其余部分改一次、验一次即可。
+
+其余需要按上下文重贴的部分：
+
+| 项 | 说明 |
+|---|---|
+| 3 个 `runAgentLoop()` 调用点 | 上游行号不同，按局部上下文重新定位 |
+| `dshSeq` 两个字段 | 各一行 |
+| pbxproj 同步组 | 3 处编辑；父组必须无 `path =`，否则 `path = DSH` 解析到错目录，报 `cannot find dshSystemPrompt in scope` |
+| DSH 状态块 | `AIChatViewModel` 里 10 个属性 |
+| workflow | 一条即可——ios26 job 固定 checkout `ios26` 分支，helper 从 `origin/main` 取 |
+
+这就是同一份内核对两条线能用同一套流程、且修一次两边都好的原因。
