@@ -14,6 +14,12 @@
 //  and `case SubAgentDefinition.toolName:` arms. A tool whose kind is missing
 //  here still runs, but its block renders headerless.
 //
+//  Tools whose block kind exists on only one of the two source lines are handled
+//  by `lineSpecificKind(for:arguments:)`, defined in the branch-specific seam
+//  file `DSHTurnDriverBridge.swift`. The iOS 26 line's v1.14 added
+//  `AssistantBlockKind.delegateTool(title:)`; the iOS 15 line's enum has no such
+//  case, so naming it here would not compile there.
+//
 
 import Foundation
 
@@ -45,12 +51,13 @@ enum DSHToolBlockKind {
         case "browser_use":
             return .browserTool(action: DSHToolArguments.string(arguments, "action", or: ""))
 
-        case "subagent_task":
-            // `SubAgentDefinition.toolName`, spelled out because that type only
-            // exists on the iOS 26 line and this file is identical on both.
-            return .delegateTool(title: DSHToolArguments.string(arguments, "tool_title", or: ""))
-
         default:
+            // A tool whose block kind only exists on one of the two lines. Split
+            // out because the two lines do not have the same set of
+            // `AssistantBlockKind` cases.
+            if let kind = lineSpecificKind(for: name, arguments: arguments) {
+                return kind
+            }
             // An unknown tool still gets a block so its result is visible; the
             // generic `.info` kind is the only kind that carries no header.
             return .info

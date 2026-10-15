@@ -87,7 +87,11 @@ enum DSHSessionProjection {
             switch part {
             case .text(let text):
                 blocks.append(DSHTextBlock(text: text))
-            case .toolUse(let id, let name, let input):
+            // v1.14 grew `.toolUse` to four associated values by adding
+            // `isOffloadedArgument`. This projection rebuilds the call from the
+            // session's own record, so the provenance flag has nowhere to come
+            // from and is matched and discarded.
+            case .toolUse(let id, let name, let input, _):
                 let raw: String
                 if let data = try? JSONSerialization.data(withJSONObject: input, options: [.sortedKeys]),
                    let text = String(data: data, encoding: .utf8) {
@@ -96,6 +100,7 @@ enum DSHSessionProjection {
                     raw = "{}"
                 }
                 blocks.append(DSHToolCallBlock(id: id, name: name, arguments: raw))
+
             // v1.14 grew `.toolResult` to nine associated values by adding
             // `isOffloadReadback`; the image and page values before it are the
             // ones this bridge projects. See DSHTurnDriver.swift for the other
@@ -132,9 +137,50 @@ enum DSHSessionProjection {
         message.dshSeq = seq
         return message
     }
+
+    /// Lift a settled tool result out of the executor's outcome part.
+    ///
+    /// This lives here, and not in the tool handler, because it is the one place
+    /// in the module that pattern-matches the provider's content part — and that
+    /// enum's shape is precisely what differs between the iOS 15 and iOS 26
+    /// lines. Confining the branch difference to this file keeps the other
+    /// nineteen identical, so the core can be fixed once and verified once.
+    ///
+    /// The trailing `_` is `isOffloadReadback`, which v1.14 added; the iOS 15
+    /// line's enum stops after `imageLinuxPath`.
+    static func toolExecutionResult(from part: AgentContentPart) -> DSHToolExecutionResult? {
+        guard case let .toolResult(_, _, content, isError,
+                                   imageData, imageMimeType, pageURL, imageLinuxPath, _) = part else {
+            return nil
+        }
+        return DSHToolExecutionResult(
+            content: content,
+            isError: isError,
+            imageData: imageData,
+            imageMimeType: imageMimeType,
+            pageURL: pageURL,
+            imageLinuxPath: imageLinuxPath
+        )
+    }
 }
 
 // MARK: - Tool Handler Adapter
+
+/// Block kinds that exist on only one of the two source lines.
+///
+/// `DSHToolBlockKind` is shared between the iOS 15 and iOS 26 lines, and the two
+/// lines do not have the same `AssistantBlockKind` cases: v1.14 added
+/// `delegateTool(title:)` for its sub-agent tool, which the iOS 15 line's enum
+/// does not have.
+extension DSHToolBlockKind {
+
+    /// The block kind for a tool this line has.
+    static func lineSpecificKind(for name: String, arguments: [String: Any]) -> AssistantBlockKind? {
+        // `SubAgentDefinition.toolName`.
+        guard name == "subagent_task" else { return nil }
+        return .delegateTool(title: DSHToolArguments.string(arguments, "tool_title", or: ""))
+    }
+}
 
 /// Runs one DSH tool call through the ViewModel's existing handler.
 ///
