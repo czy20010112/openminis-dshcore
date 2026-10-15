@@ -9,6 +9,10 @@
 //  mode the DSH scheduler needs, and the streaming-output path the UI already
 //  renders.
 //
+//  Registration gating mirrors `makeAgentTools()` exactly. A tool that Minis
+//  would have offered must be offered here too, or switching the loop on would
+//  silently take a capability away from the model.
+//
 //  Concurrency policy:
 //
 //  - Exclusive: anything that mutates shared sandbox state or a shared file.
@@ -38,10 +42,7 @@ extension AIChatViewModel {
             executionMode: .exclusive,
             handler: { [weak self] args, _ in
                 guard let self else { return DSHToolExecutionResult.error("view model released") }
-                let command = DSHToolArguments.string(args, "command", or: "")
-                let timeout = TimeInterval(DSHToolArguments.int(args, "timeout", or: 900))
-                let output = await self.dshRunShell(command: command, timeout: timeout)
-                return DSHToolExecutionResult(content: output, isError: false)
+                return await self.dshRunShell(args: args)
             }
         ))
 
@@ -54,9 +55,7 @@ extension AIChatViewModel {
             executionMode: .parallel,
             handler: { [weak self] args, _ in
                 guard let self else { return DSHToolExecutionResult.error("view model released") }
-                let path = DSHToolArguments.string(args, "path", or: "")
-                let content = await self.dshReadFile(path: path)
-                return DSHToolExecutionResult(content: content, isError: false)
+                return await self.dshReadFile(args: args)
             }
         ))
 
@@ -69,11 +68,7 @@ extension AIChatViewModel {
             executionMode: .exclusive,
             handler: { [weak self] args, _ in
                 guard let self else { return DSHToolExecutionResult.error("view model released") }
-                let path = DSHToolArguments.string(args, "path", or: "")
-                let content = DSHToolArguments.string(args, "content", or: "")
-                let append = DSHToolArguments.bool(args, "append", or: false)
-                let result = await self.dshWriteFile(path: path, content: content, append: append)
-                return DSHToolExecutionResult(content: result, isError: false)
+                return await self.dshWriteFile(args: args)
             }
         ))
 
@@ -86,35 +81,51 @@ extension AIChatViewModel {
             executionMode: .exclusive,
             handler: { [weak self] args, _ in
                 guard let self else { return DSHToolExecutionResult.error("view model released") }
-                let path = DSHToolArguments.string(args, "path", or: "")
-                let old = DSHToolArguments.string(args, "old_string", or: "")
-                let new = DSHToolArguments.string(args, "new_string", or: "")
-                let replaceAll = DSHToolArguments.bool(args, "replace_all", or: false)
-                let result = await self.dshEditFile(path: path, oldString: old, newString: new, replaceAll: replaceAll)
-                return DSHToolExecutionResult(content: result, isError: false)
+                return await self.dshEditFile(args: args)
             }
         ))
 
         // MARK: read_image
 
-        if activeModelHasNativeVision {
+        // [T-ios-vision-group #182] Expose read_image when the model can see
+        // images ITSELF, or when a Vision Group is configured to see them on its
+        // behalf — the same gate `makeAgentTools()` uses. Previously a text-only
+        // model simply never got this tool, so an image on disk was invisible to
+        // it with no recourse. The handler picks the matching branch: native
+        // models get pixels, others get the Vision Group's description as text.
+        //
+        // `isConfigured` is evaluated FIRST and not inside the `||`: short-
+        // circuiting on `nativeVision` would skip the call, and that read is what
+        // keeps the cached mirror fresh for the off-main placeholder builder.
+        let nativeVision = activeModelHasNativeVision
+        let visionGroupConfigured = VisionGroupResolver.isConfigured
+        if nativeVision || visionGroupConfigured {
+            // Describe what this model will ACTUALLY receive. Promising "the image
+            // is returned directly" to a text-only model sets up a false
+            // expectation and invites it to re-call the tool when no pixels
+            // arrive; that branch returns a written description instead.
+            let readImageDescription = nativeVision
+                ? "Read an image file from the Linux filesystem and return it for visual analysis. Supports PNG, JPEG, GIF, WEBP, and other common image formats. Use this to inspect generated charts, downloaded images, screenshots, or any visual output. The image is returned directly for your analysis along with metadata (dimensions, file size)."
+                : "Read an image file from the Linux filesystem and return a written description of it. Supports PNG, JPEG, GIF, WEBP, and other common image formats. Use this to inspect generated charts, downloaded images, screenshots, user-attached photos, or any visual output. You cannot see images directly, so the image is analyzed by a separate vision model and you receive its detailed description plus a transcription of any visible text, along with metadata (dimensions, file size). Because you cannot look again yourself, use the optional 'prompt' argument to ask for exactly what you need from the image — that is your only way to follow up on specific details."
+            let promptDescription = nativeVision
+                ? "Optional. A note about what you are looking for in the image. Recorded alongside the result; the image itself is returned to you in full either way."
+                : "Optional. A specific question or instruction about the image, e.g. 'transcribe the table', 'what error message is shown in this screenshot', 'describe the people and their expressions'. This is passed to the vision model that reads the image for you, so ask for exactly the detail you need. If omitted, a generic detailed description with full text transcription is returned."
+
             tools.append(DSHMinisTools.make(
                 name: "read_image",
-                description: "Read an image file from the Linux filesystem and return it for visual analysis. Supports PNG, JPEG, GIF, WEBP, and other common image formats. Use this to inspect generated charts, downloaded images, screenshots, or any visual output. The image is returned directly for your analysis along with metadata (dimensions, file size).",
+                description: readImageDescription,
                 parameters: DSHJSONSchema.object(
                     properties: [
                         DSHMinisTools.toolTitleParam(),
                         ("path", DSHJSONSchema.string(description: "Linux path (e.g. /var/minis/attachments/chart.png) or minis:// URL (e.g. minis://attachments/chart.png)")),
-                        ("prompt", DSHJSONSchema.string(description: "Optional. A note about what you are looking for in the image.")),
+                        ("prompt", DSHJSONSchema.string(description: promptDescription)),
                     ],
                     required: ["tool_title", "path"]
                 ),
                 executionMode: .parallel,
-                handler: { [weak self] args, _ in
+                handler: { [weak self] args, context in
                     guard let self else { return DSHToolExecutionResult.error("view model released") }
-                    let path = DSHToolArguments.string(args, "path", or: "")
-                    let result = await self.dshReadImage(path: path)
-                    return DSHToolExecutionResult(content: result, isError: false)
+                    return await self.dshReadImage(args: args, callId: context.callId)
                 }
             ))
         }
@@ -135,9 +146,7 @@ extension AIChatViewModel {
                 executionMode: .exclusive,
                 handler: { [weak self] args, _ in
                     guard let self else { return DSHToolExecutionResult.error("view model released") }
-                    let content = DSHToolArguments.string(args, "content", or: "")
-                    let result = await self.dshWriteMemory(content: content)
-                    return DSHToolExecutionResult(content: result, isError: false)
+                    return await self.dshWriteMemory(args: args)
                 }
             ))
             tools.append(DSHMinisTools.make(
@@ -154,10 +163,7 @@ extension AIChatViewModel {
                 executionMode: .parallel,
                 handler: { [weak self] args, _ in
                     guard let self else { return DSHToolExecutionResult.error("view model released") }
-                    let keywords = DSHToolArguments.string(args, "keywords", or: "")
-                    let scope = DSHToolArguments.string(args, "scope", or: "all")
-                    let result = await self.dshGetMemory(keywords: keywords, scope: scope)
-                    return DSHToolExecutionResult(content: result, isError: false)
+                    return await self.dshGetMemory(args: args)
                 }
             ))
         }

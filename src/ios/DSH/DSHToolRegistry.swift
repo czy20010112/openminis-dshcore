@@ -97,17 +97,36 @@ public struct DSHToolExecutionResult: Sendable {
     public var concludesTurn: Bool
     /// Extra messages folded into model context after the result.
     public var additionalContexts: [DSHMessage]
+    /// Pixels a tool produced, carried onto its tool_result part.
+    ///
+    /// Not every tool is text-only: `read_image` hands the model an image, and
+    /// `browser_use` hands it a page screenshot. Those bytes belong to the
+    /// result, not to a separate message.
+    public var imageData: Data?
+    public var imageMimeType: String?
+    /// The URL a browser action landed on.
+    public var pageURL: String?
+    /// Durable sandbox path of `imageData`, so the model can re-fetch it.
+    public var imageLinuxPath: String?
 
     public init(
         content: String,
         isError: Bool = false,
         concludesTurn: Bool = false,
-        additionalContexts: [DSHMessage] = []
+        additionalContexts: [DSHMessage] = [],
+        imageData: Data? = nil,
+        imageMimeType: String? = nil,
+        pageURL: String? = nil,
+        imageLinuxPath: String? = nil
     ) {
         self.content = content
         self.isError = isError
         self.concludesTurn = concludesTurn
         self.additionalContexts = additionalContexts
+        self.imageData = imageData
+        self.imageMimeType = imageMimeType
+        self.pageURL = pageURL
+        self.imageLinuxPath = imageLinuxPath
     }
 
     public static func error(_ message: String) -> DSHToolExecutionResult {

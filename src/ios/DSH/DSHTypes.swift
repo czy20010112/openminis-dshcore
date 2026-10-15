@@ -48,6 +48,13 @@ public struct DSHToolCallBlock: DSHContentBlock, Sendable {
 }
 
 /// The result of one tool call, ready to enter model context.
+///
+/// A tool result is not always text. `read_image` returns pixels for a
+/// native-vision model (or a written description from a Vision Group for one
+/// without), and `browser_use` returns a page screenshot plus the URL it landed
+/// on. Those ride here alongside the text rather than as a separate message, so
+/// the provider sees the same shape Minis' original loop produced: an image
+/// attached to the tool_result part itself.
 public struct DSHToolResultBlock: DSHContentBlock, Sendable {
     public let type = "tool-result"
     /// Correlates with the originating {@link DSHToolCallBlock.id}.
@@ -55,12 +62,32 @@ public struct DSHToolResultBlock: DSHContentBlock, Sendable {
     public let name: String
     public let content: String
     public let isError: Bool
+    /// Pixels to attach to this result, when the tool produced an image.
+    public let imageData: Data?
+    public let imageMimeType: String?
+    /// The URL a browser action landed on, for the transcript card.
+    public let pageURL: String?
+    /// Durable sandbox path of the attached image, so it can be re-fetched.
+    public let imageLinuxPath: String?
 
-    public init(callId: String, name: String, content: String, isError: Bool) {
+    public init(
+        callId: String,
+        name: String,
+        content: String,
+        isError: Bool,
+        imageData: Data? = nil,
+        imageMimeType: String? = nil,
+        pageURL: String? = nil,
+        imageLinuxPath: String? = nil
+    ) {
         self.callId = callId
         self.name = name
         self.content = content
         self.isError = isError
+        self.imageData = imageData
+        self.imageMimeType = imageMimeType
+        self.pageURL = pageURL
+        self.imageLinuxPath = imageLinuxPath
     }
 }
 

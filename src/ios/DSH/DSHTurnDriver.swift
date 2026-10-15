@@ -484,10 +484,10 @@ public final class DSHTurnDriver {
                         name: result.name,
                         content: result.content,
                         isError: result.isError,
-                        imageData: nil,
-                        imageMimeType: nil,
-                        pageURL: nil,
-                        imageLinuxPath: nil
+                        imageData: result.imageData,
+                        imageMimeType: result.imageMimeType,
+                        pageURL: result.pageURL,
+                        imageLinuxPath: result.imageLinuxPath
                     ))
                 case let image as DSHImageBlock:
                     parts.append(.imageData(
@@ -533,7 +533,11 @@ public final class DSHTurnDriver {
                 callId: commit.block.id,
                 name: commit.block.name,
                 content: content,
-                isError: commit.result.isError
+                isError: commit.result.isError,
+                imageData: commit.result.imageData,
+                imageMimeType: commit.result.imageMimeType,
+                pageURL: commit.result.pageURL,
+                imageLinuxPath: commit.result.imageLinuxPath
             ),
         ]), turn: turn)
     }

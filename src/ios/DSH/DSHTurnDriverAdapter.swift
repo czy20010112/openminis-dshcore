@@ -124,6 +124,16 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
             messages[idx].blocks[blockIdx].toolStatus = result.isError
                 ? .failed(message: "Tool failed")
                 : .success
+            // A tool result is not always text. read_image produces pixels and
+            // browser_use produces a page screenshot plus the URL it landed on;
+            // both are rendered from the block, so carry them across here rather
+            // than leaving the transcript with a bare caption.
+            if let imagePath = result.imageLinuxPath, result.imageData != nil {
+                messages[idx].blocks[blockIdx].imageFilePath = imagePath
+            }
+            if let pageURL = result.pageURL {
+                messages[idx].blocks[blockIdx].browserURL = pageURL
+            }
         } else {
             var block = AssistantBlock(kind: .info, content: result.content)
             block.toolUseId = callId
