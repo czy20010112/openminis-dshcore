@@ -91,6 +91,10 @@ extension AIChatViewModel {
             maxParallelToolCalls: 4,
             maxStepsPerTurn: Self.maxAgentTurns,
             maxTokens: provider.defaultMaxTokens,
+            // Resolved per conversation and clamped to the serving model — the
+            // same resolution the original loop uses. Hardcoding `.off` in the
+            // driver turned thinking off for every DSH turn, silently.
+            thinkingLevel: dshThinkingLevel(for: entry),
             enableLoopGuard: true,
             compactionRetainTokens: Self.dshCompactionRetainTokens,
             // Pressure is judged against the serving model's real window. A
@@ -247,6 +251,19 @@ extension AIChatViewModel {
             }
         }
         return persisted
+    }
+
+    /// Extended-thinking level for this conversation, clamped to the model.
+    ///
+    /// The session's persisted level may exceed what the resolved model accepts,
+    /// so the clamp happens before the request is built — the protocol-extension
+    /// clamp only knows the catalog maximum, not the entry-level override.
+    private func dshThinkingLevel(for entry: ModelEntry) -> ThinkingLevel {
+        var level = sessionId.flatMap {
+            ProviderConfigStore.shared.inferenceConfig(for: $0)?.thinkingLevel
+        } ?? .off
+        level = min(level, entry.effectiveMaxThinkingLevel)
+        return level
     }
 
     /// Map the driver's usage accounting onto the row type the store reads.
