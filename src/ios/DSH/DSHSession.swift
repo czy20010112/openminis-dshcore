@@ -179,6 +179,47 @@ public final class DSHSession: @unchecked Sendable {
         return seq
     }
 
+    // MARK: - Redrive
+
+    /// Drop every entry after `seq`, and any compaction whose summary or
+    /// shadowed range went with it.
+    ///
+    /// This is the one place the log is not append-only, and it exists for one
+    /// reason: a retry or a resume asks for a turn to be produced *again*, so the
+    /// incomplete tail of the previous attempt has to go. It is safe only because
+    /// no loop is running when it is called — a held seq would dangle, which is
+    /// precisely the failure mode the append-only log exists to remove.
+    ///
+    /// `nextSeq` is deliberately not rewound: seqs stay unique for the life of
+    /// the session, so a stale one can never be mistaken for a reused one.
+    ///
+    /// - Parameter seq: keep entries up to and including this seq. `nil` clears
+    ///   the log.
+    /// - Returns: how many entries were dropped.
+    @discardableResult
+    public func truncate(after seq: DSHSeq?) -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        let cutoff = seq?.value ?? 0
+        let before = log.count
+        log.removeAll { $0.seq.value > cutoff }
+        compactions.removeAll {
+            $0.seq.value > cutoff || $0.shadowedRange.upperBound.value > cutoff
+        }
+        return before - log.count
+    }
+
+    /// The seq of the newest user turn, or nil when the log has none.
+    ///
+    /// A redrive has to leave the surface ending on the user's own message:
+    /// everything the previous attempt appended after it — assistant text, tool
+    /// calls, tool results — is what is being retried.
+    public func lastUserSeq() -> DSHSeq? {
+        lock.lock()
+        defer { lock.unlock() }
+        return log.last { $0.message.role == .user }?.seq
+    }
+
     // MARK: - Read
 
     /// Every log entry, in append order. Includes shadowed entries.

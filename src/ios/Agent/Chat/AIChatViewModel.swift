@@ -2086,6 +2086,19 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
     /// reintroduce the index-drift defect this core exists to remove.
     var dshSession: DSHSession?
 
+    /// The session id `dshSession` was built from.
+    ///
+    /// The session is per conversation, not per ViewModel: without this the
+    /// history of whichever chat was open first leaked into every other one.
+    var dshSessionOwner: String?
+
+    /// A compaction the driver reported that still has to reach the store.
+    ///
+    /// Resolved synchronously in `didCompact` (the anchor's database id only
+    /// exists in `agentHistory`, which the end-of-turn reconcile replaces) and
+    /// written at the end of the turn, because the store is an actor.
+    var dshPendingMarker: (anchorId: String, summary: String, count: Int)?
+
     /// Index of the assistant message the driver is streaming into, or -1 when
     /// no turn is streaming.
     ///
@@ -2951,7 +2964,14 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
             defer { concurrency.releaseSlot(sessionId: retrySid) }
 
             do {
-                try await self.runAgentLoop(resumingAt: existingMsgIdx, committedBlocks: existingBlockCount)
+                if Self.useDSHAgentLoop {
+                    // A retry means the previous answer needs producing again, so
+                    // the DSH core drops this turn's incomplete tail and drives it
+                    // from the user's own message.
+                    await self.runDSHRedrive(afterSeq: nil)
+                } else {
+                    try await self.runAgentLoop(resumingAt: existingMsgIdx, committedBlocks: existingBlockCount)
+                }
             } catch is CancellationError {
                 logger.info("Agent loop cancelled (retry)")
                 self.handleUserCancelledCleanup()
@@ -3098,7 +3118,14 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
             defer { concurrency.releaseSlot(sessionId: resumeSid) }
 
             do {
-                try await self.runAgentLoop(resumingAt: existingMsgIdx, committedBlocks: existingBlockCount)
+                if Self.useDSHAgentLoop {
+                    // Resuming an interrupted turn is a redrive: the DSH core
+                    // removes what the interrupted attempt appended and answers
+                    // the user's message again.
+                    await self.runDSHRedrive(afterSeq: nil)
+                } else {
+                    try await self.runAgentLoop(resumingAt: existingMsgIdx, committedBlocks: existingBlockCount)
+                }
             } catch is CancellationError {
                 logger.info("Agent loop cancelled (resume)")
                 self.handleUserCancelledCleanup()
@@ -3621,7 +3648,19 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
             defer { concurrency.releaseSlot(sessionId: retryFromSid) }
 
             do {
-                try await self.runAgentLoop(resumingAt: effectiveResumeAt, committedBlocks: effectiveResumeBlocks)
+                if Self.useDSHAgentLoop {
+                    // `resumeAt` is a row in `messages`; the session knows it by
+                    // seq. A row the session has never seen falls back to the
+                    // newest user turn, which is the right bound for a retry aimed
+                    // at something the session does not track.
+                    let target = effectiveResumeAt.flatMap { idx -> Int? in
+                        guard idx >= 0, idx < self.messages.count else { return nil }
+                        return self.messages[idx].dshSeq
+                    }
+                    await self.runDSHRedrive(afterSeq: target)
+                } else {
+                    try await self.runAgentLoop(resumingAt: effectiveResumeAt, committedBlocks: effectiveResumeBlocks)
+                }
             } catch is CancellationError {
                 logger.info("Agent loop cancelled (\(label))")
                 self.handleUserCancelledCleanup()

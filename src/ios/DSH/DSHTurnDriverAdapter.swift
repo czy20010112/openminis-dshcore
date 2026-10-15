@@ -236,6 +236,12 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
         )
         dshLastCompaction = outcome
 
+        // Resolve the durable anchor now, while the shadowed rows are still in
+        // `agentHistory` — the anchor is a database id that only lives there, and
+        // the reconcile that runs at the end of the turn replaces that array with
+        // the session surface. The write itself is awaited at the end of the turn.
+        dshResolveCompactionMarker(outcome)
+
         // Surface the compaction in the transcript. A silent context rewrite is
         // indistinguishable from the model forgetting, so the row says what was
         // replaced and what it cost.

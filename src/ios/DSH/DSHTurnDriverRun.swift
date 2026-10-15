@@ -25,6 +25,133 @@ import Foundation
 
 extension AIChatViewModel {
 
+    /// Build a session from what the model is supposed to see.
+    ///
+    /// `effectiveAgentHistory()` rather than `agentHistory`: it is the one that
+    /// applies the persisted compaction marker, so a conversation compacted
+    /// before the last launch comes back as [recent tail + summary] instead of
+    /// coming back whole. Seeding from the raw history is why a compaction used
+    /// to die with the process — and why the first turn after a relaunch could
+    /// start on a conversation that no longer fit the window.
+    private func dshSeedSession() -> DSHSession {
+        let session = DSHSession()
+        for message in effectiveAgentHistory() {
+            session.append(DSHSessionProjection.toDSHMessage(message), turn: nil)
+        }
+        return session
+    }
+
+    /// Re-drive the current turn through the DSH core, for a retry or a resume.
+    ///
+    /// The session *is* the conversation, so a redrive first removes what the
+    /// previous attempt appended: the assistant entry it was streaming, and any
+    /// tool calls or results that followed it. Without that the retry answers a
+    /// question that already has an answer, and the transcript shows both.
+    ///
+    /// - Parameter afterSeq: keep everything up to and including this session
+    ///   entry, then drop the rest plus any trailing non-user entries. `nil`
+    ///   keeps the newest user turn and drops everything after it — which is what
+    ///   a plain "retry" or "resume" means.
+    func runDSHRedrive(afterSeq: Int?) async {
+        if let session = dshSession {
+            var cut = session.lastUserSeq()
+            if let afterSeq, afterSeq > 0 {
+                // A row the session knows about is a stronger bound than "the last
+                // user turn", for a retry aimed at an older message. `DSHSeq`'s
+                // initialiser traps on non-positive input, hence the guard.
+                let requested = DSHSeq(afterSeq)
+                if session.entry(at: requested) != nil { cut = requested }
+            }
+            let dropped = session.truncate(after: cut)
+            dshDropUITail(keepingThrough: cut)
+            AppLogger(category: "DSHLoop").warning(
+                "[DSH] redrive dropped \(dropped) entr\(dropped == 1 ? "y" : "ies") "
+                + "after \(cut?.description ?? "nil")"
+            )
+        }
+        await runDSHTurn()
+    }
+
+    /// Remove the transcript rows the session truncation removed.
+    ///
+    /// `messages` mirrors the session for display. A row whose seq is gone has
+    /// nothing behind it any more, so leaving it would show a retried turn twice.
+    /// A row with no seq was never in the session: only a *trailing* assistant
+    /// row can be the failed attempt's own placeholder or an error carrier.
+    private func dshDropUITail(keepingThrough cut: DSHSeq?) {
+        let cutoff = cut?.value ?? 0
+        let lastUserIdx = messages.lastIndex(where: { $0.role == .user }) ?? -1
+        var doomed: [Int] = []
+        for (idx, message) in messages.enumerated() {
+            if let seq = message.dshSeq {
+                if seq > cutoff { doomed.append(idx) }
+            } else if message.role == .assistant, idx > lastUserIdx {
+                doomed.append(idx)
+            }
+        }
+        guard !doomed.isEmpty else { return }
+        for idx in doomed.reversed() { messages.remove(at: idx) }
+    }
+
+    /// Resolve a DSH compaction into a marker that still has to be written.
+    ///
+    /// Called from the driver's `didCompact`, which is synchronous and runs while
+    /// the shadowed rows are still in `agentHistory`. The write itself is async
+    /// (the store is an actor) and happens at the end of the turn.
+    func dshResolveCompactionMarker(_ outcome: DSHCompactionOutcome) {
+        guard let summaryEntry = dshSession?.entry(at: outcome.summarySeq) else { return }
+        guard let lastShadowed = outcome.range.shadowedSeqs.last,
+              let anchorId = agentHistory.last(where: { $0.dshSeq == lastShadowed.value })?.dbMessageId else {
+            AppLogger(category: "DSHLoop").warning(
+                "[DSH] compaction has no persisted anchor row — the conversation "
+                + "will come back whole on the next launch"
+            )
+            return
+        }
+        dshPendingMarker = (
+            anchorId: anchorId,
+            summary: summaryEntry.message.text,
+            count: outcome.range.shadowedSeqs.count
+        )
+    }
+
+    /// Write a resolved compaction marker, replacing any earlier one.
+    ///
+    /// Minis already has the right shape for this: a `CompactMarker` says
+    /// "everything up to and including `lastCompactedMessageId` is compacted,
+    /// and here is its summary", and `effectiveAgentHistory()` re-materializes
+    /// that summary into the next request. Writing one is what lets a DSH
+    /// compaction outlive the process.
+    ///
+    /// DSH summaries are cumulative by construction — the previous summary sits
+    /// inside the range the next one shadows and is rendered into the summarizer's
+    /// input — which is exactly the "covers everything up to the anchor"
+    /// semantics a v2 marker assumes. Hence one marker at a time, replacing any
+    /// earlier one rather than accumulating.
+    func dshWriteCompactionMarker(_ pending: (anchorId: String, summary: String, count: Int)) async {
+        guard let sid = sessionId else { return }
+
+        await ChatStore.shared.deleteCompactMarkers(sessionId: sid)
+        await ChatStore.shared.insertCompactMarker(CompactMarker(
+            id: UUID().uuidString,
+            sessionId: sid,
+            summary: pending.summary,
+            firstKeptSortOrder: 0,
+            compactedCount: pending.count,
+            createdAt: Date(),
+            uiBoundarySortOrder: nil,
+            boundaryMessageId: nil,
+            firstKeptMessageId: nil,
+            lastCompactedMessageId: pending.anchorId,
+            version: 2
+        ))
+        cachedLatestMarker = await ChatStore.shared.latestCompactMarker(sessionId: sid)
+        AppLogger(category: "DSHLoop").warning(
+            "[DSH] compaction marker written anchor=\(pending.anchorId.prefix(8)) "
+            + "shadowed=\(pending.count)"
+        )
+    }
+
     /// Run one turn through the DSH driver.
     ///
     /// Callers replace the body of `runAgentLoop()` with this. The ViewModel
@@ -37,14 +164,13 @@ extension AIChatViewModel {
 
         let provider = await makeAgentProvider(for: entry)
 
-        // Seed the session once per session id. A later turn reuses it, so the
-        // surface accumulates across turns instead of restarting from scratch.
-        if dshSession == nil {
-            let session = DSHSession()
-            for message in agentHistory {
-                session.append(DSHSessionProjection.toDSHMessage(message), turn: nil)
-            }
-            dshSession = session
+        // Seed the session once per conversation, and rebuild it when the
+        // conversation changes. The previous version created it once per
+        // ViewModel and then reused it for whatever session happened to be open,
+        // so switching chats inherited the other chat's history.
+        if dshSession == nil || dshSessionOwner != sessionId {
+            dshSession = dshSeedSession()
+            dshSessionOwner = sessionId
         }
         guard let session = dshSession else { return }
 
@@ -161,6 +287,14 @@ extension AIChatViewModel {
 
         let logCountBeforeTurn = session.logCount
         _ = await driver.run()
+
+        // Write any compaction marker now, while `agentHistory` still holds the
+        // shadowed rows — the anchor is one of their database ids, and the
+        // reconcile below replaces that array with the session surface.
+        if let pending = dshPendingMarker {
+            await dshWriteCompactionMarker(pending)
+            dshPendingMarker = nil
+        }
 
         // Persist what this turn added, then rebuild the UI array from the
         // surface. The driver owns conversation identity but not storage:
@@ -321,27 +455,40 @@ extension AIChatViewModel {
     ///
     /// Matching is by seq where available and by content otherwise, so a
     /// re-seeded session does not duplicate entries the UI already committed.
-    /// Rebuild agentHistory from the session surface.
+    /// Rebuild agentHistory from the session surface, keeping database ids.
     ///
-    /// The session is the single source of truth, so the surface is projected
-    /// wholesale. The earlier version walked `agentHistory` and aligned by seq,
-    /// which silently kept every row that had no seq — most of them, because the
-    /// original loop's append paths never stamp one. Those stale rows then got
-    /// re-appended to the session on the next turn, so the conversation the
-    /// driver saw was a fraction of the conversation the UI showed: a 4.8k-char
-    /// message measured as 313 surface tokens, and compaction never fired.
+    /// The session is the single source of truth for *content*, so the surface is
+    /// projected wholesale. What the session does not carry is the database id of
+    /// each row, and two things downstream need it:
     ///
-    /// Only genuinely UI-only rows survive — dividers and info rows, which are
-    /// not conversation entries and are identified by role rather than by absence
-    /// of a seq.
+    ///   * the compaction anchor is a database id, so a marker cannot be written
+    ///     without one;
+    ///   * `effectiveAgentHistory()` resolves a persisted marker's anchor by
+    ///     looking it up in `agentHistory`.
+    ///
+    /// So ids are carried across the rebuild by seq. Only rows that already had
+    /// one keep it; a row appended this turn picks its id up when it is persisted.
+    ///
+    /// The earlier version walked `agentHistory` and aligned by seq instead of
+    /// projecting the surface, which silently kept every row that had no seq —
+    /// most of them, because the original loop's append paths never stamp one.
+    /// Those stale rows were then re-appended on the next turn, so the
+    /// conversation the driver saw was a fraction of the conversation the UI
+    /// showed: a 4.8k-char message measured as 313 surface tokens, and compaction
+    /// never fired.
     private func dshReconcileFromSession(_ session: DSHSession) {
-        agentHistory = session.surface().map { DSHSessionProjection.toAgentMessage($0) }
+        var knownDbIds: [Int: String] = [:]
+        for message in agentHistory {
+            guard let seq = message.dshSeq, let id = message.dbMessageId else { continue }
+            knownDbIds[seq] = id
+        }
+        agentHistory = session.surface().map { entry in
+            var message = DSHSessionProjection.toAgentMessage(entry)
+            if let id = knownDbIds[entry.seq.value] { message.dbMessageId = id }
+            return message
+        }
     }
 
-    /// Append any agentHistory entries the session does not yet have.
-    ///
-    /// Only rows that carry a seq are considered; a row without one cannot be
-    /// deduplicated and would be re-appended on every turn.
     /// Absorb every `agentHistory` row the session does not already hold, and
     /// stamp each absorbed row with the seq it landed on.
     ///
