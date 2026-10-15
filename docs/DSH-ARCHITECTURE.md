@@ -30,7 +30,7 @@ flowchart TB
 
     subgraph AFTER["【现在】决策内核外移，交互层原地不动"]
         direction TB
-        A0["AIChatViewModel（保留）<br/>流式呈现 · 持久化 · 图片预算 · group fallback · TTS · 队列 · 取消清理 · UI"]
+        A0["AIChatViewModel（保留）<br/>流式呈现 · 持久化 · 图片预算 · TTS · 队列 · 取消清理 · UI"]
         A1["3 个调用点分支<br/>useDSHAgentLoop ? runDSHTurn() : runAgentLoop()"]
         A2["DSH agent 内核（新增 20 文件 / src/ios/DSH）"]
         A0 --> A1 --> A2
@@ -48,7 +48,9 @@ flowchart TB
 ```
 
 **替换的五个"决策段"**：系统提示词装配、工具注册与 schema、工具调度、会话身份、压缩。
-**保留的一切**：流式渲染、持久化、图片预算、group fallback、TTS、队列、取消清理、全部 UI，以及**每个工具的实际实现**（handler 原地复用）。
+**保留的一切**：流式渲染、持久化、图片预算、TTS、队列、取消清理、全部 UI，以及**每个工具的实际实现**（handler 原地复用）。
+
+**没有接上的**：**group fallback**。原循环在内部捕获可回退的 provider 错误、切到组内下一个成员、重建 prompt 并插入"⚠️ 已切换到 X"。DSH 驱动只跟构造时那一个 provider 说话——所以主成员限流/故障时，DSH 回合直接失败报错，而不是静默换备。这一条**在文档里被错写成"仍留在 ViewModel"过**，是审计抓出来的；本机只有一个 provider，装不了第二个来实测。详见 §8。
 
 ---
 
@@ -721,3 +723,38 @@ flowchart TB
 | workflow | 一条即可——ios26 job 固定 checkout `ios26` 分支，helper 从 `origin/main` 取 |
 
 这就是同一份内核对两条线能用同一套流程、且修一次两边都好的原因。
+
+---
+
+## 8. 已知缺口（审计结论）
+
+用同一套办法——"原循环做的事，DSH 回合做了吗"——把整条 `runAgentLoop` 逐调用核对了一遍。已修的见 §7。**下面这些是没修的**，写清楚后果，不粉饰。
+
+### 已修（本轮）
+
+| 缺口 | 后果 | 修法 |
+|---|---|---|
+| 会话 token 累计 + 行上 `usage` | 会话用量面板整个 DSH 会话都显示 0/—（输入、输出、缓存读写、命中率、输出速度），行级读数也空着——要重启一次才由数据库补上 | 在 `didReportUsage` 累计、在回合收口时盖到行上，都与原循环同一位置 |
+| `maxTokens` 绕过 `dynamicMaxTokens` | 用户在单个模型上设的「最大输出」被忽略；请求也不再按**剩余窗口**夹住——上下文接近满时会要一个装不下的输出量 | 走原循环同一个 `dynamicMaxTokens(provider:model:lastContextTokens:)` |
+| 增强缓存开关无效 | `RequestBodyPatcher.setExtendedCacheTTL` 只在原循环开头设置，DSH-only 会话里标志一直是 false，用户那个开关**静默无效** | 回合开头设置 |
+| 停止变成报错 | 取消会拆掉 provider 流，怎么表现出来取决于 provider——可能以流错误到达；`didFail` 无条件报错，于是**用户按「停止」得到一条错误横幅** | `didFail` 先看 `userDidCancel`，走取消清理（与原循环 catch 同规则） |
+
+### 未修
+
+| 缺口 | 后果 | 为什么先不做 |
+|---|---|---|
+| **group fallback** | 主成员限流/故障时直接失败报错，而不是静默换备。**文档曾错写成"仍保留"**——已在 §7 与 `DSH/README.md` 更正 | 需要第二个 provider 才能实测；不测就上一个改了主流程的功能不可取 |
+| 瞬态错误不重试 | `streamWithAutoRetry` 只在原循环里。一次 5xx/网络抖动，或紧跟工具结果后的空回复，现在直接以错误横幅结束回合，而原来会静默恢复 | 需要在驱动里加"空回复提醒 + 单次重试"，同样属于主流程改动 |
+| 旧图片不驱逐 | `trimOldImagesFromHistory()` 只在原循环每次迭代调用，DSH 表面上的历史图片会一直重发。**但影响有上限**：DSH 压缩在窗口 80% 时会连图片一起摘掉 | 会话是 append-only，真要驱逐得走压缩式的重写；现有压缩已经兜住"无界增长"这一半 |
+| 后台授权到期不挂起 | `waitIfBackgroundSuspended()` 只在原循环里，后台跑长回合可能在授权过期后继续发请求被杀 | 设备实测 DSH 回合能跨前后台完成（§T3-07），先记录 |
+| 浏览器接管不挂起 | 工具级的 `waitForMidActionTakeover` 仍在（`executeSingleToolUse` 内），但它在**动作已经执行之后**才生效；步骤之间开始的接管不会被拦住 | 同上 |
+| 缓存保活不调度 | `CacheKeepAliveManager.recordRequest` 只在原循环里，Anthropic 的 prompt cache 在间隔较久的回合之间会冷掉 → 计费更高、首 token 更慢 | 影响成本而非正确性 |
+| 图片被换成占位符时不提示模型 | 同一个 `BatchImageBudget` 还在，但原循环会追一句 `<system-reminder>` 告诉模型"图被换成文字了，请总结后重读"，DSH 不发 | 同上 |
+| Live Activity 的 Loop 计数 | 整个 DSH 回合停在 "Loop 0" | 本机 iOS 15.3.1 无 ActivityKit，测不了 |
+| 排队提示不打断当前回合 | 原循环在工具调用一闭合就把排队消息插成独立回合；DSH 只在整个回合结束后才 drain → 长回合里排队的消息要等完 | 可能是设计选择；T2-18 已验证"回合末作为独立回合应答"是通的 |
+| 崩溃上报不带 provider/model | `CrashReporter.setLastAPI` 只在原循环里 | 纯诊断 |
+
+### 这份审计本身的价值
+
+它把"读代码"变成了这个项目里最有效率的一次缺陷发现：**17 项里 4 项当场修掉、1 项是文档说谎、其余 12 项第一次被写清楚**。而且它给出的"检查过、已覆盖"清单同样重要——那些地方我不用再怀疑。
+
