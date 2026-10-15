@@ -105,6 +105,15 @@ extension AIChatViewModel {
         // session so the surface the driver builds includes it.
         syncAgentHistoryIntoSession(session)
 
+        // Surface state before the turn runs, so a compaction that fires can be
+        // judged against the surface it actually saw rather than a guess.
+        let surfaceBefore = session.surface()
+        let tokensBefore = DSHTokenEstimate.total(surfaceBefore)
+        AppLogger(category: "DSHLoop").warning(
+            "[DSH] turn start surface=\(surfaceBefore.count) entries tokens=\(tokensBefore) "
+            + "pressure=\(config.compactionPressureTokens) retain=\(config.compactionRetainTokens)"
+        )
+
         _ = await driver.run()
 
         // Reconcile the UI array against the session surface, so agentHistory
