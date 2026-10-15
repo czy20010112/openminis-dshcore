@@ -106,13 +106,20 @@ extension AIChatViewModel {
         syncAgentHistoryIntoSession(session)
 
         // Surface state before the turn runs, so a compaction that fires can be
-        // judged against the surface it actually saw rather than a guess.
+        // judged against the surface it actually saw rather than a guess. It is
+        // also reported as a system-info row: the app's own logs are not
+        // reachable from the device, so a silent no-compaction is otherwise
+        // indistinguishable from a broken threshold.
         let surfaceBefore = session.surface()
         let tokensBefore = DSHTokenEstimate.total(surfaceBefore)
         AppLogger(category: "DSHLoop").warning(
             "[DSH] turn start surface=\(surfaceBefore.count) entries tokens=\(tokensBefore) "
             + "pressure=\(config.compactionPressureTokens) retain=\(config.compactionRetainTokens)"
         )
+        let info = ChatMessage(role: .systemInfo, content: "")
+        info.systemIcon = "info.circle"
+        info.content = "DSH surface: \(surfaceBefore.count) entries, ~\(tokensBefore) tokens (compact at \(config.compactionPressureTokens))"
+        messages.append(info)
 
         _ = await driver.run()
 
