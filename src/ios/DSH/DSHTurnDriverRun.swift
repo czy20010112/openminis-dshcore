@@ -133,7 +133,14 @@ extension AIChatViewModel {
 
     /// Compaction budgets. Deployment-varying values, so they are fields rather
     /// than constants in the driver.
+    ///
+    /// `dshCompactionProbeEnabled` lowers the thresholds enough that a real
+    /// device session trips compaction without filling a 262k window, so the
+    /// behaviour can be verified on-device. Ship it false.
+    static var dshCompactionProbeEnabled: Bool { true }
+
     static var dshCompactionRetainTokens: Int {
+        if dshCompactionProbeEnabled { return 400 }
         if let override = UserDefaults.standard.object(forKey: "minis.dshCompactRetainOverride") as? Int,
            override > 0 {
             return override
@@ -146,15 +153,8 @@ extension AIChatViewModel {
     /// DSH compacts at roughly 80% of the window. An unknown window returns
     /// `Int.max`, which disables automatic compaction rather than compacting on
     /// a guess — compacting away the live request is worse than running long.
-    ///
-    /// `UserDefaults["minis.dshCompactOverride"]` replaces the derived value when
-    /// set, so the behaviour can be exercised on a device without filling the
-    /// model's whole window. Intended for testing only.
     static func dshCompactionPressureTokens(for model: LLMModel) -> Int {
-        if let override = UserDefaults.standard.object(forKey: "minis.dshCompactOverride") as? Int,
-           override > 0 {
-            return override
-        }
+        if dshCompactionProbeEnabled { return 2000 }
         guard let window = model.contextWindow, window > 0 else { return Int.max }
         return (window * 80) / 100
     }
