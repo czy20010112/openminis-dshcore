@@ -4,10 +4,15 @@
 //
 //  Maps a DSH tool call onto the UI block kind that renders it.
 //
-//  Each Minis tool has a dedicated block kind carrying the argument the UI
-//  shows in its header (the command, the path, the action). The DSH driver
-//  reports a tool by name plus an argument dictionary, so the mapping lives
-//  here rather than being re-derived at each render site.
+//  Each Minis tool has a dedicated block kind carrying the argument the UI shows
+//  in its header (the command, the path, the action). The DSH driver reports a
+//  tool by name plus an argument dictionary, so the mapping lives here rather
+//  than being re-derived at each render site.
+//
+//  Keep this in step with the block the original loop builds while a tool call's
+//  arguments stream in — `AIChatViewModel+SSEStream.swift`'s `case "browser_use":`
+//  and `case SubAgentDefinition.toolName:` arms. A tool whose kind is missing
+//  here still runs, but its block renders headerless.
 //
 
 import Foundation
@@ -36,6 +41,14 @@ enum DSHToolBlockKind {
         case "memory_write", "memory_get":
             let action = name == "memory_write" ? "write" : "read"
             return .memoryTool(action: action)
+
+        case "browser_use":
+            return .browserTool(action: DSHToolArguments.string(arguments, "action", or: ""))
+
+        case "subagent_task":
+            // `SubAgentDefinition.toolName`, spelled out because that type only
+            // exists on the iOS 26 line and this file is identical on both.
+            return .delegateTool(title: DSHToolArguments.string(arguments, "tool_title", or: ""))
 
         default:
             // An unknown tool still gets a block so its result is visible; the

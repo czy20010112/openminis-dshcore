@@ -72,14 +72,17 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
         AppLogger(category: "DSHLoop").info("[DSH] tool start \(name) id=\(callId.prefix(20))")
 
         // Create the block now so the user sees the call while it runs, and so
-        // `didFinishTool` has a block to fill. The status is `.running` until
+        // the executor has a row to stream into. The status is `.running` until
         // the result lands.
         guard dshStreamingMsgIdx >= 0, dshStreamingMsgIdx < messages.count else { return }
         let idx = dshStreamingMsgIdx
         guard messages[idx].role == .assistant else { return }
 
         // A re-emitted start for the same call id must not duplicate the block.
-        guard !messages[idx].blocks.contains(where: { $0.toolUseId == callId }) else { return }
+        if let existing = messages[idx].blocks.firstIndex(where: { $0.toolUseId == callId }) {
+            dshToolBlockIndex[callId] = existing
+            return
+        }
 
         let kind = DSHToolBlockKind.kind(for: name, arguments: arguments)
         var block = AssistantBlock(kind: kind, content: "Executing...")
@@ -87,6 +90,10 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
         block.toolStatus = .running
         block.toolStartTime = Date()
         messages[idx].blocks.append(block)
+        // The executor addresses the block by position, and the position of a
+        // block can change while a turn runs, so record it against the call id
+        // the executor is given.
+        dshToolBlockIndex[callId] = messages[idx].blocks.count - 1
         publishUnlessTransitioning()
         scrollToBottomSignal.send()
     }
