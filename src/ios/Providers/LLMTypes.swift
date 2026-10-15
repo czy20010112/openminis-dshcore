@@ -1058,7 +1058,9 @@ public enum ThinkingLevel: String, Codable, Hashable, CaseIterable, Comparable {
     case max
     case ultra
 
-    static func < (lhs: ThinkingLevel, rhs: ThinkingLevel) -> Bool {
+    /// Public because Comparable is a public conformance now; the other
+    /// requirements (Codable, Hashable, CaseIterable) are synthesized.
+    public static func < (lhs: ThinkingLevel, rhs: ThinkingLevel) -> Bool {
         allCases.firstIndex(of: lhs)! < allCases.firstIndex(of: rhs)!
     }
 
