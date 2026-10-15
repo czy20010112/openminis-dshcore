@@ -202,6 +202,7 @@ extension AIChatViewModel {
         dshPendingSnapshots.removeAll()
         dshThinkingBlockIdx = -1
         dshTextBlockIdx = -1
+        dshTurnToolEntries.removeAll()
         dshPendingReasoning = ""
         dshAssistantText = ""
 
@@ -362,6 +363,15 @@ extension AIChatViewModel {
         dshPendingToolResults.removeAll()
         dshToolBlockIndex.removeAll()
         dshPendingSnapshots.removeAll()
+
+        // Session title.
+        //
+        // The legacy loop calls this right after each stream completes, with the
+        // turn's tool calls; the DSH turn did not, so every conversation kept the
+        // "New Chat" placeholder forever — visible on the session list, where all
+        // of them read the same. It self-limits (three attempts, skips while one
+        // is in flight), so calling it per turn is what it was written for.
+        generateSessionTitleIfNeeded(toolEntries: dshTurnToolEntries)
     }
 
     /// Persist the session entries this turn appended.

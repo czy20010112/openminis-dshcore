@@ -141,6 +141,12 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
     ) {
         AppLogger(category: "DSHLoop").info("[DSH] tool start \(name) id=\(callId.prefix(20))")
 
+        // Keep the turn's tool calls for the session-title summary. The legacy
+        // loop handed them to `generateSessionTitleIfNeeded` for exactly this
+        // reason — an early turn can be tool-only, and a tool-only first
+        // response otherwise summarises as the empty string.
+        dshTurnToolEntries.append((name: name, args: arguments))
+
         // A tool call ends the current reasoning segment and the current text
         // block: text that follows a tool result is its own block, as it is after
         // a reload.
