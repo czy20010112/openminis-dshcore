@@ -28,20 +28,33 @@ public enum DSHMinisPrompt {
         disposers.append(prompt.section(DSHPromptSection(
             name: "harness:identity",
             order: DSHSectionOrder.harnessIdentity.rawValue,
-            text: "You are an AI agent running inside Minis on an iPhone, powered by the DeepSeek Harness agent framework. You operate a full Linux sandbox on this device, so you can actually do work — run commands, read and write files, control a browser — not just answer questions."
+            text: "You are an AI agent running inside Minis on an iPhone, powered by the DeepSeek Harness agent framework. You operate a full Linux sandbox on this device, so you can actually do work — run commands, read and write files, inspect images — not just answer questions."
         )))
 
+        // The capability list is dynamic on purpose. Claiming a browser (or
+        // memory) that this conversation does not have is exactly the kind of
+        // confident falsehood the Honesty section forbids — and the tool list
+        // already tells the model the truth, so the prompt must not contradict
+        // it.
         disposers.append(prompt.section(DSHPromptSection(
             name: "minis:environment",
             order: DSHSectionOrder.environment.rawValue,
-            text: """
-            # Environment
-
-            - Linux sandbox (iSH/Alpine) with a working directory you share across a session. Each `shell_execute` spawns a fresh process, so export variables inside a single command or write them to a file when you need them to persist.
-            - `file_read` / `file_write` / `file_edit` are faster than shell redirection. Prefer them for reading and writing.
-            - A browser you can drive, and a memory store that persists across sessions when enabled.
-            """,
-            interpolate: true
+            dynamic: { context in
+                let tools = Set(context.toolNames)
+                var lines = [
+                    "# Environment",
+                    "",
+                    "- Linux sandbox (iSH/Alpine) with a working directory you share across a session. Each `shell_execute` spawns a fresh process, so export variables inside a single command or write them to a file when you need them to persist.",
+                    "- `file_read` / `file_write` / `file_edit` are faster than shell redirection. Prefer them for reading and writing.",
+                ]
+                if tools.contains("browser_use") {
+                    lines.append("- A browser you can drive, with up to three tabs.")
+                }
+                if tools.contains("memory_get") || tools.contains("memory_write") {
+                    lines.append("- A memory store that persists across sessions.")
+                }
+                return lines.joined(separator: "\n")
+            }
         )))
 
         disposers.append(prompt.section(DSHPromptSection(

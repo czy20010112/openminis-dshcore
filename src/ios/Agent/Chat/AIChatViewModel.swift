@@ -2508,7 +2508,7 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
     /// we land an authoritative override at the end of the prompt so the
     /// model knows the tools won't be registered, the memory files won't
     /// be injected, and what to tell the user if they ask about memory.
-    private var memoryStatusFragment: String {
+    var memoryStatusFragment: String {
         if memoryEnabled {
             return "\n\nMemory status: ENABLED for this session. GLOBAL.md and recent daily logs have been injected above (if non-empty), and memory_get / memory_write are available in the tool list."
         } else {
@@ -2654,6 +2654,15 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
 
     /// Last time the reasoning buffer was flushed, for the adaptive throttle.
     var dshLastThinkingFlush = Date.distantPast
+
+    /// Text accumulated this turn, for the streaming read-aloud offset.
+    var dshAssistantText = ""
+    /// Characters already handed to TTS this turn.
+    var dshSpokenTextOffset = 0
+    /// Completed sentences waiting for the dynamic TTS window to fill.
+    var dshPendingSpeakBuffer = ""
+    /// Whether this turn has already cut off the previous reply's speech.
+    var dshHasStoppedPreviousTTS = false
 
     /// Tool results the driver settled, keyed by call id, waiting to be rendered
     /// onto their UI blocks.
