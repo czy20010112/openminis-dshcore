@@ -47,16 +47,19 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
         // opens a new block rather than appending behind the answer.
         dshThinkingBlockIdx = -1
 
-        // Append to the trailing text block, mirroring how the provider stream
-        // was folded before. Markdown parsing stays off the main thread and the
-        // flush stays throttled — that machinery is unchanged.
-        var blocks = messages[idx].blocks
-        if let last = blocks.indices.last, blocks[last].kind == .text {
-            blocks[last].content += text
-        } else {
-            blocks.append(AssistantBlock(kind: .text, content: text))
+        // A new text block starts a new accumulation. `setStreamingTextBlockContent`
+        // REPLACES the block's content with what it is given, so the flush has to
+        // be handed the whole text of *this* block — handing it the pending chunk
+        // left the transcript showing only the last fragment of every answer.
+        if dshTextBlockIdx < 0 || dshTextBlockIdx >= messages[idx].blocks.count
+            || messages[idx].blocks[dshTextBlockIdx].kind != .text {
+            messages[idx].blocks.append(AssistantBlock(kind: .text, content: ""))
+            dshTextBlockIdx = messages[idx].blocks.count - 1
+            dshAssistantText = ""
         }
-        messages[idx].blocks = blocks
+        dshAssistantText += text
+        messages[idx].blocks[dshTextBlockIdx].content = dshAssistantText
+
         dshPendingText += text
         dshMaybeFlushText()
 
@@ -67,7 +70,6 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
         // read-replies on mid-reply takes effect on this turn. `feedDynamicTTS`
         // re-checks whether speech is allowed at all, so when it is off this only
         // advances the offset cheaply.
-        dshAssistantText += text
         guard speakEnabled else { return }
 
         if !dshHasStoppedPreviousTTS {
@@ -139,8 +141,11 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
     ) {
         AppLogger(category: "DSHLoop").info("[DSH] tool start \(name) id=\(callId.prefix(20))")
 
-        // A tool call ends the current reasoning segment.
+        // A tool call ends the current reasoning segment and the current text
+        // block: text that follows a tool result is its own block, as it is after
+        // a reload.
         dshThinkingBlockIdx = -1
+        dshTextBlockIdx = -1
 
         // Create the block now so the user sees the call while it runs, and so
         // the executor has a row to stream into. The status is `.running` until
@@ -305,6 +310,7 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
             messages[idx].blocks[dshThinkingBlockIdx].flushThinkingBuffer()
         }
         dshThinkingBlockIdx = -1
+        dshTextBlockIdx = -1
         dshPendingReasoning = ""
 
         // Same for speech: the dynamic window holds a tail, and a turn that ends

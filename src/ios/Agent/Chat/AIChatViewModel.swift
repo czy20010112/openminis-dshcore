@@ -2120,6 +2120,14 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
     /// mid-segment, and "the last thinking block" would then be the wrong one.
     var dshThinkingBlockIdx: Int = -1
 
+    /// Position of the text block currently being streamed, or -1 when the next
+    /// delta starts a new one.
+    ///
+    /// The text flush replaces a block's content with the accumulated text of
+    /// that block, so the block being accumulated has to be identified — text
+    /// before and after a tool call are two different blocks.
+    var dshTextBlockIdx: Int = -1
+
     /// Last time the reasoning buffer was flushed, for the adaptive throttle.
     var dshLastThinkingFlush = Date.distantPast
 

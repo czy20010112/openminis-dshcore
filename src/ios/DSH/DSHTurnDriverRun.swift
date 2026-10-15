@@ -184,7 +184,9 @@ extension AIChatViewModel {
         dshToolBlockIndex.removeAll()
         dshPendingSnapshots.removeAll()
         dshThinkingBlockIdx = -1
+        dshTextBlockIdx = -1
         dshPendingReasoning = ""
+        dshAssistantText = ""
 
         let registry = DSHToolRegistry()
         for tool in dshAgentRegistry(definitions: definitions, batchBudget: batchBudget) {
@@ -555,12 +557,18 @@ extension AIChatViewModel {
             return
         }
 
-        let prepared = prepareMarkdownForRender(text)
+        // `dshAssistantText` is this turn's accumulated text and
+        // `setStreamingTextBlockContent` REPLACES the block with it. Flushing the
+        // pending chunk instead — which is what this did — left the transcript
+        // showing only the most recent fragment of every answer; an answer ending
+        // in a ``` fence rendered as a bare code marker and nothing else.
+        let full = dshAssistantText.isEmpty ? text : dshAssistantText
+        let prepared = prepareMarkdownForRender(full)
         let parsed = MarkdownContent(prepared)
         setStreamingTextBlockContent(
             msgIdx: idx,
             blockIdx: blockIdx,
-            text: text,
+            text: full,
             parsedMarkdown: parsed,
             cacheAttributedString: false,
             requestScroll: true
