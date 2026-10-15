@@ -151,11 +151,23 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
         // Surface the compaction in the transcript. A silent context rewrite is
         // indistinguishable from the model forgetting, so the row says what was
         // replaced and what it cost.
+        // Surface the compaction in the transcript. A silent context rewrite is
+        // indistinguishable from the model forgetting, so the row says what was
+        // replaced and what it cost.
+        //
+        // `content` is the divider's visible label and `compactSummary` sits
+        // behind its info button — the renderer in ChatMessageViews reads those
+        // two fields in that order, so a summary written only to `compactSummary`
+        // renders as a blank row.
         let row = ChatMessage(role: .compactDivider, content: "")
+        row.content = "Compacted \(outcome.range.shadowedSeqs.count) entries (\(Int(outcome.shrinkRatio * 100))% smaller)"
         row.compactSummary = """
-        DSH compaction: \(outcome.range.shadowedSeqs.count) earlier entries → 1 summary.
-        Context \(outcome.beforeTokens) → \(outcome.afterTokens) tokens (\(Int(outcome.shrinkRatio * 100))% smaller).
-        Retained tail: \(outcome.range.retainedTokenCount) tokens.
+        DSH compaction
+
+        Shadowed \(outcome.range.shadowedSeqs.count) earlier entries into one summary.
+        Context: \(outcome.beforeTokens) → \(outcome.afterTokens) tokens (\(Int(outcome.shrinkRatio * 100))% smaller)
+        Retained tail: \(outcome.range.retainedTokenCount) tokens
+        Summary writer: \(outcome.model) via \(outcome.provider)
         """
         row.systemIcon = "arrow.down.right.and.arrow.up.left"
         messages.append(row)

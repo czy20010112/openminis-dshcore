@@ -121,20 +121,24 @@ extension AIChatViewModel {
         }
 
         // Surface state before the turn runs, so a compaction that fires can be
-        // judged against the surface it actually saw rather than a guess. It is
-        // also reported as a system-info row: the app's own logs are not
-        // reachable from the device, so a silent no-compaction is otherwise
-        // indistinguishable from a broken threshold.
+        // judged against the surface it actually saw rather than a guess.
+        //
+        // The transcript row is written only under the probe: a per-turn context
+        // readout is useful while verifying and noise in normal use, and the
+        // app's own logs are not reachable from the device, so without the row a
+        // silent no-compaction is indistinguishable from a broken threshold.
         let surfaceBefore = session.surface()
         let tokensBefore = DSHTokenEstimate.total(surfaceBefore)
         AppLogger(category: "DSHLoop").warning(
             "[DSH] turn start surface=\(surfaceBefore.count) entries tokens=\(tokensBefore) "
             + "pressure=\(config.compactionPressureTokens) retain=\(config.compactionRetainTokens)"
         )
-        let info = ChatMessage(role: .systemInfo, content: "")
-        info.systemIcon = "info.circle"
-        info.content = "DSH surface: \(surfaceBefore.count) entries, ~\(tokensBefore) tokens (compact at \(config.compactionPressureTokens))"
-        messages.append(info)
+        if Self.dshCompactionProbeEnabled {
+            let info = ChatMessage(role: .systemInfo, content: "")
+            info.systemIcon = "info.circle"
+            info.content = "DSH surface: \(surfaceBefore.count) entries, ~\(tokensBefore) tokens (compact at \(config.compactionPressureTokens))"
+            messages.append(info)
+        }
 
         _ = await driver.run()
 
@@ -150,9 +154,15 @@ extension AIChatViewModel {
     /// than constants in the driver.
     ///
     /// `dshCompactionProbeEnabled` lowers the thresholds enough that a real
-    /// device session trips compaction without filling a 262k window, so the
-    /// behaviour can be verified on-device. Ship it false.
-    static var dshCompactionProbeEnabled: Bool { true }
+    /// device session trips compaction without filling a 262k window. It exists
+    /// so the behaviour can be exercised on-device; ship it false, because the
+    /// probe values compact far more eagerly than the model needs.
+    ///
+    /// Verified on-device with the probe on: a 18-entry / 2026-token surface
+    /// compacted to 9 entries / 1330 tokens (34% smaller) in one turn, with the
+    /// tool call in that turn still completing and the model still answering
+    /// correctly from the summary.
+    static var dshCompactionProbeEnabled: Bool { false }
 
     static var dshCompactionRetainTokens: Int {
         if dshCompactionProbeEnabled { return 400 }

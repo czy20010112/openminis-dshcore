@@ -195,6 +195,11 @@ public struct DSHCompactionOutcome: Sendable {
     public let beforeTokens: Int
     /// Tokens the surface holds after it.
     public let afterTokens: Int
+    /// The model that wrote the summary, recorded so "which model wrote this"
+    /// has a durable answer rather than being inferred from the provider route.
+    public let model: String
+    /// The provider route the summary came from.
+    public let provider: String
 
     public var shrinkRatio: Double {
         guard beforeTokens > 0 else { return 0 }
@@ -304,7 +309,9 @@ public enum DSHCompaction {
             summarySeq: summarySeq,
             range: range,
             beforeTokens: beforeTokens,
-            afterTokens: afterTokens
+            afterTokens: afterTokens,
+            model: model,
+            provider: provider
         ))
     }
 
