@@ -426,6 +426,21 @@ flowchart LR
 
 这两个都不是"挑错字段"级别的修复，而是要把一段内联在 8000 行文件里的执行逻辑抽出来。放在这里明确记账，不假装它已经一致。
 
+### 分页修复的真机验证
+
+`file_read` 的参数转发在 iPhone 13 / iOS 15.3.1 上实测过。一轮里让模型自己生成文件、再按范围读回：
+
+| 步骤 | 工具块实际输出 |
+|---|---|
+| `shell_execute` 生成 200 行文件 | `/root/paging.txt` → 1692 bytes / 201 lines |
+| `file_read`，`offset=100` + `lines=6` | `showing lines **100-105** of 201` |
+| `file_read`，`direction=tail` + `lines=3` | `showing lines **199-201** of 201` |
+
+修复前这两次读取都会返回 `showing lines 1-N of 201`——参数被适配器吞掉，schema 却还在对模型宣称可用。模型随后正确指出文件末尾多了一个空行，说明它读到的是真实的文件内容而不是记忆里的猜测。
+
+证据：`shots/dsh-fix-02-paging.jpg`。
+
+
 
 ---
 
