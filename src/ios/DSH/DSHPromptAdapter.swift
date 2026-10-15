@@ -138,9 +138,31 @@ extension AIChatViewModel {
         }
         let memoryStatus = memoryStatusFragment
         if !memoryStatus.isEmpty {
+            // The status line is authoritative and says the memory files "have
+            // been injected above". Registering it without the files made the
+            // prompt assert something that had not happened — the same kind of
+            // confident falsehood the honesty section forbids — so the two
+            // fragments below go in first, under the same toggle the legacy
+            // assembly used.
+            if memoryEnabled {
+                if let fragment = Self.loadGlobalMemoryFragment(), !fragment.isEmpty {
+                    disposers.append(prompt.section(DSHPromptSection(
+                        name: "minis:memory-global",
+                        order: DSHSectionOrder.memory.rawValue,
+                        text: fragment
+                    )))
+                }
+                if let fragment = Self.loadRecentDailyMemoryFragment(), !fragment.isEmpty {
+                    disposers.append(prompt.section(DSHPromptSection(
+                        name: "minis:memory-daily",
+                        order: DSHSectionOrder.memory.rawValue + 10,
+                        text: fragment
+                    )))
+                }
+            }
             disposers.append(prompt.section(DSHPromptSection(
                 name: "minis:memory-status",
-                order: DSHSectionOrder.memory.rawValue,
+                order: DSHSectionOrder.memory.rawValue + 20,
                 text: memoryStatus
             )))
         }
