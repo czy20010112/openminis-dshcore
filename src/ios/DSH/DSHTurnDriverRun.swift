@@ -429,7 +429,20 @@ extension AIChatViewModel {
     /// compacted to 9 entries / 1330 tokens (34% smaller) in one turn, with the
     /// tool call in that turn still completing and the model still answering
     /// correctly from the summary.
-    static var dshCompactionProbeEnabled: Bool { false }
+    ///
+    /// A compilation condition rather than a runtime flag, because runtime flags
+    /// do not survive this app: it registers its own defaults dictionary at
+    /// launch and rewrites the whole plist, so a key written from outside is
+    /// discarded. The workflow exposes it as a `compaction_probe` input, which is
+    /// how a compaction can be exercised without filling a 262k window — and
+    /// because it is off by default, a released build cannot carry it.
+    static var dshCompactionProbeEnabled: Bool {
+        #if DSH_COMPACTION_PROBE
+        return true
+        #else
+        return false
+        #endif
+    }
 
     static var dshCompactionRetainTokens: Int {
         if dshCompactionProbeEnabled { return 400 }

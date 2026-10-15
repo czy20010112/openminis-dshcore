@@ -41,6 +41,11 @@ on:
         required: false
         type: boolean
         default: true
+      compaction_probe:
+        description: 'TEST BUILD: lower the compaction thresholds (DSH_COMPACTION_PROBE). Never published — the probe makes the agent compact far more eagerly than it should.'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -67,6 +72,15 @@ jobs:
         with:
           submodules: recursive
           fetch-depth: 0
+
+      - name: Resolve probe suffix
+        run: |
+          if [ "${{ inputs.compaction_probe }}" = "true" ]; then
+            echo "PROBE_SUFFIX=-probe" >> $GITHUB_ENV
+            echo "::warning::compaction probe build — this IPA is not publishable"
+          else
+            echo "PROBE_SUFFIX=" >> $GITHUB_ENV
+          fi
 
       - name: Select Xcode
         run: |
@@ -138,7 +152,18 @@ jobs:
         run: bash .github/scripts/check-dsh-module.sh
 
       - name: Build iOS App (Release)
+        env:
+          DSH_PROBE: ${{ inputs.compaction_probe }}
         run: |
+          # A compilation condition, not a runtime flag: the app registers its own
+          # defaults at launch and rewrites the plist, so a key written from
+          # outside is discarded. Off unless explicitly asked for, and a probe
+          # build is renamed and never published.
+          EXTRA=()
+          if [ "$DSH_PROBE" = "true" ]; then
+            EXTRA+=("SWIFT_ACTIVE_COMPILATION_CONDITIONS=\$(inherited) DSH_COMPACTION_PROBE")
+            echo "::warning::compaction probe ON — this build is for testing only"
+          fi
           xcodebuild -project src/ios/Minis.xcodeproj \
             -scheme Minis \
             -configuration Release \
@@ -147,6 +172,7 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
+            "${EXTRA[@]}" \
             build
 
       - name: Package IPA
@@ -170,7 +196,7 @@ jobs:
           bash .github/scripts/adhoc-sign.sh "Payload/Minis.app" src/ios
 
           SHORT_SHA=$(git rev-parse --short HEAD)
-          OUT="Minis-DSH-ios15-unsigned.ipa"
+          OUT="Minis-DSH-ios15${PROBE_SUFFIX}-unsigned.ipa"
           zip -q -r9 "$OUT" Payload
           ls -lh "$OUT"
 
@@ -181,7 +207,7 @@ jobs:
             echo "base=zhaoxiufei/OpenMinis"
             echo "xcode=$(xcodebuild -version | head -n 1)"
             echo "sha=$(git rev-parse --short HEAD)"
-            echo "ipa=$(stat -f%z Minis-DSH-ios15-unsigned.ipa) bytes"
+            echo "ipa=$(stat -f%z Minis-DSH-ios15${PROBE_SUFFIX}-unsigned.ipa) bytes"
           } | tee build-report-ios15.txt
 
       - name: Upload IPA Artifact
@@ -189,7 +215,7 @@ jobs:
         with:
           name: Minis-DSH-ios15-ipa
           path: |
-            Minis-DSH-ios15-unsigned.ipa
+            Minis-DSH-ios15*-unsigned.ipa
             build-report-ios15.txt
           retention-days: 30
           if-no-files-found: error
@@ -222,6 +248,16 @@ jobs:
           ref: ios26
           submodules: recursive
           fetch-depth: 0
+
+      - name: Resolve probe suffix
+        if: steps.probe.outputs.exists == 'true'
+        run: |
+          if [ "${{ inputs.compaction_probe }}" = "true" ]; then
+            echo "PROBE_SUFFIX=-probe" >> $GITHUB_ENV
+            echo "::warning::compaction probe build — this IPA is not publishable"
+          else
+            echo "PROBE_SUFFIX=" >> $GITHUB_ENV
+          fi
 
       - name: Take the pipeline helpers from main
         if: steps.probe.outputs.exists == 'true'
@@ -337,7 +373,14 @@ jobs:
 
       - name: Build iOS App (Release)
         if: steps.probe.outputs.exists == 'true'
+        env:
+          DSH_PROBE: ${{ inputs.compaction_probe }}
         run: |
+          EXTRA=()
+          if [ "$DSH_PROBE" = "true" ]; then
+            EXTRA+=("SWIFT_ACTIVE_COMPILATION_CONDITIONS=\$(inherited) DSH_COMPACTION_PROBE")
+            echo "::warning::compaction probe ON — this build is for testing only"
+          fi
           xcodebuild -project src/ios/Minis.xcodeproj \
             -scheme Minis \
             -configuration Release \
@@ -346,6 +389,7 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
+            "${EXTRA[@]}" \
             build
 
       - name: Package IPA
@@ -368,7 +412,7 @@ jobs:
           bash "$CI_HELPERS/adhoc-sign.sh" "Payload/Minis.app" src/ios
 
           SHORT_SHA=$(git rev-parse --short HEAD)
-          OUT="Minis-DSH-ios26-unsigned.ipa"
+          OUT="Minis-DSH-ios26${PROBE_SUFFIX}-unsigned.ipa"
           zip -q -r9 "$OUT" Payload
           ls -lh "$OUT"
 
@@ -380,7 +424,7 @@ jobs:
             echo "base=OpenMinis/OpenMinis"
             echo "xcode=$(xcodebuild -version | head -n 1)"
             echo "sha=$(git rev-parse --short HEAD)"
-            echo "ipa=$(stat -f%z Minis-DSH-ios26-unsigned.ipa) bytes"
+            echo "ipa=$(stat -f%z Minis-DSH-ios26${PROBE_SUFFIX}-unsigned.ipa) bytes"
           } | tee build-report-ios26.txt
 
       - name: Upload IPA Artifact
@@ -389,7 +433,7 @@ jobs:
         with:
           name: Minis-DSH-ios26-ipa
           path: |
-            Minis-DSH-ios26-unsigned.ipa
+            Minis-DSH-ios26*-unsigned.ipa
             build-report-ios26.txt
           retention-days: 30
           if-no-files-found: error
@@ -401,7 +445,7 @@ jobs:
     name: Publish to GitHub Release
     needs: [build-ios15, build-ios26]
     runs-on: ubuntu-latest
-    if: always() && !cancelled() && (needs.build-ios15.result == 'success' || needs.build-ios26.result == 'success') && (github.event_name != 'workflow_dispatch' || inputs.create_release)
+    if: always() && !cancelled() && (needs.build-ios15.result == 'success' || needs.build-ios26.result == 'success') && (github.event_name != 'workflow_dispatch' || (inputs.create_release && !inputs.compaction_probe))
 
     steps:
       - name: Checkout repository
