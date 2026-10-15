@@ -117,7 +117,13 @@ extension AIChatViewModel {
 
     /// Compaction budgets. Deployment-varying values, so they are fields rather
     /// than constants in the driver.
-    static var dshCompactionRetainTokens: Int { 20_000 }
+    static var dshCompactionRetainTokens: Int {
+        if let override = UserDefaults.standard.object(forKey: "minis.dshCompactRetainOverride") as? Int,
+           override > 0 {
+            return override
+        }
+        return 20_000
+    }
 
     /// Pressure threshold for one model's context window.
     ///
