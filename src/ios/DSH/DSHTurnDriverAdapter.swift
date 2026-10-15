@@ -237,6 +237,29 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
 
     public func driver(_ driver: DSHTurnDriver, didReportUsage usage: DSHTokenUsage) {
         dshTurnUsage = usage
+
+        // Session token totals, which the legacy loop accumulated once per
+        // iteration. Without this the Session Token Usage sheet read 0 for the
+        // whole of every live DSH session — the numbers only appeared after a
+        // reload rebuilt them from the database rows — and "Context Used" read 0
+        // because the row's own `usage` was never stamped either.
+        sessionInputTokens += usage.inputTokens
+        sessionOutputTokens += usage.outputTokens
+        sessionCacheReadTokens += usage.cacheReadTokens ?? 0
+        sessionCacheWriteTokens += usage.cacheWriteTokens ?? 0
+
+        // Output speed is derived from streaming time, and the driver reports at
+        // the end of each step rather than reporting a duration, so the gap
+        // between reports is the closest available measurement. The first gap
+        // starts at the turn, which `runDSHTurn` records.
+        if usage.outputTokens > 0 {
+            let now = Date()
+            if let last = dshLastUsageAt {
+                sessionStreamDuration += now.timeIntervalSince(last)
+                sessionStreamOutputTokens += usage.outputTokens
+            }
+            dshLastUsageAt = now
+        }
     }
 
     public func driver(_ driver: DSHTurnDriver, didCompact outcome: DSHCompactionOutcome) {
@@ -295,6 +318,18 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
         AppLogger(category: "DSHLoop").error("[DSH] failure code=\(failure.code) \(failure.message)")
         dshFlushPendingText()
         dshSealStreamingTurn()
+
+        // Stop is a cancellation, not a failure.
+        //
+        // Cancelling the turn tears the provider stream down, and how that
+        // surfaces is up to the provider — it can arrive here as a stream error.
+        // The legacy loop's catch checks this same flag and runs the cancel
+        // cleanup instead of showing an error; without the check a user pressing
+        // Stop got an error banner for their own action.
+        if userDidCancel {
+            handleUserCancelledCleanup()
+            return
+        }
         reportTurnFailure(AIChatViewModel.friendlyErrorMessage(failure.message))
     }
 
@@ -343,6 +378,19 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
         if let seq = surface.last(where: { $0.message.role == .assistant })?.seq.value {
             messages[idx].dshSeq = seq
         }
+
+        // Stamp the turn's usage on the row.
+        //
+        // The legacy loop does this at the end of every turn, and
+        // `sessionTokenStats.context` reads it back out of the rows — so without
+        // it the sheet's "Context Used" was 0 for a live session and every
+        // per-row readout stayed blank until a reload merged usage from the
+        // database.
+        if let usage = dshTurnUsage {
+            messages[idx].usage = minisTokenUsage(usage)
+        }
+        dshLastUsageAt = nil
+
         publishUnlessTransitioning()
     }
 }

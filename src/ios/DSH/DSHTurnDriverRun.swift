@@ -203,8 +203,17 @@ extension AIChatViewModel {
         dshThinkingBlockIdx = -1
         dshTextBlockIdx = -1
         dshTurnToolEntries.removeAll()
+        dshLastUsageAt = Date()
         dshPendingReasoning = ""
         dshAssistantText = ""
+
+        // The one-hour prompt-cache patch.
+        //
+        // The legacy loop sets this at the top of every run, so on a DSH-only
+        // session the flag stayed false and the user's "enhanced cache" setting
+        // silently did nothing. It is a global switch on the HTTP client, so it
+        // has to be set before the first request of the turn.
+        RequestBodyPatcher.setExtendedCacheTTL(enhancedCacheEnabled)
 
         let registry = DSHToolRegistry()
         for tool in dshAgentRegistry(definitions: definitions, batchBudget: batchBudget) {
@@ -236,7 +245,20 @@ extension AIChatViewModel {
         let config = DSHTurnDriverConfig(
             maxParallelToolCalls: 4,
             maxStepsPerTurn: Self.maxAgentTurns,
-            maxTokens: provider.defaultMaxTokens,
+            // Resolved the way every legacy request resolves it: the user's
+            // per-model override wins, then the provider default, then the global
+            // ceiling — and the result is clamped to the window that is actually
+            // left, so a near-full context cannot ask for more output than fits.
+            //
+            // Passing `provider.defaultMaxTokens` straight through ignored the
+            // override entirely and dropped the clamp.
+            maxTokens: dynamicMaxTokens(
+                provider: provider,
+                model: entry.model,
+                lastContextTokens: dshTurnUsage.map {
+                    $0.inputTokens + ($0.cacheReadTokens ?? 0) + ($0.cacheWriteTokens ?? 0)
+                } ?? 0
+            ),
             // Resolved per conversation and clamped to the serving model — the
             // same resolution the original loop uses. Hardcoding `.off` in the
             // driver turned thinking off for every DSH turn, silently.
@@ -451,7 +473,10 @@ extension AIChatViewModel {
     }
 
     /// Map the driver's usage accounting onto the row type the store reads.
-    private func minisTokenUsage(_ usage: DSHTokenUsage) -> TokenUsage {
+    ///
+    /// Internal rather than private: the turn-sealing code that stamps a row's
+    /// usage lives in the adapter, and both need the same mapping.
+    func minisTokenUsage(_ usage: DSHTokenUsage) -> TokenUsage {
         var out = TokenUsage()
         out.inputTokens = usage.inputTokens
         out.outputTokens = usage.outputTokens

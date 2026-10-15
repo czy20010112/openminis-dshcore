@@ -2681,6 +2681,13 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
     /// placeholder for good.
     var dshTurnToolEntries: [(name: String, args: [String: Any])] = []
 
+    /// When the driver last reported usage.
+    ///
+    /// Seeded at turn start and advanced on every report, so the gaps between
+    /// them approximate streaming time for the output-speed readout. The driver
+    /// reports per step and does not report a duration.
+    var dshLastUsageAt: Date?
+
     /// Last time the reasoning buffer was flushed, for the adaptive throttle.
     var dshLastThinkingFlush = Date.distantPast
 
