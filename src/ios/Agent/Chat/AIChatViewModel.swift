@@ -2366,6 +2366,16 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
             case .ok:
                 break
             case .needsCompact:
+                if Self.useDSHAgentLoop {
+                    // The DSH turn measures its own surface and compacts before it
+                    // builds the request, so this gate has nothing left to do —
+                    // and its remedy would run the *legacy* compaction on a
+                    // conversation the DSH core owns, writing a second marker and
+                    // summarising a surface the driver is about to rewrite. Fall
+                    // through and let the turn manage its own context.
+                    logger.info("[Context] Near capacity — the DSH turn compacts before its request; sending")
+                    break
+                }
                 if sessionSource == "shortcut" || autoCompactEnabled {
                     // Shortcut sessions can't show UI prompts; auto-compact
                     // opt-in [T-chat-auto-compact-opt-in] rides the same
