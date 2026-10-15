@@ -105,6 +105,18 @@ extension AIChatViewModel {
         // session so the surface the driver builds includes it.
         syncAgentHistoryIntoSession(session)
 
+        // Append the pending user turn to the session rather than syncing it from
+        // agentHistory. The row `send()` appended carries no seq, so a sync would
+        // skip it and the driver would run a turn over a conversation that does
+        // not contain the user's own request.
+        //
+        // A row appended here is the newest surface entry, so it is the last
+        // assistant turn's context and the compaction target's recent tail.
+        if let last = agentHistory.last, last.role == .user, last.dshSeq == nil {
+            let seq = session.append(DSHSessionProjection.toDSHMessage(last), turn: nil)
+            last.dshSeq = seq
+        }
+
         // Surface state before the turn runs, so a compaction that fires can be
         // judged against the surface it actually saw rather than a guess. It is
         // also reported as a system-info row: the app's own logs are not
@@ -165,51 +177,56 @@ extension AIChatViewModel {
     ///
     /// Matching is by seq where available and by content otherwise, so a
     /// re-seeded session does not duplicate entries the UI already committed.
+    /// Rebuild agentHistory from the session surface.
+    ///
+    /// The session is the single source of truth, so the surface is projected
+    /// wholesale. The earlier version walked `agentHistory` and aligned by seq,
+    /// which silently kept every row that had no seq — most of them, because the
+    /// original loop's append paths never stamp one. Those stale rows then got
+    /// re-appended to the session on the next turn, so the conversation the
+    /// driver saw was a fraction of the conversation the UI showed: a 4.8k-char
+    /// message measured as 313 surface tokens, and compaction never fired.
+    ///
+    /// Only genuinely UI-only rows survive — dividers and info rows, which are
+    /// not conversation entries and are identified by role rather than by absence
+    /// of a seq.
+    private func dshReconcileFromSession(_ session: DSHSession) {
+        let surface = session.surface()
+
+        // UI-only rows are preserved in their existing order; they are
+        // presentation, not conversation, and the session must not own them.
+        let uiOnly = agentHistory.filter { Self.isUIPresentationRow($0) }
+
+        let projected = surface.map { DSHSessionProjection.toAgentMessage($0) }
+
+        // A compaction appends its summary as a surface entry, so a divider for
+        // it belongs in the UI list. It is added by the delegate callback, not
+        // here, to keep this function a pure projection.
+        agentHistory = uiOnly + projected
+    }
+
+    /// Whether a UI message is presentation rather than a conversation entry.
+    ///
+    /// Divider, info, and system-info rows are produced by the UI and have no
+    /// counterpart in the session. Everything else is conversation.
+    private static func isUIPresentationRow(_ message: AgentMessage) -> Bool {
+        // AgentMessage has no role for these — they are ChatMessage-level rows.
+        // agentHistory only ever holds conversation messages, so a row that
+        // carries no parts and no dshSeq is a leftover presentation row.
+        message.parts.isEmpty && message.dshSeq == nil
+    }
+
+    /// Append any agentHistory entries the session does not yet have.
+    ///
+    /// Only rows that carry a seq are considered; a row without one cannot be
+    /// deduplicated and would be re-appended on every turn.
     private func syncAgentHistoryIntoSession(_ session: DSHSession) {
         let surfaceSeqs = Set(session.surface().map { $0.seq.value })
         for message in agentHistory {
-            if let seq = message.dshSeq, surfaceSeqs.contains(seq) { continue }
+            guard let seq = message.dshSeq else { continue }
+            if surfaceSeqs.contains(seq) { continue }
             session.append(DSHSessionProjection.toDSHMessage(message), turn: nil)
         }
-    }
-
-    /// Rebuild agentHistory from the session surface, preserving UI-only rows.
-    ///
-    /// UI rows — dividers, status rows, queued placeholders — are not session
-    /// entries and must survive. Everything else is re-projected from the
-    /// surface, so a compaction's shadow is reflected without touching the
-    /// streaming target, which is found by seq.
-    private func dshReconcileFromSession(_ session: DSHSession) {
-        let surface = session.surface()
-        var rebuilt: [AgentMessage] = []
-
-        // Keep leading UI-only rows (dividers, info) that precede the first
-        // session-backed message.
-        var surfaceIndex = 0
-        for message in agentHistory {
-            if let seq = message.dshSeq {
-                // Consume surface entries up to and including this seq.
-                while surfaceIndex < surface.count, surface[surfaceIndex].seq.value != seq {
-                    surfaceIndex += 1
-                }
-                if surfaceIndex < surface.count {
-                    rebuilt.append(DSHSessionProjection.toAgentMessage(surface[surfaceIndex]))
-                    surfaceIndex += 1
-                }
-                continue
-            }
-            // UI-only row: preserve in place.
-            rebuilt.append(message)
-        }
-
-        // Append any surface entries the UI has not projected yet (a compaction
-        // summary, or entries committed after the last UI row).
-        while surfaceIndex < surface.count {
-            rebuilt.append(DSHSessionProjection.toAgentMessage(surface[surfaceIndex]))
-            surfaceIndex += 1
-        }
-
-        agentHistory = rebuilt
     }
 
     // MARK: - Text Flush
