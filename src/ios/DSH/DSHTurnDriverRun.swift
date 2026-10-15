@@ -73,6 +73,11 @@ extension AIChatViewModel {
             sessionId: sessionId,
             memoryEnabled: memoryEnabled
         )))
+        // The fragments the legacy assembly appended at its own call site: the
+        // model's capability and behaviour notes, the skill index, the MCP server
+        // list, and the authoritative memory state. Without them a DSH turn
+        // silently lost every one of those inputs.
+        disposers.append(contentsOf: dshRegisterContextSections(into: prompt))
         defer { for d in disposers { d() } }
 
         // A fresh assistant row for this turn, and its seq once the driver
@@ -209,6 +214,17 @@ extension AIChatViewModel {
                 break
             }
 
+            // A compaction summary is NOT persisted.
+            //
+            // It exists to shadow a range of earlier entries, and that shadowing
+            // lives only in the session. Writing the summary to the store would
+            // put it in the transcript beside the messages it replaces — the next
+            // launch seeds a fresh session from every row, so the model would see
+            // both. Losing the compaction is the honest failure: the conversation
+            // comes back whole, and the driver compacts again once the surface is
+            // under pressure.
+            if entry.shadows != nil { continue }
+
             let message = DSHSessionProjection.toAgentMessage(entry)
             // A reasoning-only or empty assistant turn has nothing to store, and
             // writing it would put a blank bubble in the transcript on reload.
@@ -309,12 +325,27 @@ extension AIChatViewModel {
     ///
     /// Only rows that carry a seq are considered; a row without one cannot be
     /// deduplicated and would be re-appended on every turn.
+    /// Absorb every `agentHistory` row the session does not already hold, and
+    /// stamp each absorbed row with the seq it landed on.
+    ///
+    /// Rows *without* a seq are absorbed too, and that is the point. The legacy
+    /// loop is still reachable — `retry()`, `resume()` and the message-level
+    /// reruns drive it — and nothing on that path stamps a seq. Skipping those
+    /// rows meant the reconcile that follows, which rebuilds `agentHistory` from
+    /// the surface, dropped them: the conversation on screen kept them, the
+    /// conversation the model was given did not.
+    ///
+    /// Stamping the seq back onto the row is what makes this idempotent. Membership
+    /// is tested against the whole log rather than the surface, because a
+    /// compacted entry is still in the log even though the surface no longer
+    /// shows it, and re-appending it would duplicate the conversation.
     private func syncAgentHistoryIntoSession(_ session: DSHSession) {
-        let surfaceSeqs = Set(session.surface().map { $0.seq.value })
-        for message in agentHistory {
-            guard let seq = message.dshSeq else { continue }
-            if surfaceSeqs.contains(seq) { continue }
-            session.append(DSHSessionProjection.toDSHMessage(message), turn: nil)
+        var knownSeqs = Set(session.allEntries().map { $0.seq.value })
+        for index in agentHistory.indices {
+            if let seq = agentHistory[index].dshSeq, knownSeqs.contains(seq) { continue }
+            let seq = session.append(DSHSessionProjection.toDSHMessage(agentHistory[index]), turn: nil)
+            agentHistory[index].dshSeq = seq.value
+            knownSeqs.insert(seq.value)
         }
     }
 

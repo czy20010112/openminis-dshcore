@@ -59,6 +59,40 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
         messages[idx].blocks = blocks
         dshPendingText += text
         dshMaybeFlushText()
+
+        // Streaming read-aloud, the same path the original loop uses: speak
+        // completed sentences as they arrive rather than the finished reply.
+        //
+        // `speakEnabled` is read live, not snapshotted at turn start, so turning
+        // read-replies on mid-reply takes effect on this turn. `feedDynamicTTS`
+        // re-checks whether speech is allowed at all, so when it is off this only
+        // advances the offset cheaply.
+        dshAssistantText += text
+        guard speakEnabled else { return }
+
+        if !dshHasStoppedPreviousTTS {
+            dshHasStoppedPreviousTTS = true
+            // Once per turn, not per iteration: this session's previous reply
+            // stops when new text actually arrives, and the flag is shared across
+            // the turn's steps so step N+1 appends behind step N instead of
+            // cutting it off.
+            if !hasClearedTTSForCurrentTurn {
+                hasClearedTTSForCurrentTurn = true
+                stopSpeechForThisSession()
+            }
+        }
+
+        let (sentences, newOffset) = extractNewSentences(
+            from: dshAssistantText, spokenOffset: dshSpokenTextOffset
+        )
+        guard !sentences.isEmpty else { return }
+        dshSpokenTextOffset = newOffset
+        // A newline between sentence units lets the dynamic window cut on a
+        // whole-sentence boundary, which keeps the timbre consistent across one
+        // synthesized batch.
+        if !dshPendingSpeakBuffer.isEmpty { dshPendingSpeakBuffer += "\n" }
+        dshPendingSpeakBuffer += sentences.joined(separator: "\n")
+        dshPendingSpeakBuffer = feedDynamicTTS(dshPendingSpeakBuffer, force: false)
     }
 
     public func driver(_ driver: DSHTurnDriver, didEmitReasoning text: String) {
@@ -266,6 +300,16 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
         }
         dshThinkingBlockIdx = -1
         dshPendingReasoning = ""
+
+        // Same for speech: the dynamic window holds a tail, and a turn that ends
+        // on one short sentence would otherwise never speak it.
+        if !dshPendingSpeakBuffer.isEmpty {
+            dshPendingSpeakBuffer = feedDynamicTTS(dshPendingSpeakBuffer, force: true)
+        }
+        dshPendingSpeakBuffer = ""
+        dshAssistantText = ""
+        dshSpokenTextOffset = 0
+        dshHasStoppedPreviousTTS = false
 
         for i in messages[idx].blocks.indices {
             switch messages[idx].blocks[i].toolStatus {

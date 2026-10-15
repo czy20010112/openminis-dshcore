@@ -92,6 +92,61 @@ extension AIChatViewModel {
         return text
     }
 
+    /// The context fragments the original assembly appended at the call site.
+    ///
+    /// These are registered as sections so they land at their declared order
+    /// inside the assembly, and so the DSH turn — which builds its own prompt
+    /// instead of calling `dshSystemPrompt` — gets them too. It did not, at
+    /// first: a turn driven by the DSH core was missing the model's own
+    /// capability and behaviour notes, the skill index, the MCP server list and
+    /// the authoritative memory state, all of which the legacy path kept.
+    ///
+    /// - Returns: the disposers, in registration order.
+    func dshRegisterContextSections(into prompt: DSHSystemPrompt) -> [() -> Void] {
+        var disposers: [() -> Void] = []
+        let model = selectedModel
+
+        if let fragment = model.capabilityPromptFragment, !fragment.isEmpty {
+            disposers.append(prompt.section(DSHPromptSection(
+                name: "minis:model-capability",
+                order: DSHSectionOrder.personaPrefix.rawValue + 10,
+                text: fragment
+            )))
+        }
+        if let fragment = model.agentBehaviorPromptFragment, !fragment.isEmpty {
+            disposers.append(prompt.section(DSHPromptSection(
+                name: "minis:model-behaviour",
+                order: DSHSectionOrder.personaPrefix.rawValue + 20,
+                text: fragment
+            )))
+        }
+        if let sid = sessionId,
+           let fragment = SkillStore.shared.skillPromptFragment(for: sid), !fragment.isEmpty {
+            disposers.append(prompt.section(DSHPromptSection(
+                name: "minis:skills",
+                order: DSHSectionOrder.skills.rawValue,
+                text: fragment
+            )))
+        }
+        if let sid = sessionId,
+           let fragment = MCPStore.shared.systemPromptSnippet(for: sid), !fragment.isEmpty {
+            disposers.append(prompt.section(DSHPromptSection(
+                name: "minis:mcp",
+                order: DSHSectionOrder.skills.rawValue + 10,
+                text: fragment
+            )))
+        }
+        let memoryStatus = memoryStatusFragment
+        if !memoryStatus.isEmpty {
+            disposers.append(prompt.section(DSHPromptSection(
+                name: "minis:memory-status",
+                order: DSHSectionOrder.memory.rawValue,
+                text: memoryStatus
+            )))
+        }
+        return disposers
+    }
+
     /// Sandbox root the DSH runtime context reports.
     static var dshSandboxRoot: String { "/var/minis" }
 }

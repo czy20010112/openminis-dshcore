@@ -420,9 +420,9 @@ flowchart LR
     H --> I["DSHSessionProjection<br/>→ AgentContentPart.toolResult"]
 ```
 
-### 同一轮补齐的另外六个缺陷
+### 同一轮补齐的另外七个缺陷
 
-这六个都是"验证 agent 全部能力"时才暴露出来的，不是顺手看到的：
+这七个都是"验证 agent 全部能力"时才暴露出来的，不是顺手看到的：
 
 **① 完全没有持久化。** `src/ios/DSH/` 里没有任何 `persistAgentMessage` 调用。DSH 模式下助手回复和工具结果**从不写进数据库**——屏幕上好好的，下次启动就没了，因为转录是从数据库重建的。现在每轮结束把本轮追加的条目写库（带本轮工具快照），并把数据库 id 回填到行上。
 
@@ -435,6 +435,8 @@ flowchart LR
 **⑤ `willRunTool` 是死线。** `DSHToolScheduler.runCall` **从不调用**它——委托里有这个方法，但没有任何地方触发。也就是说工具块一直是 `dshRenderToolResult` 在结果落地时兜底建的 `.info` 块，从来没有工具自己的表头。改成由驱动在派发**之前**统一宣告每个调用（也让被 guard 拒绝的调用有个像样的块）。这个缺陷原来不可见，直到执行器开始按 call id 找块，它立刻变成每个工具都报 `no transcript block for call_...`，模型只好无限重试（设备上跑到 89 次）。
 
 **⑥ 思考块从不渲染。** `didEmitReasoning` 只往 `dshPendingReasoning` 里累加，没有任何地方读它。现在按原实现的形状做：每段连续推理自成一个 `.thinking` 块、按到达顺序交错、用自适应节流刷到 `content`，收尾时强制冲刷尾部。
+
+**⑦ 朗读（TTS）从不触发。** 原 loop 是**边流边读**——每凑齐一个完整句子就交给动态窗口合成。DSH 驱动自己消费流，于是 `extractNewSentences` / `feedDynamicTTS` / `stopSpeechForThisSession` 一次都没被调用，开着"朗读回复"也没有声音。现在在 `didEmitText` 里接回同一条路径（`speakEnabled` 实时读取而非回合开始快照，本会话上一轮朗读只在真的有新文本时才被打断），收尾时 `force: true` 冲刷尾部。
 
 
 ### 分页修复的真机验证
