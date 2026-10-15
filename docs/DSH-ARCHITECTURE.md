@@ -421,6 +421,13 @@ public func truncate(after seq: DSHSeq?) -> Int
 | `retryFromMessage` / `retryFromToolBlock` | 那条消息的 `dshSeq`；会话不认识该行时退回"最后一条 user" |
 | `send` / `drainQueued` | 不截断（用户消息已追加在末尾） |
 
+### 还有一处：发送前的上下文闸门
+
+`send()` 在派发前会查一次上下文，它对 `.needsCompact` 的处置是原版 `compactAndSend()`——**这是原版内核还能接管 DSH 对话的最后一处**。它会在 DSH 驱动的表面上再写一个 marker、再做一次摘要，而驱动下一瞬间要重写这个表面。
+
+DSH 回合本来就在构造请求前按 80% 窗口自查自压，所以闸门在这里无事可做：现在它只记日志并继续发送。`.exhausted` 的提示保留——那是"整个请求都装不下"，与由谁压缩无关，驱动无法自愈，用户需要知道，这正是你担心的"重启后直接报错"的场景。
+
+
 ---
 
 ## 5.7 怎么验证压缩（探针是构建输入）
