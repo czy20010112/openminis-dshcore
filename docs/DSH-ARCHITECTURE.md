@@ -738,13 +738,14 @@ flowchart TB
 | `maxTokens` 绕过 `dynamicMaxTokens` | 用户在单个模型上设的「最大输出」被忽略；请求也不再按**剩余窗口**夹住——上下文接近满时会要一个装不下的输出量 | 走原循环同一个 `dynamicMaxTokens(provider:model:lastContextTokens:)` |
 | 增强缓存开关无效 | `RequestBodyPatcher.setExtendedCacheTTL` 只在原循环开头设置，DSH-only 会话里标志一直是 false，用户那个开关**静默无效** | 回合开头设置 |
 | 停止变成报错 | 取消会拆掉 provider 流，怎么表现出来取决于 provider——可能以流错误到达；`didFail` 无条件报错，于是**用户按「停止」得到一条错误横幅** | `didFail` 先看 `userDidCancel`，走取消清理（与原循环 catch 同规则） |
+| 瞬态流错误不重试 | `streamWithAutoRetry` 只在原循环里。一次 5xx/网络抖动，或紧跟工具结果后的空回复，现在直接以错误横幅结束回合，而原来会静默恢复 | 驱动侧加退避重试：策略以**数据 + 委托回调**传入（`streamRetryDelays` + 两个回调），不用闭包——config 是 `Sendable`，`@Sendable` 闭包回调进 main-actor view model 每次都要重新隔离。判据沿用 `LLMError.isRetryable`，倒计时接回原版 banner 读的同一对状态；退避期间取消按 `.cancelled` 收尾，Stop 仍然有效 |
 
 ### 未修
 
 | 缺口 | 后果 | 为什么先不做 |
 |---|---|---|
 | **group fallback** | 主成员限流/故障时直接失败报错，而不是静默换备。**文档曾错写成"仍保留"**——已在 §7 与 `DSH/README.md` 更正 | 需要第二个 provider 才能实测；不测就上一个改了主流程的功能不可取 |
-| 瞬态错误不重试 | `streamWithAutoRetry` 只在原循环里。一次 5xx/网络抖动，或紧跟工具结果后的空回复，现在直接以错误横幅结束回合，而原来会静默恢复 | 需要在驱动里加"空回复提醒 + 单次重试"，同样属于主流程改动 |
+| 空回复提醒（重试的另一半） | 原循环在"紧跟工具结果却回了空内容"时，会往最后一条工具结果里注入 `<system-reminder>` 再跑一轮。**重试本身已修**（见上表），这一半没做——那种情况下模型仍会以空回复结束回合 | 需要在会话里做注入，且不好稳定复现，留待有把握时再动 |
 | 旧图片不驱逐 | `trimOldImagesFromHistory()` 只在原循环每次迭代调用，DSH 表面上的历史图片会一直重发。**但影响有上限**：DSH 压缩在窗口 80% 时会连图片一起摘掉 | 会话是 append-only，真要驱逐得走压缩式的重写；现有压缩已经兜住"无界增长"这一半 |
 | 后台授权到期不挂起 | `waitIfBackgroundSuspended()` 只在原循环里，后台跑长回合可能在授权过期后继续发请求被杀 | 设备实测 DSH 回合能跨前后台完成（§T3-07），先记录 |
 | 浏览器接管不挂起 | 工具级的 `waitForMidActionTakeover` 仍在（`executeSingleToolUse` 内），但它在**动作已经执行之后**才生效；步骤之间开始的接管不会被拦住 | 同上 |
