@@ -385,6 +385,48 @@ flowchart LR
 
 一点关键：**handler 一行没改。** `DSHToolHandlerImpl.swift` 里的 `dshRunShell` / `dshReadFile` / `dshWriteFile` / `dshEditFile` / `dshReadImage` / `dshWriteMemory` / `dshGetMemory` 只是把 `AIChatViewModel` 既有的能力包成 `DSHToolExecutionResult`。所以"工具的行为"与"工具的声明"第一次分开了：改 schema 在 `DSHMinisTools.swift`，改行为在 `DSHToolHandlerImpl.swift`。
 
+### 工具面一致性：两条不变量
+
+把调度换掉、把工具实现留下，就意味着**任何一处清单或参数的分歧，都是模型手里凭空少掉的能力**。所以这里有两条硬规则：
+
+**规则一：注册与门控必须逐字对照 `makeAgentTools()`。** 少注册一个工具，或把门控写窄一点，模型就再也看不到它，而且没有任何报错。
+
+| 工具 | 门控 | 出处 |
+|---|---|---|
+| `shell_execute` / `file_read` / `file_write` / `file_edit` | 总是注册 | 两边一致 |
+| `read_image` | `activeModelHasNativeVision \|\| VisionGroupResolver.isConfigured` | `[T-ios-vision-group #182]` |
+| `memory_write` / `memory_get` | `memoryEnabled` | `[T-memory-toggle-gates-injection-and-tools-ios]` |
+| `browser_use` | `Self.toolEnabled(.browser)` | **尚未迁移，见下** |
+
+`isConfigured` 必须在 `||` **之前**求值：短路会跳过这次读取，而这次读取正是维持 `isConfiguredCached` 镜像新鲜的来源（离屏占位构造依赖它）。
+
+**规则二：handler 必须把整个参数字典转发下去，不能只挑自己认识的字段。**
+
+Minis 的工具实现本来就是围绕"模型的原始 JSON"写的（`executeFileRead(from:)`、`executeFileWrite(from:)`、`executeMemoryWrite(from:)`），所以原样重序列化既是最短的适配器，也是唯一不会丢参数的适配器。这里踩过的坑很典型：适配器读了 `path` 就把 `file_read` 交给实现，`offset` / `lines` / `direction` / `max_length` 全部被丢弃——schema 还在对模型宣称这些参数可用，而大文件翻页已经不能用了。`file_write` 的 `create_dirs`、`shell_execute` 的 `delay` 同理。
+
+**工具结果不只是文本。** `read_image` 给模型的是图片，`browser_use` 给的是页面截图加落地 URL。这些字节挂在 **tool_result 这个 part 自己身上**（和原实现一致），不是单独一条消息——所以 `DSHToolResultBlock` 与 `DSHToolExecutionResult` 都带 `imageData` / `imageMimeType` / `pageURL` / `imageLinuxPath`，驱动在提交时写进去，投影时读出来。曾经这里被硬编码成 `nil`，结果是 `read_image` 只回一句"图片 12 KB"，模型根本看不到图。
+
+```mermaid
+flowchart LR
+    A["工具参数 JSON<br/>（模型原样给出）"] --> B["DSHTool.body"]
+    B --> C["dshToolArgumentsJSON(args)<br/>整份转发"]
+    C --> D["executeFileRead / Write / Edit<br/>executeMemoryWrite / Get<br/>executeCommand"]
+    D --> E["DSHToolExecutionResult<br/>content + imageData + pageURL"]
+    E --> F["DSHTurnDriver.commitResult"]
+    F --> G["DSHToolResultBlock<br/>（带图）"]
+    G --> H["DSHSessionProjection<br/>→ AgentContentPart.toolResult<br/>imageData 原样带上"]
+```
+
+### 尚未迁移的工具（已知缺口）
+
+| 工具 | 影响 | 成本 |
+|---|---|---|
+| `browser_use` | DSH 模式下模型看不到浏览器工具 | 其 handler 内联在 `executeSingleToolUse` 里（含接管、下载上报、截图落盘），要迁移得先把那段抽成可复用函数 |
+| `delegate` / 子代理工具（仅 iOS 26 线） | v1.14 新增的 `[T-sub-agents-v1]` 委派能力在 DSH 模式下不可用 | 需要新增 schema、`DSHToolBlockKind` 映射与 handler |
+
+这两个都不是"挑错字段"级别的修复，而是要把一段内联在 8000 行文件里的执行逻辑抽出来。放在这里明确记账，不假装它已经一致。
+
+
 ---
 
 ## 8. 文件清单与职责
