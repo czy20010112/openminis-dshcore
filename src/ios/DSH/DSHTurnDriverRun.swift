@@ -255,9 +255,9 @@ extension AIChatViewModel {
             maxTokens: dynamicMaxTokens(
                 provider: provider,
                 model: entry.model,
-                lastContextTokens: dshTurnUsage.map {
-                    $0.inputTokens + ($0.cacheReadTokens ?? 0) + ($0.cacheWriteTokens ?? 0)
-                } ?? 0
+                lastContextTokens: dshTurnUsage.inputTokens
+                    + (dshTurnUsage.cacheReadTokens ?? 0)
+                    + (dshTurnUsage.cacheWriteTokens ?? 0)
             ),
             // Resolved per conversation and clamped to the serving model — the
             // same resolution the original loop uses. Hardcoding `.off` in the

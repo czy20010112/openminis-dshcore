@@ -385,9 +385,10 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
         // `sessionTokenStats.context` reads it back out of the rows — so without
         // it the sheet's "Context Used" was 0 for a live session and every
         // per-row readout stayed blank until a reload merged usage from the
-        // database.
-        if let usage = dshTurnUsage {
-            messages[idx].usage = minisTokenUsage(usage)
+        // database. `dshTurnUsage` is a value type with a zero default, so this
+        // only stamps when the driver actually reported something.
+        if dshTurnUsage.inputTokens > 0 || dshTurnUsage.outputTokens > 0 {
+            messages[idx].usage = minisTokenUsage(dshTurnUsage)
         }
         dshLastUsageAt = nil
 
