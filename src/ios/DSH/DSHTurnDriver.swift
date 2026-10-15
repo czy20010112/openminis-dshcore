@@ -69,6 +69,10 @@ public protocol DSHTurnDriverDelegate: AnyObject {
     func driver(_ driver: DSHTurnDriver, didEndTurn reason: DSHTurnEndReason)
     /// The turn failed.
     func driver(_ driver: DSHTurnDriver, didFail failure: DSHFailure)
+    /// Opening the stream failed with a retryable error and will be retried.
+    func driver(_ driver: DSHTurnDriver, willRetryStreamAfter error: Error, attempt: Int, seconds: Int)
+    /// Countdown tick for a pending stream retry. `0` means the stream opened.
+    func driver(_ driver: DSHTurnDriver, streamRetryCountdown seconds: Int)
 }
 
 // MARK: - Configuration
@@ -104,6 +108,19 @@ public struct DSHTurnDriverConfig: Sendable {
     /// lexicographic order.
     public var toolOrder: [String]?
 
+    /// Backoff before retrying a retryable stream failure. Empty disables retry.
+    ///
+    /// The driver owns the loop and the host owns transport policy, but the
+    /// policy is passed as data plus delegate callbacks rather than a closure:
+    /// this config is `Sendable`, and a `@Sendable` closure reaching back into a
+    /// main-actor view model would have to be re-isolated on every call.
+    ///
+    /// Retry exists because the legacy loop had it: `streamWithAutoRetry` waits
+    /// these same five delays out on `LLMError.isRetryable` (network, 5xx) and
+    /// shows a countdown. Without it a two-second network blip ended the turn
+    /// with an error banner where the app previously recovered invisibly.
+    public var streamRetryDelays: [Int]
+
     public init(
         maxParallelToolCalls: Int = 4,
         maxStepsPerTurn: Int = 200,
@@ -115,7 +132,8 @@ public struct DSHTurnDriverConfig: Sendable {
         compactionRetainTokens: Int = 20_000,
         compactionPressureTokens: Int = 120_000,
         autoCompactionEnabled: Bool = true,
-        toolOrder: [String]? = nil
+        toolOrder: [String]? = nil,
+        streamRetryDelays: [Int] = [3, 5, 10, 15, 30]
     ) {
         self.maxParallelToolCalls = max(1, maxParallelToolCalls)
         self.maxStepsPerTurn = max(1, maxStepsPerTurn)
@@ -128,6 +146,7 @@ public struct DSHTurnDriverConfig: Sendable {
         self.compactionPressureTokens = max(1, compactionPressureTokens)
         self.autoCompactionEnabled = autoCompactionEnabled
         self.toolOrder = toolOrder
+        self.streamRetryDelays = streamRetryDelays.filter { $0 > 0 }
     }
 }
 
@@ -231,19 +250,53 @@ public final class DSHTurnDriver {
             let request = buildRequest()
 
             let stream: AsyncThrowingStream<AgentStreamEvent, Error>
-            do {
-                stream = try await provider.streamAgentMessageClamped(
-                    messages: request.messages,
-                    systemPrompt: request.systemPrompt,
-                    tools: request.tools,
-                    maxTokens: request.maxTokens,
-                    thinkingLevel: request.thinkingLevel
-                )
-            } catch {
-                let failure = error as? DSHFailure
-                    ?? DSHFailure(message: String(describing: error), code: "PROVIDER_ERROR")
-                delegate?.driver(self, didFail: failure)
-                return .cancelled
+            //
+            // Retryable transport failures are retried with the host's backoff
+            // before the turn is allowed to fail. `LLMError.isRetryable` is the
+            // same predicate the legacy loop retried on, so a network blip or a
+            // 5xx recovers here instead of ending the turn with an error banner.
+            var retryAttempt = 0
+            while true {
+                do {
+                    stream = try await provider.streamAgentMessageClamped(
+                        messages: request.messages,
+                        systemPrompt: request.systemPrompt,
+                        tools: request.tools,
+                        maxTokens: request.maxTokens,
+                        thinkingLevel: request.thinkingLevel
+                    )
+                    // Tell the host the stream is open, so it can clear the
+                    // countdown and the error it showed on the row.
+                    delegate?.driver(self, streamRetryCountdown: 0)
+                    break
+                } catch let error as LLMError
+                    where error.isRetryable && retryAttempt < config.streamRetryDelays.count {
+                    retryAttempt += 1
+                    let seconds = config.streamRetryDelays[retryAttempt - 1]
+                    delegate?.driver(
+                        self,
+                        willRetryStreamAfter: error,
+                        attempt: retryAttempt,
+                        seconds: seconds
+                    )
+                    do {
+                        for remaining in stride(from: seconds, through: 1, by: -1) {
+                            delegate?.driver(self, streamRetryCountdown: remaining)
+                            try await Task.sleep(nanoseconds: 1_000_000_000)
+                        }
+                    } catch {
+                        // Cancelled during the backoff — Stop, or session teardown.
+                        delegate?.driver(self, streamRetryCountdown: 0)
+                        delegate?.driver(self, didEndTurn: .cancelled)
+                        return .cancelled
+                    }
+                    continue
+                } catch {
+                    let failure = error as? DSHFailure
+                        ?? DSHFailure(message: String(describing: error), code: "PROVIDER_ERROR")
+                    delegate?.driver(self, didFail: failure)
+                    return .cancelled
+                }
             }
 
             var assistantParts: [DSHContentBlock] = []
