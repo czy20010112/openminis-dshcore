@@ -20,7 +20,23 @@
 
 set -euo pipefail
 
-cd "$(dirname "$0")/../.."
+# Resolve the repository root without assuming this script lives inside the tree.
+# The iOS 26 job copies the helpers to $RUNNER_TEMP, so `dirname "$0"` points
+# outside the checkout there and a relative walk would inspect an empty
+# directory — which reads as "every DSH file is missing".
+ROOT="${GITHUB_WORKSPACE:-}"
+if [ -z "$ROOT" ] || [ ! -d "$ROOT/src/ios" ]; then
+  ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+fi
+if [ -z "$ROOT" ] || [ ! -d "$ROOT/src/ios" ]; then
+  ROOT="$(cd "$(dirname "$0")/../.." 2>/dev/null && pwd || true)"
+fi
+if [ -z "$ROOT" ] || [ ! -d "$ROOT/src/ios" ]; then
+  echo "ERROR: cannot locate the repository root (tried GITHUB_WORKSPACE='${GITHUB_WORKSPACE:-}', git, and '$0')" >&2
+  exit 1
+fi
+cd "$ROOT"
+echo "repository root: $ROOT"
 
 PBX="src/ios/Minis.xcodeproj/project.pbxproj"
 GROUP_ID="D5A1000100000000000000D51"
