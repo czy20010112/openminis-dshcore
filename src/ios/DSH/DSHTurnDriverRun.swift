@@ -276,7 +276,10 @@ extension AIChatViewModel {
             // to a token count and compaction fires there instead. Leave it unset
             // in normal use.
             compactionPressureTokens: Self.dshCompactionPressureTokens(for: entry.model),
-            autoCompactionEnabled: true
+            autoCompactionEnabled: true,
+            // The same backoff the legacy loop waits out on a retryable stream
+            // failure, so the two paths recover from a network blip alike.
+            streamRetryDelays: Self.retryDelays
         )
 
         let driver = DSHTurnDriver(

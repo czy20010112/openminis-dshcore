@@ -20,8 +20,15 @@ A Swift port of the DeepSeek Harness agent framework core, wired into Minis.
 | Turn driving | available | `DSHTurnDriver` — full replacement loop, not yet wired into the UI |
 
 Retained from OpenMinis: streaming presentation, persistence, image budgeting,
-group fallback, TTS, and the UI. These are deeply coupled to UIKit and to the
+TTS, and the UI. These are deeply coupled to UIKit and to the
 existing `ChatStore`, and the DSH port has no equivalent to replace them with.
+
+NOT retained, despite what this file said until an audit caught it: **group
+fallback**. The legacy loop catches a fallbackable provider error inside itself,
+advances to the next member of the model group, rebuilds the prompt and inserts a
+"switched to X" row. The driver talks only to the provider it was constructed
+with, so a rate-limited or broken primary fails the turn instead of silently
+advancing. See the known-gaps section of `docs/DSH-ARCHITECTURE.md`.
 
 ## Files
 
@@ -144,8 +151,9 @@ on `AIChatViewModel.useDSHAgentLoop` (default true) so the original loop is
 still reachable for A/B comparison.
 
 The driver owns the five core segments. `AIChatViewModel` keeps streaming
-presentation, persistence, image budgeting, group fallback, queued prompts,
-cancel cleanup, TTS, and the UI.
+presentation, persistence, image budgeting, queued prompts,
+cancel cleanup, TTS, and the UI — but **not** group fallback: that one is a
+genuine gap, not a retained part.
 
 Identity: `ChatMessage.dshSeq` carries the session seq the row was projected
 from, so the streaming target is resolved by seq rather than by array index.

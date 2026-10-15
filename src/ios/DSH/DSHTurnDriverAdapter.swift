@@ -333,6 +333,32 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
         reportTurnFailure(AIChatViewModel.friendlyErrorMessage(failure.message))
     }
 
+    public func driver(_ driver: DSHTurnDriver, willRetryStreamAfter error: Error, attempt: Int, seconds: Int) {
+        // Same feedback the legacy loop gives during its retry countdown: the
+        // attempt number drives the "retrying in Ns" banner and the row shows
+        // why the request did not go through.
+        autoRetryAttempt = attempt
+        if dshStreamingMsgIdx >= 0, dshStreamingMsgIdx < messages.count {
+            let desc = (error as? LocalizedError)?.errorDescription ?? String(describing: error)
+            messages[dshStreamingMsgIdx].error = desc
+            publishUnlessTransitioning()
+        }
+        AppLogger(category: "DSHLoop").warning(
+            "[DSH] retryable stream failure (\(error)) — attempt \(attempt) in \(seconds)s"
+        )
+    }
+
+    public func driver(_ driver: DSHTurnDriver, streamRetryCountdown seconds: Int) {
+        autoRetryCountdown = seconds
+        guard seconds == 0 else { return }
+        // The stream opened: clear the countdown and whatever the retry wrote
+        // onto the row.
+        autoRetryAttempt = 0
+        if dshStreamingMsgIdx >= 0, dshStreamingMsgIdx < messages.count {
+            messages[dshStreamingMsgIdx].error = nil
+        }
+    }
+
     // MARK: - Turn Sealing
 
     /// Close out the streaming assistant row: clear the awaiting flag, stamp
