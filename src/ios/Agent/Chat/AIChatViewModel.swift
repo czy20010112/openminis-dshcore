@@ -2673,6 +2673,14 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
     /// before and after a tool call are two different blocks.
     var dshTextBlockIdx: Int = -1
 
+    /// This turn's tool calls, as (name, arguments).
+    ///
+    /// Handed to `generateSessionTitleIfNeeded` when the turn ends. The legacy
+    /// loop generated the session title right after the first stream completed;
+    /// nothing in the DSH turn did, so every conversation kept the "New Chat"
+    /// placeholder for good.
+    var dshTurnToolEntries: [(name: String, args: [String: Any])] = []
+
     /// Last time the reasoning buffer was flushed, for the adaptive throttle.
     var dshLastThinkingFlush = Date.distantPast
 
