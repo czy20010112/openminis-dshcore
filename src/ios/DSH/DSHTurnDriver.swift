@@ -81,6 +81,13 @@ public struct DSHTurnDriverConfig: Sendable {
     public var maxStepsPerTurn: Int
     /// Maximum tokens for one model response.
     public var maxTokens: Int
+    /// Extended-thinking level for this conversation.
+    ///
+    /// Resolved by the caller from the session's inference config and clamped to
+    /// what the serving model accepts. It is a field rather than a constant
+    /// because hardcoding `.off` here turned thinking off for every DSH turn —
+    /// silently, and for models whose whole point is reasoning.
+    public var thinkingLevel: ThinkingLevel
     /// Whether loop guards run before each tool call.
     public var enableLoopGuard: Bool
     /// Loop-guard warning threshold (repeated identical calls).
@@ -101,6 +108,7 @@ public struct DSHTurnDriverConfig: Sendable {
         maxParallelToolCalls: Int = 4,
         maxStepsPerTurn: Int = 200,
         maxTokens: Int = 32_000,
+        thinkingLevel: ThinkingLevel = .off,
         enableLoopGuard: Bool = true,
         loopWarningThreshold: Int = 10,
         loopCriticalThreshold: Int = 20,
@@ -506,7 +514,7 @@ public final class DSHTurnDriver {
             systemPrompt: systemPrompt.isEmpty ? nil : systemPrompt,
             tools: schemas.map(DSHToolSchemaBridge.toAgentToolDefinition),
             maxTokens: config.maxTokens,
-            thinkingLevel: .off
+            thinkingLevel: config.thinkingLevel
         )
     }
 
