@@ -112,9 +112,12 @@ extension AIChatViewModel {
         //
         // A row appended here is the newest surface entry, so it is the last
         // assistant turn's context and the compaction target's recent tail.
-        if let last = agentHistory.last, last.role == .user, last.dshSeq == nil {
-            let seq = session.append(DSHSessionProjection.toDSHMessage(last), turn: nil)
-            last.dshSeq = seq
+        if let lastIndex = agentHistory.indices.last,
+           agentHistory[lastIndex].role == .user,
+           agentHistory[lastIndex].dshSeq == nil {
+            let row = agentHistory[lastIndex]
+            let seq = session.append(DSHSessionProjection.toDSHMessage(row), turn: nil)
+            agentHistory[lastIndex].dshSeq = seq.value
         }
 
         // Surface state before the turn runs, so a compaction that fires can be
@@ -191,29 +194,7 @@ extension AIChatViewModel {
     /// not conversation entries and are identified by role rather than by absence
     /// of a seq.
     private func dshReconcileFromSession(_ session: DSHSession) {
-        let surface = session.surface()
-
-        // UI-only rows are preserved in their existing order; they are
-        // presentation, not conversation, and the session must not own them.
-        let uiOnly = agentHistory.filter { Self.isUIPresentationRow($0) }
-
-        let projected = surface.map { DSHSessionProjection.toAgentMessage($0) }
-
-        // A compaction appends its summary as a surface entry, so a divider for
-        // it belongs in the UI list. It is added by the delegate callback, not
-        // here, to keep this function a pure projection.
-        agentHistory = uiOnly + projected
-    }
-
-    /// Whether a UI message is presentation rather than a conversation entry.
-    ///
-    /// Divider, info, and system-info rows are produced by the UI and have no
-    /// counterpart in the session. Everything else is conversation.
-    private static func isUIPresentationRow(_ message: AgentMessage) -> Bool {
-        // AgentMessage has no role for these — they are ChatMessage-level rows.
-        // agentHistory only ever holds conversation messages, so a row that
-        // carries no parts and no dshSeq is a leftover presentation row.
-        message.parts.isEmpty && message.dshSeq == nil
+        agentHistory = session.surface().map { DSHSessionProjection.toAgentMessage($0) }
     }
 
     /// Append any agentHistory entries the session does not yet have.
