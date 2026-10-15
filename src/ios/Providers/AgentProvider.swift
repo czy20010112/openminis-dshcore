@@ -219,6 +219,17 @@ struct AgentMessage: @unchecked Sendable {
     /// via id instead of sort_order. nil while the message is still in-flight
     /// (e.g. mid-stream before persist).
     var dbMessageId: String? = nil
+    /// Session-log seq this message was projected from.
+    ///
+    /// Set when the DSH agent core owns the conversation. nil for a message that
+    /// exists only in the UI — a streaming placeholder not yet committed to the
+    /// session. Once stamped it never changes, so a rebuild of the messages array
+    /// (iCloud reload, compaction divider insert, user delete) is reconciled by
+    /// seq rather than by index.
+    ///
+    /// This replaces the index-resync patches: the driver addresses entries by
+    /// seq, and the UI can always recover the seq of any message it holds.
+    var dshSeq: Int? = nil
 }
 
 // MARK: - Stream Events

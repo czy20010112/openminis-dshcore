@@ -2621,6 +2621,43 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
     /// Unified conversation history used by both Anthropic and Gemini agent loops.
     var agentHistory: [AgentMessage] = []
 
+    // MARK: - DSH Agent Core State
+
+    /// The append-only session the DSH turn driver owns.
+    ///
+    /// Seeded from `agentHistory` on first access, so a session restored from
+    /// persistence is driven without a separate load path. Never reset by the
+    /// loop: the driver holds seqs into it, and discarding them would
+    /// reintroduce the index-drift defect this core exists to remove.
+    var dshSession: DSHSession?
+
+    /// Index of the assistant message the driver is streaming into, or -1 when
+    /// no turn is streaming.
+    ///
+    /// Resolved by seq before use. The driver commits each assistant entry to
+    /// the session, so the UI entry carrying that seq is the streaming target
+    /// regardless of how the array was rebuilt meanwhile.
+    var dshStreamingMsgIdx: Int = -1
+
+    /// Text awaiting a throttled flush onto the streaming block.
+    var dshPendingText = ""
+
+    /// Reasoning text awaiting delivery to the thinking block.
+    var dshPendingReasoning = ""
+
+    /// Tool results the driver settled, keyed by call id, waiting to be rendered
+    /// onto their UI blocks.
+    var dshPendingToolResults: [String: DSHToolExecutionResult] = [:]
+
+    /// Usage reported by the driver for the current turn.
+    var dshTurnUsage = DSHTokenUsage()
+
+    /// The most recent compaction, for diagnostics and the UI divider.
+    var dshLastCompaction: DSHCompactionOutcome?
+
+    /// Last time `dshPendingText` was flushed, for the tiered throttle.
+    var dshLastTextFlush = Date.distantPast
+
     #if DEBUG
     /// [T-ios-log-noise-reduction] High-water mark of how many agentHistory
     /// entries the Debug `📋 agentHistory[i]` dump has already printed. The
@@ -3353,7 +3390,16 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
             defer { concurrency.releaseSlot(sessionId: sid) }
 
             do {
-                try await self.runAgentLoop()
+                if Self.useDSHAgentLoop {
+                    // The DSH turn driver owns request derivation, tool
+                    // scheduling, result commit order, the loop guard, and
+                    // compaction. Everything around it — queued prompts, cancel
+                    // cleanup, group fallback, persistence, image budgeting,
+                    // streaming presentation, the UI — stays here.
+                    await self.runDSHTurn()
+                } else {
+                    try await self.runAgentLoop()
+                }
             } catch is CancellationError {
                 logger.info("Agent loop cancelled")
                 self.handleUserCancelledCleanup()
@@ -3857,7 +3903,11 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
             defer { concurrency.releaseSlot(sessionId: sid) }
 
             do {
-                try await self.runAgentLoop()
+                if Self.useDSHAgentLoop {
+                    await self.runDSHTurn()
+                } else {
+                    try await self.runAgentLoop()
+                }
             } catch is CancellationError {
                 logger.info("Agent loop cancelled (orphan-tail resume)")
                 self.handleUserCancelledCleanup()
@@ -5099,7 +5149,11 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
             }
 
             do {
-                try await self.runAgentLoop()
+                if Self.useDSHAgentLoop {
+                    await self.runDSHTurn()
+                } else {
+                    try await self.runAgentLoop()
+                }
             } catch is CancellationError {
                 logger.info("Agent loop (queued-drain) cancelled")
                 self.handleUserCancelledCleanup()
@@ -5466,7 +5520,7 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
     /// `errorMessage` is still set as well: it is what drives the top banner for
     /// the current, still-live view, and clearing it is how the user dismisses
     /// that banner. The durable copy is the addition, not a replacement.
-    private func reportTurnFailure(_ displayDesc: String) {
+    func reportTurnFailure(_ displayDesc: String) {
         errorMessage = displayDesc
         let carrier = ChatMessage(role: .assistant, content: "", blocks: [])
         carrier.error = displayDesc
@@ -5545,7 +5599,7 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
         Task { await self.persistErrorInfo(nil) }
     }
 
-    private func handleUserCancelledCleanup() {
+    func handleUserCancelledCleanup() {
         let blockCount = (messages.last?.role == .assistant) ? messages.last!.blocks.count : -1
         let hasContent = (messages.last?.role == .assistant) ? messages.last!.blocks.contains(where: { !$0.content.isEmpty }) : false
         let lastRole = messages.last.map { $0.role == .assistant ? "assistant" : "user" } ?? "nil"
@@ -5902,12 +5956,20 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
                 activeGroupId = gid
             }
         }
-        var tools = makeAgentTools()
+        // DSH agent framework: the tool set comes from the DSH registry when
+        // enabled, so schemas and descriptions are declared once and rendered
+        // consistently. The handlers stay the existing ones.
+        var tools: [AgentToolDefinition]
+        if Self.useDSHAgentLoop {
+            tools = dshAgentTools()
+        } else {
+            tools = makeAgentTools()
+        }
         var helperWrapUpInjected = false
         // [T-subagent-turn-countdown] Fired once, a few rounds before the cliff.
         var helperTurnWarningInjected = false
 
-        var userSystemPrompt = baseSystemPrompt
+        var userSystemPrompt = Self.useDSHAgentLoop ? dshSystemPrompt : baseSystemPrompt
         // `var` for [T-ios-switch-model-next-request]: a mid-turn model switch
         // replaces it so the next request carries the new model's limits.
         var activeModel = ProviderConfigStore.shared.entry(for: entry.id)?.model ?? selectedModel
@@ -6634,7 +6696,7 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
                 }
                 logger.info("🔀AGENT_LOOP provider updated after fallback: \(prevEntryId ?? "nil") → \(newEntryId)")
                 provider = await makeAgentProvider(for: newEntry)
-                userSystemPrompt = baseSystemPrompt
+                userSystemPrompt = Self.useDSHAgentLoop ? dshSystemPrompt : baseSystemPrompt
                 if let capFragment = newEntry.model.capabilityPromptFragment {
                     userSystemPrompt += "\n\n" + capFragment
                 }
