@@ -283,7 +283,25 @@ extension AIChatViewModel {
         if Self.dshCompactionProbeEnabled {
             let info = ChatMessage(role: .systemInfo, content: "")
             info.systemIcon = "info.circle"
-            info.content = "DSH surface: \(surfaceBefore.count) entries, ~\(tokensBefore) tokens (compact at \(config.compactionPressureTokens))"
+            // Whether a persisted compaction was actually applied to the seed is
+            // otherwise invisible: the store-side marker can be perfect and
+            // `effectiveAgentHistory()` can still degrade to the whole history,
+            // and the only symptom is that the driver compacts the same
+            // conversation again on every launch. So report the anchor lookup
+            // itself rather than its result.
+            let seed: String
+            if let marker = cachedLatestMarker {
+                let anchorResolves = marker.lastCompactedMessageId.map { id in
+                    agentHistory.contains { $0.dbMessageId == id }
+                } ?? false
+                seed = "marker v\(marker.version) anchorResolves=\(anchorResolves) "
+                    + "history=\(agentHistory.count)(withDbId=\(agentHistory.filter { $0.dbMessageId != nil }.count)) "
+                    + "effective=\(effectiveAgentHistory().count)"
+            } else {
+                seed = "marker=none history=\(agentHistory.count)"
+            }
+            info.content = "DSH surface: \(surfaceBefore.count) entries, ~\(tokensBefore) tokens "
+                + "(compact at \(config.compactionPressureTokens)) | seed: \(seed)"
             messages.append(info)
         }
 
