@@ -2688,6 +2688,14 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
     /// reports per step and does not report a duration.
     var dshLastUsageAt: Date?
 
+    /// Total characters the driver emitted as assistant text this turn.
+    ///
+    /// Kept only so the end-of-turn accounting can compare it with what the row's
+    /// text blocks actually hold — the difference is text the user cannot see,
+    /// which is otherwise impossible to distinguish from the model simply not
+    /// having said it.
+    var dshTurnTextTotal: Int = 0
+
     /// Last time the reasoning buffer was flushed, for the adaptive throttle.
     var dshLastThinkingFlush = Date.distantPast
 

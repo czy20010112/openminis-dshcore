@@ -204,6 +204,7 @@ extension AIChatViewModel {
         dshTextBlockIdx = -1
         dshTurnToolEntries.removeAll()
         dshLastUsageAt = Date()
+        dshTurnTextTotal = 0
         dshPendingReasoning = ""
         dshAssistantText = ""
 
