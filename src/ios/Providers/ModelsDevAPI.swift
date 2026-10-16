@@ -311,9 +311,21 @@ enum ModelsDevAPI {
             result.modalityOverride = devModality
         }
 
-        // Context window: models.dev is the source of truth
+        // Context window: only when models.dev is authoritative for this model,
+        // or when nothing else supplied one.
+        //
+        // A custom endpoint's `/v1/models` reports the window of THAT deployment
+        // (see `OpenAIModelsAPI.contextWindow(from:)`), which is a fact about the
+        // server the user is actually talking to. The catalog's number describes
+        // the upstream model of the same name. When the catalog match is only a
+        // fuzzy fallback — a relay whose provider name matches no catalog key,
+        // which is exactly the case `resolveDevModel` documents — letting the
+        // catalog overwrite the endpoint is how a 262144-token endpoint came back
+        // as 32768 and made the agent compact eight times too eagerly.
         if let ctx = devModel.limit?.context {
-            result.contextWindow = ctx
+            if authoritative || result.contextWindow == nil {
+                result.contextWindow = ctx
+            }
         }
 
         // Max output tokens: models.dev is the source of truth
