@@ -58,8 +58,25 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
             dshAssistantText = ""
         }
         dshAssistantText += text
-        messages[idx].blocks[dshTextBlockIdx].content = dshAssistantText
 
+        // Do NOT write the block's content here.
+        //
+        // The flush path goes through `applyStreamingTextBlockContent`, which
+        // signals the collection view only on the empty → non-empty transition:
+        //
+        //     if wasEmpty && !text.isEmpty { blockContentFilledSignal.send(...) }
+        //
+        // with the comment "UIHostingConfiguration doesn't always trigger
+        // preferredLayoutAttributesFitting when the SwiftUI body changes from
+        // emitting nothing to emitting content — the cell can stay at ~0 height
+        // indefinitely without this explicit nudge".
+        //
+        // Writing the content here consumed that transition before the flush could
+        // see it, so the signal never fired: the reply rendered only as far as the
+        // first flush and the rest appeared only after reopening the session, which
+        // rebuilds the cells. The legacy loop never writes content directly — it
+        // only ever goes through `setStreamingTextBlockContent` — and that is what
+        // this now does too.
         dshPendingText += text
         dshMaybeFlushText()
 
