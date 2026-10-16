@@ -60,6 +60,7 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
         }
         dshAssistantText += text
         dshPendingText += text
+        dshTurnTextTotal += text.count
 
         // A brand-new block is flushed at once, ignoring the throttle.
         //
@@ -447,6 +448,26 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
             messages[idx].usage = minisTokenUsage(dshTurnUsage)
         }
         dshLastUsageAt = nil
+
+        // Text accounting.
+        //
+        // The operator reports words missing from the rendered reply — sentences
+        // arriving as only their tail. Nothing in the app compares the text the
+        // model actually produced against the text the row ended up holding, so
+        // there is no way to tell "the model said that" from "that got lost".
+        // These two numbers do: `model` is every character the driver emitted this
+        // turn, `row` is every character the row's text blocks hold. A gap is text
+        // the user cannot see, and its size says whether a chunk or a whole block
+        // went missing.
+        let textBlockCount = messages[idx].blocks.filter { $0.kind == .text }.count
+        let rowTextLength = messages[idx].blocks
+            .filter { $0.kind == .text }
+            .reduce(0) { $0 + $1.content.count }
+        AppLogger(category: "DSHLoop").warning(
+            "[DSH] text accounting: model=\(dshTurnTextTotal) row=\(rowTextLength) "
+            + "gap=\(dshTurnTextTotal - rowTextLength) textBlocks=\(textBlockCount) "
+            + "allBlocks=\(messages[idx].blocks.count)"
+        )
 
         publishUnlessTransitioning()
     }
