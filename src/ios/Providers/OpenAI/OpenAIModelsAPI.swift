@@ -214,51 +214,6 @@ enum OpenAIModelsAPI {
         return value
     }
 
-    /// The context window a `/v1/models` entry declares, or nil when it declares
-    /// none.
-    ///
-    /// Every OpenAI-compatible server spells this differently, and a model
-    /// catalog lists all of the spellings seen in the wild. Only a positive
-    /// integer counts: several servers ship the key with `0` or `null` to mean
-    /// "not configured", and treating that as a window would cap the model at
-    /// nothing.
-    static func contextWindow(from item: [String: Any]) -> Int? {
-        // Direct, top-level spellings.
-        let directKeys = [
-            "context_length",           // OpenRouter, LiteLLM, most relays
-            "context_window",           // some gateways
-            "max_context_length",       // others
-            "max_context_window_tokens",// Copilot-style
-            "max_model_len",            // vLLM, LM Studio
-            "n_ctx",                    // llama.cpp
-            "n_ctx_train",              // llama.cpp, training window
-        ]
-        for key in directKeys {
-            if let value = positiveInt(item[key]) { return value }
-        }
-        // Nested spellings.
-        if let top = item["top_provider"] as? [String: Any],
-           let value = positiveInt(top["context_length"]) { return value }
-        if let limit = item["limit"] as? [String: Any],
-           let value = positiveInt(limit["context"]) { return value }
-        if let meta = item["meta"] as? [String: Any],
-           let value = positiveInt(meta["n_ctx"]) { return value }
-        return nil
-    }
-
-    /// JSONSerialization hands back NSNumber for every numeric field, and some
-    /// servers quote the value as a string; accept all three shapes.
-    private static func positiveInt(_ raw: Any?) -> Int? {
-        let value: Int?
-        switch raw {
-        case let number as NSNumber: value = number.intValue
-        case let text as String: value = Int(text.trimmingCharacters(in: .whitespaces))
-        default: value = nil
-        }
-        guard let value, value > 0 else { return nil }
-        return value
-    }
-
     /// Strip `_input` / `_output` suffix and lowercase. Provider APIs are inconsistent —
     /// OpenAI returns `image_input` / `text_output` while models.dev returns bare `image`
     /// / `text`. Mirrors Android's `String.normalizeModalityName`.
