@@ -111,7 +111,7 @@ struct ProviderInstanceDetailView: View {
                 Form {
                     Section {
                         SecureField("Bearer token", text: $manualTokenInputText)
-                            .font(.system(.body, design: .monospaced))
+                            .font(AppFont.sw(17, weight: .regular, category: .code))
                             // [T-provider-label-keyboard issue #364] Opt this
                             // field OUT of AutoFill's password association, the
                             // same declaration AddProviderView has carried since
@@ -354,7 +354,7 @@ struct ProviderInstanceDetailView: View {
                                     Image(systemName: "arrow.clockwise")
                                     Text("Refresh")
                                 }
-                                .font(.caption)
+                                .font(AppFont.sw(12, weight: .regular, category: .ui))
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 3)
                                 .background(Color.secondary.opacity(0.15), in: Capsule())
@@ -368,7 +368,7 @@ struct ProviderInstanceDetailView: View {
                     // Source info (green)
                     if let source = fetchSource {
                         Label("Loaded from \(source)", systemImage: "checkmark.circle")
-                            .font(.caption)
+                            .font(AppFont.sw(12, weight: .regular, category: .ui))
                             .foregroundStyle(.green)
                     }
                     // Warnings (yellow) — diagnostic tips for each fallback step
@@ -384,11 +384,11 @@ struct ProviderInstanceDetailView: View {
                         let truncated = lines.prefix(4).joined(separator: "\n")
                             + (lines.count > 4 ? "\n…" : "")
                         Text(truncated)
-                            .font(.caption)
+                            .font(AppFont.sw(12, weight: .regular, category: .ui))
                             .foregroundStyle(.red)
                             .textSelection(.enabled)
                         Text(AppLocalized("You may need to add the model ID manually."))
-                            .font(.caption)
+                            .font(AppFont.sw(12, weight: .regular, category: .ui))
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -412,7 +412,7 @@ struct ProviderInstanceDetailView: View {
                             Spacer()
                             if store.isVoiceShadowDisabled(instance.id) {
                                 Text("Hidden", comment: "Voice shadow disabled badge")
-                                    .font(.caption)
+                                    .font(AppFont.sw(12, weight: .regular, category: .ui))
                                     .foregroundStyle(.secondary)
                             }
                         }
@@ -500,7 +500,7 @@ struct ProviderInstanceDetailView: View {
                         .allowsHitTesting(false)
                 }
             }
-            .font(.system(.body, design: .monospaced))
+            .font(AppFont.sw(17, weight: .regular, category: .code))
             .onAppear {
                 AppLogger(category: "Provider").info("apiKeyTextField onAppear instanceId=\(instance.id.prefix(8)) rawKeyHit=\(rawKey != nil) rawKeyLen=\(rawKey?.count ?? 0) prevTextLen=\(keyInputText.count)")
                 keyInputText = rawKey ?? ""
@@ -550,13 +550,13 @@ struct ProviderInstanceDetailView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("OAuth")
-                        .font(.body)
+                        .font(AppFont.sw(17, weight: .regular, category: .body))
                     Text(detail)
-                        .font(.caption)
+                        .font(AppFont.sw(12, weight: .regular, category: .ui))
                         .foregroundStyle(.secondary)
                     if needsReauth {
                         Text(AppLocalized("Sign-in expired. Sign in again to keep using this provider."))
-                            .font(.caption)
+                            .font(AppFont.sw(12, weight: .regular, category: .ui))
                             .foregroundStyle(.red)
                     }
                 }
@@ -573,25 +573,25 @@ struct ProviderInstanceDetailView: View {
                     Button(AppLocalized("Sign In Again")) {
                         oauthStartSignIn(instance)
                     }
-                    .font(.caption.weight(.medium))
+                    .font(AppFont.sw(12, weight: .medium, category: .ui))
                 }
                 if isAuth {
                     if !needsReauth {
                         Button(AppLocalized("Copy Token")) {
                             Task { await oauthCopyToken(instance) }
                         }
-                        .font(.caption.weight(.medium))
+                        .font(AppFont.sw(12, weight: .medium, category: .ui))
                     }
                     Button(AppLocalized("Sign Out"), role: .destructive) {
                         oauthLogout(instance)
                         oauthRefreshTrigger.toggle()
                     }
-                    .font(.caption.weight(.medium))
+                    .font(AppFont.sw(12, weight: .medium, category: .ui))
                 } else {
                     Button(oauthSignInLabel(instance)) {
                         oauthStartSignIn(instance)
                     }
-                    .font(.caption.weight(.medium))
+                    .font(AppFont.sw(12, weight: .medium, category: .ui))
                 }
             }
             .buttonStyle(.bordered)
@@ -637,7 +637,7 @@ struct ProviderInstanceDetailView: View {
     private func customBaseURLSection(_ instance: ProviderInstance) -> some View {
         Section {
             TextField(customBaseURLPlaceholder(instance), text: $editingCustomBaseURL)
-                .font(.system(.body, design: .monospaced))
+                .font(AppFont.sw(17, weight: .regular, category: .code))
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .keyboardType(.URL)
@@ -689,7 +689,7 @@ struct ProviderInstanceDetailView: View {
     private func customUserAgentSection(_ instance: ProviderInstance) -> some View {
         Section {
             TextField(AppLocalized("Default"), text: $editingCustomUserAgent)
-                .font(.system(.body, design: .monospaced))
+                .font(AppFont.sw(17, weight: .regular, category: .code))
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .onAppear { editingCustomUserAgent = instance.customUserAgent ?? "" }
@@ -771,9 +771,9 @@ struct ProviderInstanceDetailView: View {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Manual Bearer Token")
-                            .font(.body)
+                            .font(AppFont.sw(17, weight: .regular, category: .body))
                         Text("Configured")
-                            .font(.caption)
+                            .font(AppFont.sw(12, weight: .regular, category: .ui))
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
@@ -787,13 +787,13 @@ struct ProviderInstanceDetailView: View {
                         manualTokenInputText = ""
                         showManualTokenInput = true
                     }
-                    .font(.caption.weight(.medium))
+                    .font(AppFont.sw(12, weight: .medium, category: .ui))
 
                     Button("Remove", role: .destructive) {
                         ProviderKeychainHelper.deleteOAuthString(instanceId: instance.id, account: "manual-oauth-token")
                         oauthRefreshTrigger.toggle()
                     }
-                    .font(.caption.weight(.medium))
+                    .font(AppFont.sw(12, weight: .medium, category: .ui))
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
@@ -802,7 +802,7 @@ struct ProviderInstanceDetailView: View {
                     manualTokenInputText = ""
                     showManualTokenInput = true
                 }
-                .font(.caption.weight(.medium))
+                .font(AppFont.sw(12, weight: .medium, category: .ui))
             }
         } header: {
             Text("Manual Token")
@@ -826,7 +826,7 @@ struct ProviderInstanceDetailView: View {
                     showAddCustomModel = true
                 } label: {
                     Label("Add Custom Model", systemImage: "plus.circle")
-                        .font(.subheadline)
+                        .font(AppFont.sw(15, weight: .regular, category: .body))
                 }
             }
             .frame(maxWidth: .infinity)
@@ -843,17 +843,17 @@ struct ProviderInstanceDetailView: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 5) {
                     Text(entry.model.displayName)
-                        .font(.subheadline)
+                        .font(AppFont.sw(15, weight: .regular, category: .body))
                         .foregroundStyle(isHidden || entry.isUnavailableFromProvider ? .secondary : .primary)
                     modalityIcons(for: entry.model)
                 }
                 HStack(spacing: 4) {
                     Text(entry.model.id)
-                        .font(.caption2)
+                        .font(AppFont.sw(11, weight: .regular, category: .ui))
                         .foregroundStyle(.tertiary)
                     if entry.isCustom {
                         Text("Custom")
-                            .font(.caption2.weight(.medium))
+                            .font(AppFont.sw(11, weight: .medium, category: .ui))
                             .foregroundStyle(.orange)
                     }
                     // [T-model-absence-grace] The provider stopped listing this
@@ -862,7 +862,7 @@ struct ProviderInstanceDetailView: View {
                     // look normal — or, as before, letting it silently vanish.
                     if entry.isUnavailableFromProvider {
                         Text("Not listed by provider")
-                            .font(.caption2.weight(.medium))
+                            .font(AppFont.sw(11, weight: .medium, category: .ui))
                             .foregroundStyle(.orange)
                     }
                 }
@@ -1240,7 +1240,7 @@ struct AddCustomModelSheet: View {
             List {
                 Section {
                     TextField("Model ID (e.g. claude-3-opus-latest)", text: $modelId)
-                        .font(.system(.subheadline, design: .monospaced))
+                        .font(AppFont.sw(15, weight: .regular, category: .code))
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .onChange(of: modelId) { _ in duplicateError = nil }
@@ -1303,7 +1303,7 @@ struct AddCustomModelSheet: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Add") { addModel() }
-                        .font(.body.weight(.semibold))
+                        .font(AppFont.sw(17, weight: .semibold, category: .body))
                         .disabled(modelId.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             }
@@ -1436,13 +1436,13 @@ struct ModelEntryDetailSheet: View {
                             // trailing alignment lost the cursor past the row
                             // edge with no horizontal autoscroll.
                             TextField("model-id", text: $modelId, axis: .vertical)
-                                .font(.system(.body, design: .monospaced))
+                                .font(AppFont.sw(17, weight: .regular, category: .code))
                                 .multilineTextAlignment(.trailing)
                                 .textInputAutocapitalization(.never)
                                 .autocorrectionDisabled()
                         } else {
                             Text(entry.model.id)
-                                .font(.system(.body, design: .monospaced))
+                                .font(AppFont.sw(17, weight: .regular, category: .code))
                                 .foregroundStyle(.secondary)
                                 .textSelection(.enabled)
                         }
@@ -1472,7 +1472,7 @@ struct ModelEntryDetailSheet: View {
                                 .foregroundStyle(.secondary)
                             Spacer()
                             Text("Custom")
-                                .font(.caption.weight(.medium))
+                                .font(AppFont.sw(12, weight: .medium, category: .ui))
                                 .foregroundStyle(.orange)
                         }
                     }
@@ -1528,7 +1528,7 @@ struct ModelEntryDetailSheet: View {
                                 Button(AppLocalized("Force Enable")) {
                                     showForceThinkingAlert = true
                                 }
-                                .font(.caption)
+                                .font(AppFont.sw(12, weight: .regular, category: .ui))
                                 .buttonStyle(.bordered)
                                 .controlSize(.mini)
                             }
@@ -1605,7 +1605,7 @@ struct ModelEntryDetailSheet: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Save") { save() }
-                        .font(.body.weight(.semibold))
+                        .font(AppFont.sw(17, weight: .semibold, category: .body))
                 }
             }
             .onAppear { loadFromEntry() }
@@ -1696,7 +1696,7 @@ struct ModelEntryDetailSheet: View {
                         localized: "Above the provider's reported limit of \(apiMax) — the API may reject requests."
                     ))
                 }
-                .font(.caption)
+                .font(AppFont.sw(12, weight: .regular, category: .ui))
                 .foregroundStyle(.orange)
             }
         }

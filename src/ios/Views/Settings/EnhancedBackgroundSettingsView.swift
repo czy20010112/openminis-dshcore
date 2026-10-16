@@ -45,10 +45,10 @@ struct EnhancedBackgroundSettingsView: View {
                 if boost.mode != .off {
                     VStack(alignment: .leading, spacing: 6) {
                         Text(boost.mode.summary)
-                            .font(.footnote)
+                            .font(AppFont.sw(13, weight: .regular, category: .body))
                             .foregroundColor(.secondary)
                         Text(boost.mode.risk)
-                            .font(.caption)
+                            .font(AppFont.sw(12, weight: .regular, category: .ui))
                             .foregroundColor(.orange)
                     }
                 }

@@ -298,7 +298,7 @@ struct BackupDestinationDetailView: View {
 
         if let errorText {
             Section {
-                Text(errorText).font(.footnote).foregroundStyle(.red)
+                Text(errorText).font(AppFont.sw(13, weight: .regular, category: .body)).foregroundStyle(.red)
             }
         }
 
@@ -328,7 +328,7 @@ struct BackupDestinationDetailView: View {
                         // Text only — the leading badge already says which
                         // action this is, and the colour carries the outcome.
                         Text(testResult)
-                            .font(.footnote)
+                            .font(AppFont.sw(13, weight: .regular, category: .body))
                             .foregroundStyle(.green)
                     }
                 }
@@ -342,7 +342,7 @@ struct BackupDestinationDetailView: View {
             // what the user needs to read, so it gets the width.
             if !testOK, let testResult {
                 Label(testResult, systemImage: "exclamationmark.triangle.fill")
-                    .font(.footnote)
+                    .font(AppFont.sw(13, weight: .regular, category: .body))
                     .foregroundStyle(.orange)
             }
 
@@ -459,7 +459,7 @@ struct BackupDestinationDetailView: View {
                             .lineLimit(1)
                             .truncationMode(.middle)
                         Text("\(ByteCountFormatter.string(fromByteCount: p.size, countStyle: .file)) · \(p.modified.formatted(date: .abbreviated, time: .shortened))")
-                            .font(.caption)
+                            .font(AppFont.sw(12, weight: .regular, category: .ui))
                             .foregroundStyle(.secondary)
                     }
                     // [T-backup-folder-delete] Swipe to delete the file in the
@@ -624,7 +624,7 @@ struct RcloneFolderBrowser: View {
                     HStack(spacing: 8) {
                         ScrollView(.horizontal, showsIndicators: false) {
                             Text(currentDir.isEmpty ? "/" : "/\(currentDir)")
-                                .font(.footnote.weight(.medium))
+                                .font(AppFont.sw(13, weight: .medium, category: .body))
                                 .foregroundStyle(.primary)
                                 .lineLimit(1)
                                 .padding(.horizontal, 10)
@@ -637,7 +637,7 @@ struct RcloneFolderBrowser: View {
                         } label: {
                             Label("New Folder", systemImage: "folder.badge.plus")
                                 .labelStyle(.iconOnly)
-                                .font(.body)
+                                .font(AppFont.sw(17, weight: .regular, category: .body))
                         }
                         .buttonStyle(.borderless)
                         .disabled(isListing)
@@ -771,11 +771,11 @@ struct RcloneConnectionEditor: View {
                             VStack(alignment: .leading, spacing: 4) {
                                 HStack(spacing: 6) {
                                     Text(f.label)
-                                        .font(.footnote.weight(.medium))
+                                        .font(AppFont.sw(13, weight: .medium, category: .body))
                                         .foregroundStyle(.secondary)
                                     if f.isOptional {
                                         Text("Optional")
-                                            .font(.caption2)
+                                            .font(AppFont.sw(11, weight: .regular, category: .ui))
                                             .foregroundStyle(.tertiary)
                                     }
                                 }
@@ -786,7 +786,7 @@ struct RcloneConnectionEditor: View {
                                     .keyboardType(keyboardType(f.keyboard))
                                 if !f.hint.isEmpty {
                                     Text(f.hint)
-                                        .font(.caption)
+                                        .font(AppFont.sw(12, weight: .regular, category: .ui))
                                         .foregroundStyle(.tertiary)
                                 }
                             }
@@ -814,7 +814,7 @@ struct RcloneConnectionEditor: View {
 
                 if let errorText {
                     Section {
-                        Text(errorText).font(.footnote).foregroundStyle(.red)
+                        Text(errorText).font(AppFont.sw(13, weight: .regular, category: .body)).foregroundStyle(.red)
                     }
                 }
             }

@@ -151,7 +151,7 @@ struct MCPFormSheet: View {
             .safeAreaInset(edge: .bottom) {
                 Button(action: save) {
                     Text("Save")
-                        .font(.headline)
+                        .font(AppFont.sw(17, weight: .semibold, category: .body))
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
@@ -165,7 +165,7 @@ struct MCPFormSheet: View {
             .overlay(alignment: .bottom) {
                 if copiedToast {
                     Label(AppLocalized("Copied"), systemImage: "checkmark.circle.fill")
-                        .font(.subheadline.weight(.medium))
+                        .font(AppFont.sw(15, weight: .medium, category: .body))
                         .foregroundStyle(.white)
                         .padding(.horizontal, 16)
                         .padding(.vertical, 10)
@@ -260,11 +260,11 @@ struct MCPFormSheet: View {
                     if isAuthorized {
                         Label(AppLocalized("Authorized"), systemImage: "checkmark.seal.fill")
                             .foregroundStyle(.green)
-                            .font(.subheadline)
+                            .font(AppFont.sw(15, weight: .regular, category: .body))
                     } else {
                         Label(AppLocalized("Not authorized"), systemImage: "xmark.seal")
                             .foregroundStyle(.secondary)
-                            .font(.subheadline)
+                            .font(AppFont.sw(15, weight: .regular, category: .body))
                     }
                     Spacer()
                     if isAuthorized {
@@ -272,7 +272,7 @@ struct MCPFormSheet: View {
                             MCPOAuthController.signOut(server: name.trimmingCharacters(in: .whitespaces))
                             isAuthorized = false
                         }
-                        .font(.subheadline)
+                        .font(AppFont.sw(15, weight: .regular, category: .body))
                     }
                     Button {
                         Task { await runAuthorize() }
@@ -289,7 +289,7 @@ struct MCPFormSheet: View {
                 }
                 if let oauthError {
                     Text(oauthError)
-                        .font(.caption)
+                        .font(AppFont.sw(12, weight: .regular, category: .ui))
                         .foregroundStyle(.red)
                 }
             }
@@ -312,7 +312,7 @@ struct MCPFormSheet: View {
         if let outcome = pendingDiscovery {
             VStack(alignment: .leading, spacing: 8) {
                 Label(AppLocalized("Ready to sign in"), systemImage: "checkmark.shield")
-                    .font(.subheadline.weight(.semibold))
+                    .font(AppFont.sw(15, weight: .semibold, category: .body))
                     .foregroundStyle(.green)
                 // Naming the issuer is the point of this card: the user should
                 // know WHICH service is about to ask for their password before
@@ -324,7 +324,7 @@ struct MCPFormSheet: View {
                     .truncationMode(.middle)
                 if outcome.reusedCachedClient {
                     Text(AppLocalized("Reusing this app's existing registration."))
-                        .font(.caption2)
+                        .font(AppFont.sw(11, weight: .regular, category: .ui))
                         .foregroundStyle(.tertiary)
                 }
                 Button {
@@ -343,7 +343,7 @@ struct MCPFormSheet: View {
         } else {
             VStack(alignment: .leading, spacing: 8) {
                 Text(AppLocalized("Minis will find this service's sign-in page automatically. No Client ID needed."))
-                    .font(.caption)
+                    .font(AppFont.sw(12, weight: .regular, category: .ui))
                     .foregroundStyle(.secondary)
                 Button {
                     Task { await runDiscovery() }
@@ -361,7 +361,7 @@ struct MCPFormSheet: View {
         }
         if let discoveryNote {
             Text(discoveryNote)
-                .font(.caption)
+                .font(AppFont.sw(12, weight: .regular, category: .ui))
                 .foregroundStyle(.secondary)
         }
     }

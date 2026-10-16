@@ -125,18 +125,18 @@ struct BrowserBenchTestView: View {
                         VStack(alignment: .leading, spacing: 4) {
                             HStack {
                                 Text(timeFormatter.string(from: entry.timestamp))
-                                    .font(.system(size: 12, design: .monospaced))
+                                    .font(AppFont.sw(12, weight: .regular, category: .code))
                                     .foregroundStyle(.secondary)
                                 Spacer()
                                 Text(String(format: "%.0fms", entry.duration * 1000))
-                                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                                    .font(AppFont.sw(12, weight: .medium, category: .code))
                                     .foregroundStyle(entry.isError ? .red : .primary)
                             }
                             Text(entry.command)
-                                .font(.system(size: 13, weight: .semibold))
+                                .font(AppFont.sw(13, weight: .semibold, category: .body))
                                 .foregroundStyle(entry.isError ? .red : .primary)
                             Text(entry.result)
-                                .font(.system(size: 12, design: .monospaced))
+                                .font(AppFont.sw(12, weight: .regular, category: .code))
                                 .foregroundStyle(entry.isError ? .red : .secondary)
                                 .lineLimit(3)
                         }

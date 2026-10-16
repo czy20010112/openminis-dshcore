@@ -21,7 +21,7 @@ struct BackupHUD: View {
                                       : "checkmark.circle.fill")
                 .foregroundStyle(isError ? .orange : .green)
             Text(text)
-                .font(.footnote)
+                .font(AppFont.sw(13, weight: .regular, category: .body))
                 .foregroundStyle(.primary)
                 .fixedSize(horizontal: false, vertical: true)
         }

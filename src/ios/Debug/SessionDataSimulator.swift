@@ -702,9 +702,9 @@ final class SessionDataSimulator: ObservableObject {
                     cell.contentConfiguration = UIHostingConfiguration {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(item.title)
-                                .font(.headline)
+                                .font(AppFont.sw(17, weight: .semibold, category: .body))
                             Text(item.subtitle)
-                                .font(.subheadline)
+                                .font(AppFont.sw(15, weight: .regular, category: .body))
                                 .foregroundStyle(.secondary)
                         }
                         .padding()

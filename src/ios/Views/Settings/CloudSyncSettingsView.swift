@@ -97,13 +97,13 @@ struct CloudSyncSettingsView: View {
                 Text("Up to date")
             }
             .foregroundStyle(.green)
-            .font(.caption)
+            .font(AppFont.sw(12, weight: .regular, category: .ui))
         case .syncing:
             HStack(spacing: 4) {
                 ProgressView()
                     .controlSize(.mini)
                 Text("Syncing...")
-                    .font(.caption)
+                    .font(AppFont.sw(12, weight: .regular, category: .ui))
                     .foregroundStyle(.secondary)
             }
         case .error(let msg):
@@ -113,14 +113,14 @@ struct CloudSyncSettingsView: View {
                     .lineLimit(1)
             }
             .foregroundStyle(.red)
-            .font(.caption)
+            .font(AppFont.sw(12, weight: .regular, category: .ui))
         case .disabled:
             HStack(spacing: 4) {
                 Image(systemName: "minus.circle.fill")
                 Text("Disabled")
             }
             .foregroundStyle(.secondary)
-            .font(.caption)
+            .font(AppFont.sw(12, weight: .regular, category: .ui))
         }
     }
 
@@ -147,7 +147,7 @@ struct CloudSyncSettingsView: View {
                     Text("Chat Sessions")
                     Spacer()
                     Text(formatSize(sessionsSize))
-                        .font(.caption)
+                        .font(AppFont.sw(12, weight: .regular, category: .ui))
                         .foregroundStyle(.secondary)
                 }
             }
@@ -174,7 +174,7 @@ struct CloudSyncSettingsView: View {
                     Text("Skills")
                     Spacer()
                     Text(formatSize(skillsSize))
-                        .font(.caption)
+                        .font(AppFont.sw(12, weight: .regular, category: .code))
                         .foregroundStyle(.secondary)
                 }
             }
@@ -184,7 +184,7 @@ struct CloudSyncSettingsView: View {
                     Text("Providers")
                     Spacer()
                     Text(formatSize(providersSize))
-                        .font(.caption)
+                        .font(AppFont.sw(12, weight: .regular, category: .ui))
                         .foregroundStyle(.secondary)
                 }
             }
@@ -194,7 +194,7 @@ struct CloudSyncSettingsView: View {
                     Text("Environments")
                     Spacer()
                     Text(formatSize(envVarsSize))
-                        .font(.caption)
+                        .font(AppFont.sw(12, weight: .regular, category: .ui))
                         .foregroundStyle(.secondary)
                 }
             }
@@ -213,7 +213,7 @@ struct CloudSyncSettingsView: View {
             Section {
                 Text("No other devices found yet. Devices appear here after they enable iCloud Sync.")
                     .foregroundStyle(.secondary)
-                    .font(.callout)
+                    .font(AppFont.sw(16, weight: .regular, category: .body))
             } header: {
                 Text("Synced Devices (Download)")
             }
@@ -411,10 +411,10 @@ private struct DeviceSyncSection: View {
                         Text(device.deviceName)
                         HStack(spacing: 8) {
                             Text(device.osVersion)
-                                .font(.caption2)
+                                .font(AppFont.sw(11, weight: .regular, category: .ui))
                                 .foregroundStyle(.tertiary)
                             Text("Last seen: \(Self.relativeTime(device.lastSeen))")
-                                .font(.caption2).foregroundStyle(.tertiary)
+                                .font(AppFont.sw(11, weight: .regular, category: .ui)).foregroundStyle(.tertiary)
                         }
                     }
                 }
@@ -464,15 +464,15 @@ struct RemoteDeviceSessionsView: View {
                                 .lineLimit(1)
                             HStack(spacing: 8) {
                                 Text(session.modelId)
-                                    .font(.caption2)
+                                    .font(AppFont.sw(11, weight: .regular, category: .ui))
                                     .foregroundStyle(.tertiary)
                                 Text(session.updatedAt, style: .relative)
-                                    .font(.caption2)
+                                    .font(AppFont.sw(11, weight: .regular, category: .ui))
                                     .foregroundStyle(.tertiary)
                             }
                             if let preview = session.lastMessage {
                                 Text(preview)
-                                    .font(.caption)
+                                    .font(AppFont.sw(12, weight: .regular, category: .ui))
                                     .foregroundStyle(.secondary)
                                     .lineLimit(2)
                             }
@@ -488,7 +488,7 @@ struct RemoteDeviceSessionsView: View {
                                 forkSession(session)
                             } label: {
                                 Label("Fork", systemImage: "arrow.branch")
-                                    .font(.caption)
+                                    .font(AppFont.sw(12, weight: .regular, category: .ui))
                             }
                             .buttonStyle(.bordered)
                             .controlSize(.small)
@@ -551,15 +551,15 @@ struct RemoteSkillsListView: View {
                     HStack {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(skill.name)
-                                .font(.headline)
+                                .font(AppFont.sw(17, weight: .semibold, category: .body))
                             if !skill.description.isEmpty {
                                 Text(skill.description)
-                                    .font(.caption)
+                                    .font(AppFont.sw(12, weight: .regular, category: .ui))
                                     .foregroundStyle(.secondary)
                                     .lineLimit(2)
                             }
                             Text("v\(skill.version)")
-                                .font(.caption2)
+                                .font(AppFont.sw(11, weight: .regular, category: .ui))
                                 .foregroundStyle(.tertiary)
                         }
 
@@ -576,7 +576,7 @@ struct RemoteSkillsListView: View {
                                 }
                             } label: {
                                 Text("Copy to My Device")
-                                    .font(.caption)
+                                    .font(AppFont.sw(12, weight: .regular, category: .ui))
                             }
                             .buttonStyle(.bordered)
                             .controlSize(.small)
@@ -612,13 +612,13 @@ struct RemoteMemoriesListView: View {
                     HStack {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(memory.fileName)
-                                .font(.headline)
+                                .font(AppFont.sw(17, weight: .semibold, category: .body))
                             Text(memory.content.prefix(100))
-                                .font(.caption)
+                                .font(AppFont.sw(12, weight: .regular, category: .ui))
                                 .foregroundStyle(.secondary)
                                 .lineLimit(2)
                             Text(memory.updatedAt, style: .relative)
-                                .font(.caption2)
+                                .font(AppFont.sw(11, weight: .regular, category: .ui))
                                 .foregroundStyle(.tertiary)
                         }
 
@@ -635,7 +635,7 @@ struct RemoteMemoriesListView: View {
                                 }
                             } label: {
                                 Text("Copy to My Device")
-                                    .font(.caption)
+                                    .font(AppFont.sw(12, weight: .regular, category: .ui))
                             }
                             .buttonStyle(.bordered)
                             .controlSize(.small)
@@ -663,33 +663,33 @@ struct SyncLogView: View {
         List {
             Section {
                 Text("Sync events are recorded as iCloud sync sends and receives data. Up to 1,000 entries are kept.")
-                    .font(.caption)
+                    .font(AppFont.sw(12, weight: .regular, category: .ui))
                     .foregroundStyle(.secondary)
             }
             if store.entries.isEmpty {
                 Text("No sync events yet.")
                     .foregroundStyle(.secondary)
-                    .font(.callout)
+                    .font(AppFont.sw(16, weight: .regular, category: .body))
             } else {
                 ForEach(store.entries) { entry in
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 6) {
                             directionBadge(entry.direction)
                             Text(entry.recordType)
-                                .font(.system(.subheadline, weight: .semibold))
+                                .font(AppFont.sw(15, weight: .semibold, category: .body))
                             Spacer()
                             Text(entry.timestamp, format: .dateTime.hour().minute().second())
-                                .font(.caption2)
+                                .font(AppFont.sw(11, weight: .regular, category: .ui))
                                 .foregroundStyle(.tertiary)
                         }
                         if !entry.summary.isEmpty {
                             Text(entry.summary)
-                                .font(.caption)
+                                .font(AppFont.sw(12, weight: .regular, category: .ui))
                                 .foregroundStyle(.primary)
                                 .lineLimit(1)
                         }
                         Text(formatRecordName(entry.recordName))
-                            .font(.caption2)
+                            .font(AppFont.sw(11, weight: .regular, category: .ui))
                             .foregroundStyle(.tertiary)
                             .lineLimit(1)
                         if let deviceName = entry.deviceName {
@@ -698,17 +698,17 @@ struct SyncLogView: View {
                                     .font(.system(size: 9))
                                 Text(deviceName)
                             }
-                            .font(.caption2)
+                            .font(AppFont.sw(11, weight: .regular, category: .ui))
                             .foregroundStyle(.tertiary)
                         }
                         if entry.direction == .error {
                             Text(entry.detail)
-                                .font(.caption2)
+                                .font(AppFont.sw(11, weight: .regular, category: .ui))
                                 .foregroundStyle(.red)
                                 .lineLimit(2)
                         } else if entry.direction == .conflict {
                             Text(entry.detail)
-                                .font(.caption2)
+                                .font(AppFont.sw(11, weight: .regular, category: .ui))
                                 .foregroundStyle(.orange)
                                 .lineLimit(2)
                         }

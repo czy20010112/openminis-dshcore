@@ -52,7 +52,7 @@ struct ICloudBackupView: View {
                                     Text(category.displayName)
                                         .foregroundColor(.primary)
                                     Text(category.description)
-                                        .font(.caption)
+                                        .font(AppFont.sw(12, weight: .regular, category: .ui))
                                         .foregroundColor(.secondary)
                                 }
                                 Spacer()
@@ -69,7 +69,7 @@ struct ICloudBackupView: View {
                         VStack(alignment: .leading, spacing: 6) {
                             ProgressView(value: manager.progress)
                             Text(manager.statusMessage)
-                                .font(.caption)
+                                .font(AppFont.sw(12, weight: .regular, category: .ui))
                                 .foregroundColor(.secondary)
                         }
                         .padding(.vertical, 4)
@@ -82,7 +82,7 @@ struct ICloudBackupView: View {
                     VStack(alignment: .leading, spacing: 6) {
                         ProgressView(value: manager.progress)
                         Text(manager.statusMessage)
-                            .font(.caption)
+                            .font(AppFont.sw(12, weight: .regular, category: .ui))
                             .foregroundColor(.secondary)
                     }
                     .padding(.vertical, 4)
@@ -162,12 +162,12 @@ struct ICloudBackupView: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(entry.category.displayName)
-                    .font(.body)
+                    .font(AppFont.sw(17, weight: .regular, category: .body))
                 HStack(spacing: 8) {
                     Text(entry.date.formatted(date: .abbreviated, time: .shortened))
                     Text(entry.fileSize.formattedFileSize)
                 }
-                .font(.caption)
+                .font(AppFont.sw(12, weight: .regular, category: .ui))
                 .foregroundColor(.secondary)
             }
         }

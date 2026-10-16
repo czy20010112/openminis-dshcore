@@ -111,7 +111,7 @@ private struct CommandPermissionRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(command.displayLabel)
                 Text(command.description)
-                    .font(.caption)
+                    .font(AppFont.sw(12, weight: .regular, category: .ui))
                     .foregroundStyle(.secondary)
             }
             Spacer()

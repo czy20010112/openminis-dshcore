@@ -120,9 +120,9 @@ struct MCPIntegrationsView: View {
                 .font(.system(size: 44))
                 .foregroundStyle(.secondary)
             Text("No MCP Servers")
-                .font(.headline)
+                .font(AppFont.sw(17, weight: .semibold, category: .body))
             Text("Add an MCP server to give the agent extra tools. Tap + to add one manually or import a JSON config.")
-                .font(.subheadline)
+                .font(AppFont.sw(15, weight: .regular, category: .body))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
         }
@@ -138,14 +138,14 @@ struct MCPIntegrationsView: View {
                 .frame(width: 9, height: 9)
             VStack(alignment: .leading, spacing: 3) {
                 Text(server.id)
-                    .font(.body)
+                    .font(AppFont.sw(17, weight: .regular, category: .body))
                     .foregroundStyle(.primary)
                 HStack(spacing: 4) {
                     Text(server.isHTTP ? "HTTP" : (server.isSTDIO ? "STDIO" : "—"))
-                        .font(.caption2.weight(.semibold))
+                        .font(AppFont.sw(11, weight: .semibold, category: .ui))
                         .foregroundStyle(.secondary)
                     Text(server.transportSummary)
-                        .font(.caption)
+                        .font(AppFont.sw(12, weight: .regular, category: .ui))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -200,10 +200,10 @@ struct MCPToolsSheet: View {
                         ForEach(tools) { tool in
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(tool.name)
-                                    .font(.body.monospaced())
+                                    .font(AppFont.sw(17, weight: .regular, category: .code))
                                 if !tool.description.isEmpty {
                                     Text(tool.description)
-                                        .font(.caption)
+                                        .font(AppFont.sw(12, weight: .regular, category: .ui))
                                         .foregroundStyle(.secondary)
                                         .lineLimit(3)
                                 }

@@ -16,9 +16,9 @@ struct AIDataSharingConsentView: View {
                 VStack(alignment: .leading, spacing: 20) {
                     VStack(alignment: .leading, spacing: 8) {
                         Label("AI Data Sharing Notice", systemImage: "hand.raised.fill")
-                            .font(.title2.bold())
+                            .font(AppFont.sw(22, weight: .bold, category: .title))
                         Text("Please review how your data is handled before adding an AI provider.")
-                            .font(.subheadline)
+                            .font(AppFont.sw(15, weight: .regular, category: .body))
                             .foregroundStyle(.secondary)
                     }
 
@@ -27,10 +27,10 @@ struct AIDataSharingConsentView: View {
                             Text("We Do Not Collect Your Data")
                                 .font(.headline)
                             Text("Minis does not operate any server and does not collect, store, or process any of your personal data. All data stays on your device.")
-                                .font(.subheadline)
+                                .font(AppFont.sw(15, weight: .regular, category: .body))
                                 .foregroundStyle(.secondary)
                             Text("However, when you add a third-party AI provider and use it for conversations, the following data may be sent directly from your device to that provider's servers:")
-                                .font(.subheadline)
+                                .font(AppFont.sw(15, weight: .regular, category: .body))
                                 .foregroundStyle(.secondary)
 
                             VStack(alignment: .leading, spacing: 6) {
@@ -44,9 +44,9 @@ struct AIDataSharingConsentView: View {
                     GroupBox {
                         VStack(alignment: .leading, spacing: 12) {
                             Text("Third-Party AI Providers")
-                                .font(.headline)
+                                .font(AppFont.sw(17, weight: .semibold, category: .body))
                             Text("Depending on which provider you configure, your data will be sent directly to one or more of the following third-party services:")
-                                .font(.subheadline)
+                                .font(AppFont.sw(15, weight: .regular, category: .body))
                                 .foregroundStyle(.secondary)
 
                             VStack(alignment: .leading, spacing: 8) {
@@ -78,7 +78,7 @@ struct AIDataSharingConsentView: View {
                     }
 
                     Link("Read our full Privacy Policy", destination: URL(string: "https://openminis.github.io/privacy-policy.html")!)
-                        .font(.footnote)
+                        .font(AppFont.sw(13, weight: .regular, category: .body))
 
                     Spacer(minLength: 80)
                 }
@@ -91,7 +91,7 @@ struct AIDataSharingConsentView: View {
                         onAccept()
                     } label: {
                         Text("I Understand & Agree")
-                            .font(.body.weight(.semibold))
+                            .font(AppFont.sw(17, weight: .semibold, category: .body))
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
@@ -100,7 +100,7 @@ struct AIDataSharingConsentView: View {
                     Button("Cancel", role: .cancel) {
                         onDecline()
                     }
-                    .font(.body)
+                    .font(AppFont.sw(17, weight: .regular, category: .body))
                 }
                 .padding()
                 .background(.bar)
@@ -113,7 +113,7 @@ struct AIDataSharingConsentView: View {
             Text("•")
                 .foregroundStyle(.secondary)
             Text(text)
-                .font(.subheadline)
+                .font(AppFont.sw(15, weight: .regular, category: .body))
         }
     }
 
@@ -124,9 +124,9 @@ struct AIDataSharingConsentView: View {
                 .frame(width: 8, height: 8)
             VStack(alignment: .leading, spacing: 1) {
                 Text(name)
-                    .font(.subheadline.weight(.medium))
+                    .font(AppFont.sw(15, weight: .medium, category: .body))
                 Text(description)
-                    .font(.caption)
+                    .font(AppFont.sw(12, weight: .regular, category: .ui))
                     .foregroundStyle(.secondary)
             }
         }
@@ -493,10 +493,10 @@ struct AddProviderView: View {
 
                         VStack(alignment: .leading, spacing: 2) {
                             Text(providerPickerLabel(type))
-                                .font(.body.weight(.medium))
+                                .font(AppFont.sw(17, weight: .medium, category: .body))
                                 .foregroundStyle(Color(UIColor.label))
                             Text(type.pickerSubtitle)
-                                .font(.caption)
+                                .font(AppFont.sw(12, weight: .regular, category: .ui))
                                 .foregroundStyle(.secondary)
                         }
 
@@ -568,10 +568,10 @@ struct AddProviderView: View {
 
                         VStack(alignment: .leading, spacing: 2) {
                             Text(template.name)
-                                .font(.body.weight(.medium))
+                                .font(AppFont.sw(17, weight: .medium, category: .body))
                                 .foregroundStyle(Color(UIColor.label))
                             Text(template.capability)
-                                .font(.caption)
+                                .font(AppFont.sw(12, weight: .regular, category: .ui))
                                 .foregroundStyle(.secondary)
                         }
 
@@ -636,7 +636,7 @@ struct AddProviderView: View {
                                         .font(.body.weight(.medium))
                                         .foregroundStyle(Color(UIColor.label))
                                     Text(credentialDescription(type: type, credential: cred))
-                                        .font(.caption)
+                                        .font(AppFont.sw(12, weight: .regular, category: .ui))
                                         .foregroundStyle(.secondary)
                                 }
 
@@ -730,7 +730,7 @@ struct AddProviderView: View {
             if let error = errorMessage {
                 Section {
                     Text(error)
-                        .font(.caption)
+                        .font(AppFont.sw(12, weight: .regular, category: .ui))
                         .foregroundStyle(.red)
                         .textSelection(.enabled)
                 }
@@ -744,7 +744,7 @@ struct AddProviderView: View {
                     HStack {
                         if showApiKeyPlaintext {
                             TextField(keyPlaceholder, text: $apiKeyInput)
-                                .font(.system(.body, design: .monospaced))
+                                .font(AppFont.sw(17, weight: .regular, category: .code))
                                 // [T-provider-label-keyboard] Same opt-out as the
                                 // SecureField below — the plaintext branch is the
                                 // SAME field, so leaving it undeclared would let
@@ -822,7 +822,7 @@ struct AddProviderView: View {
                                 .controlSize(.small)
                         } else {
                             Text("Add Provider")
-                                .font(.body.weight(.semibold))
+                                .font(AppFont.sw(17, weight: .semibold, category: .body))
                         }
                         Spacer()
                     }
@@ -840,16 +840,16 @@ struct AddProviderView: View {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundStyle(.green)
                     Text("Authenticated")
-                        .font(.body.weight(.medium))
+                        .font(AppFont.sw(17, weight: .medium, category: .body))
                 }
 
                 if let masked = oauthMaskedToken {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Token")
-                            .font(.caption)
+                            .font(AppFont.sw(12, weight: .regular, category: .ui))
                             .foregroundStyle(.secondary)
                         Text(masked)
-                            .font(.system(.caption, design: .monospaced))
+                            .font(AppFont.sw(12, weight: .regular, category: .code))
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -857,14 +857,14 @@ struct AddProviderView: View {
                 if let authTime = oauthAuthTime {
                     HStack {
                         Text("Authorized")
-                            .font(.caption)
+                            .font(AppFont.sw(12, weight: .regular, category: .ui))
                             .foregroundStyle(.secondary)
                         Spacer()
                         Text(authTime, style: .date)
-                            .font(.caption)
+                            .font(AppFont.sw(12, weight: .regular, category: .ui))
                             .foregroundStyle(.secondary)
                         Text(authTime, style: .time)
-                            .font(.caption)
+                            .font(AppFont.sw(12, weight: .regular, category: .ui))
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -883,7 +883,7 @@ struct AddProviderView: View {
                     HStack {
                         Spacer()
                         Text(oauthSignInLabel)
-                            .font(.body.weight(.semibold))
+                            .font(AppFont.sw(17, weight: .semibold, category: .body))
                         Spacer()
                     }
                 }
@@ -905,14 +905,14 @@ struct AddProviderView: View {
         if selectedType != .antigravity && selectedType != .githubCopilot && !pendingOAuthDone {
             Section {
                 TextField(defaultBaseURL, text: $customBaseURLInput)
-                    .font(.system(.body, design: .monospaced))
+                    .font(AppFont.sw(17, weight: .regular, category: .code))
                     .foregroundStyle(.secondary)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .keyboardType(.URL)
 
                 SecureField("Bearer Token", text: $manualOAuthTokenInput)
-                    .font(.system(.body, design: .monospaced))
+                    .font(AppFont.sw(17, weight: .regular, category: .code))
                     // [T-provider-label-keyboard] Same AutoFill opt-out as the
                     // API Key field — this SecureField is in the same form as
                     // the Label field and would otherwise trigger the identical
@@ -925,7 +925,7 @@ struct AddProviderView: View {
                     HStack {
                         Spacer()
                         Text("Add Provider")
-                            .font(.body.weight(.semibold))
+                            .font(AppFont.sw(17, weight: .semibold, category: .body))
                         Spacer()
                     }
                 }
@@ -945,7 +945,7 @@ struct AddProviderView: View {
                     HStack {
                         Spacer()
                         Text("Save Provider")
-                            .font(.body.weight(.semibold))
+                            .font(AppFont.sw(17, weight: .semibold, category: .body))
                         Spacer()
                     }
                 }
@@ -958,7 +958,7 @@ struct AddProviderView: View {
     private var customBaseURLSection: some View {
         Section {
             TextField(defaultBaseURL, text: $customBaseURLInput)
-                .font(.system(.body, design: .monospaced))
+                .font(AppFont.sw(17, weight: .regular, category: .code))
                 .foregroundStyle(.secondary)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()

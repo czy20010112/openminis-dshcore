@@ -95,13 +95,13 @@ struct SessionSkillsView: View {
                     Section {
                         Text("No skills installed. Add skills in Settings.")
                             .foregroundStyle(.secondary)
-                            .font(.subheadline)
+                            .font(AppFont.sw(15, weight: .regular, category: .body))
                     }
                 } else if filteredSkills.isEmpty {
                     Section {
                         Text(AppLocalized("No skills match \"\(searchQuery)\"."))
                             .foregroundStyle(.secondary)
-                            .font(.subheadline)
+                            .font(AppFont.sw(15, weight: .regular, category: .body))
                     }
                 } else {
                     Section(footer: Text("Toggles override the skill's default for this session only.")) {
@@ -111,10 +111,10 @@ struct SessionSkillsView: View {
                             } label: {
                                 HStack {
                                     VStack(alignment: .leading, spacing: 2) {
-                                        Text(skill.name).font(.body)
+                                        Text(skill.name).font(AppFont.sw(17, weight: .regular, category: .body))
                                         if !skill.description.isEmpty {
                                             Text(skill.description)
-                                                .font(.caption)
+                                                .font(AppFont.sw(12, weight: .regular, category: .ui))
                                                 .foregroundStyle(.secondary)
                                                 .lineLimit(2)
                                         }
@@ -145,7 +145,7 @@ struct SessionSkillsView: View {
                             let newValue = !allEnabled
                             applyToAll(scope, enabled: newValue)
                         }
-                        .font(.subheadline)
+                        .font(AppFont.sw(15, weight: .regular, category: .body))
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
@@ -169,7 +169,7 @@ private struct SessionSkillDetailView: View {
             Section("SKILL.md") {
                 let content = store.readSkillContent(skill.id) ?? "(empty)"
                 Text(content)
-                    .font(.system(.caption, design: .monospaced))
+                    .font(AppFont.sw(12, weight: .regular, category: .code))
                     .textSelection(.enabled)
             }
 
@@ -181,7 +181,7 @@ private struct SessionSkillDetailView: View {
                         } label: {
                             Label {
                                 Text(relativePath)
-                                    .font(.system(.subheadline, design: .monospaced))
+                                    .font(AppFont.sw(15, weight: .regular, category: .code))
                             } icon: {
                                 Image(systemName: iconName(for: relativePath))
                                     .foregroundStyle(.secondary)
@@ -242,7 +242,7 @@ private struct SkillFilePreviewView: View {
             } else {
                 ScrollView {
                     Text(content)
-                        .font(.system(.caption, design: .monospaced))
+                        .font(AppFont.sw(12, weight: .regular, category: .code))
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding()

@@ -43,12 +43,12 @@ struct OnboardingModelSelectionView: View {
                     Section {
                         VStack(alignment: .leading, spacing: 10) {
                             Label("Could not fetch the model list automatically.", systemImage: "exclamationmark.triangle")
-                                .font(.subheadline)
+                                .font(AppFont.sw(15, weight: .regular, category: .body))
                             // The detail line is the provider's own error; skip it
                             // when all we have is the generic headline again.
                             if fetchError != AppLocalized("Could not fetch the model list automatically.") {
                                 Text(fetchError)
-                                    .font(.caption)
+                                    .font(AppFont.sw(12, weight: .regular, category: .ui))
                                     .foregroundStyle(.secondary)
                             }
                             HStack(spacing: 12) {
@@ -72,7 +72,7 @@ struct OnboardingModelSelectionView: View {
                             VStack(spacing: 8) {
                                 ProgressView()
                                 Text("Loading models...")
-                                    .font(.caption)
+                                    .font(AppFont.sw(12, weight: .regular, category: .ui))
                                     .foregroundStyle(.secondary)
                             }
                             Spacer()
@@ -218,12 +218,12 @@ struct OnboardingModelSelectionView: View {
                         .frame(width: 26, height: 26)
                     if isSelected, let idx = selectionIndex {
                         Text("\(idx + 1)")
-                            .font(.caption.weight(.semibold))
+                            .font(AppFont.sw(12, weight: .semibold, category: .ui))
                             .foregroundStyle(.white)
                     }
                 }
                 Text(entry.model.displayName)
-                    .font(.body)
+                    .font(AppFont.sw(17, weight: .regular, category: .body))
                     .foregroundStyle(Color(UIColor.label))
                 Spacer()
             }

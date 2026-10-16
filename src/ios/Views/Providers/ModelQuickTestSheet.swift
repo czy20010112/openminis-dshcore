@@ -83,8 +83,8 @@ struct ModelQuickTestSheet: View {
                 .background(Color.accentColor.opacity(0.12))
                 .clipShape(RoundedRectangle(cornerRadius: 8))
             VStack(alignment: .leading, spacing: 2) {
-                Text(entry.model.displayName).font(.headline)
-                Text(entry.model.id).font(.caption2).foregroundStyle(.secondary)
+                Text(entry.model.displayName).font(AppFont.sw(17, weight: .semibold, category: .body))
+                Text(entry.model.id).font(AppFont.sw(11, weight: .regular, category: .ui)).foregroundStyle(.secondary)
             }
             Spacer()
         }
@@ -362,7 +362,7 @@ private struct TestCard: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Image(systemName: run.kind.icon).foregroundStyle(.tint)
-                Text(run.kind.title).font(.subheadline.weight(.semibold))
+                Text(run.kind.title).font(AppFont.sw(15, weight: .semibold, category: .body))
                 Spacer()
                 statusBadge
             }
@@ -402,7 +402,7 @@ private struct TestCard: View {
                 Image(systemName: "checkmark.seal.fill").foregroundStyle(.green)
                 if run.elapsed > 0 {
                     Text(String(format: "%.1fs", run.elapsed))
-                        .font(.caption2).foregroundStyle(.tertiary)
+                        .font(AppFont.sw(11, weight: .regular, category: .ui)).foregroundStyle(.tertiary)
                 }
             }
         }
@@ -411,10 +411,10 @@ private struct TestCard: View {
     @ViewBuilder private var content: some View {
         switch run.state {
         case .running:
-            Text("Testing…").font(.caption).foregroundStyle(.secondary)
+            Text("Testing…").font(AppFont.sw(12, weight: .regular, category: .ui)).foregroundStyle(.secondary)
 
         case .text(let reply):
-            Text(reply).font(.subheadline).textSelection(.enabled)
+            Text(reply).font(AppFont.sw(15, weight: .regular, category: .body)).textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
         case .image(let data):
@@ -424,14 +424,14 @@ private struct TestCard: View {
                     .clipShape(RoundedRectangle(cornerRadius: 8))
             } else {
                 Text("Received \(data.count) bytes (couldn't decode preview)")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(AppFont.sw(12, weight: .regular, category: .ui)).foregroundStyle(.secondary)
             }
 
         case .audio(let data):
             Button {
                 onPlay(data)
             } label: {
-                Label("Play", systemImage: "play.circle.fill").font(.title3)
+                Label("Play", systemImage: "play.circle.fill").font(AppFont.sw(20, weight: .regular, category: .title))
             }
             .buttonStyle(.borderless)
 
@@ -440,14 +440,14 @@ private struct TestCard: View {
             labeled("Transcribed", heard)
 
         case .failure(let message):
-            Text(message).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+            Text(message).font(AppFont.sw(12, weight: .regular, category: .ui)).foregroundStyle(.secondary).textSelection(.enabled)
         }
     }
 
     private func labeled(_ title: LocalizedStringKey, _ text: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(title).font(.caption2.weight(.medium)).foregroundStyle(.secondary)
-            Text(text).font(.subheadline).textSelection(.enabled)
+            Text(title).font(AppFont.sw(11, weight: .medium, category: .ui)).foregroundStyle(.secondary)
+            Text(text).font(AppFont.sw(15, weight: .regular, category: .body)).textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
     }

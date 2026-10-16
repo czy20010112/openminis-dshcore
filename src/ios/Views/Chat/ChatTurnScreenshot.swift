@@ -63,7 +63,7 @@ struct ChatScreenshotPreviewSheet: View {
             .overlay(alignment: .bottom) {
                 if let toast {
                     Text(toast)
-                        .font(.footnote.weight(.medium))
+                        .font(AppFont.sw(13, weight: .medium, category: .body))
                         .foregroundStyle(Color(UIColor.systemBackground))
                         .padding(.horizontal, 14)
                         .padding(.vertical, 8)

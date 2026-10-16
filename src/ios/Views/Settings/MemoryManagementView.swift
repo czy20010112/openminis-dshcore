@@ -33,20 +33,20 @@ struct MemoryManagementView: View {
                     VStack(alignment: .leading, spacing: 3) {
                         HStack {
                             Text(file.name)
-                                .font(.body)
+                                .font(AppFont.sw(17, weight: .regular, category: .body))
                             if !file.fileSize.isEmpty {
                                 Text(file.fileSize)
-                                    .font(.caption2)
+                                    .font(AppFont.sw(11, weight: .regular, category: .ui))
                                     .foregroundStyle(.tertiary)
                             }
                             Spacer()
                             Text(file.modifiedDate)
-                                .font(.caption2)
+                                .font(AppFont.sw(11, weight: .regular, category: .ui))
                                 .foregroundStyle(.secondary)
                         }
                         if !file.preview.isEmpty {
                             Text(file.preview)
-                                .font(.caption)
+                                .font(AppFont.sw(12, weight: .regular, category: .ui))
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
                         }
@@ -78,7 +78,7 @@ struct MemoryManagementView: View {
         .overlay(alignment: .top) {
             if let msg = forceSyncToast {
                 Text(msg)
-                    .font(.subheadline.weight(.medium))
+                    .font(AppFont.sw(15, weight: .medium, category: .body))
                     .foregroundStyle(.white)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 10)
@@ -209,7 +209,7 @@ private struct MemoryFileEditView: View {
         VStack(spacing: 0) {
             if isGlobal {
                 Text("Persistent instructions and preferences visible to the agent in every session. You can edit it here, or just ask the agent to help organize and update this memory.")
-                    .font(.caption)
+                    .font(AppFont.sw(12, weight: .regular, category: .ui))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 16)
@@ -219,14 +219,14 @@ private struct MemoryFileEditView: View {
             if let saveError {
                 Text(saveError)
                     .foregroundStyle(.red)
-                    .font(.caption)
+                    .font(AppFont.sw(12, weight: .regular, category: .ui))
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 16)
                     .padding(.bottom, 4)
             }
 
             TextEditor(text: $content)
-                .font(.system(.caption, design: .monospaced))
+                .font(AppFont.sw(12, weight: .regular, category: .code))
                 .padding(.horizontal, 12)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .onChange(of: content) { _ in

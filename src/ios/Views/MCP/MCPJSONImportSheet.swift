@@ -22,7 +22,7 @@ struct MCPJSONImportSheet: View {
             Form {
                 Section(AppLocalized("Paste MCP JSON")) {
                     TextEditor(text: $text)
-                        .font(.system(.footnote, design: .monospaced))
+                        .font(AppFont.sw(13, weight: .regular, category: .code))
                         .frame(minHeight: 220)
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.never)
@@ -35,7 +35,7 @@ struct MCPJSONImportSheet: View {
                 if let errorMessage {
                     Section {
                         Text(errorMessage)
-                            .font(.footnote)
+                            .font(AppFont.sw(13, weight: .regular, category: .body))
                             .foregroundStyle(.red)
                     }
                 }
@@ -43,7 +43,7 @@ struct MCPJSONImportSheet: View {
                 if !parsed.isEmpty {
                     Section(AppLocalized("Preview")) {
                         Text(String(format: AppLocalized("Found %d server(s)"), parsed.count))
-                            .font(.subheadline.weight(.semibold))
+                            .font(AppFont.sw(15, weight: .semibold, category: .body))
                         ForEach(parsed) { server in
                             HStack(spacing: 8) {
                                 Image(systemName: server.isSTDIO ? "terminal" : "globe")
@@ -51,7 +51,7 @@ struct MCPJSONImportSheet: View {
                                 Text(server.id)
                                 Spacer()
                                 Text(server.isSTDIO ? "STDIO" : "HTTP")
-                                    .font(.caption2.weight(.semibold))
+                                    .font(AppFont.sw(11, weight: .semibold, category: .ui))
                                     .foregroundStyle(.secondary)
                             }
                         }

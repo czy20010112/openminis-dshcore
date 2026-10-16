@@ -89,7 +89,7 @@ struct BrowserManagementView: View {
                     Label(profile.displayName, systemImage: profile.icon)
                         .foregroundStyle(Color(UIColor.label))
                     Text(displayUA(for: profile))
-                        .font(.system(size: 11, design: .monospaced))
+                        .font(AppFont.sw(11, weight: .regular, category: .code))
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                 }
@@ -129,7 +129,7 @@ struct BrowserManagementView: View {
                 }
             }
             TextField("Enter custom user agent...", text: $customUA, axis: .vertical)
-                .font(.system(size: 11, design: .monospaced))
+                .font(AppFont.sw(11, weight: .regular, category: .code))
                 .foregroundStyle(.secondary)
                 .lineLimit(2...4)
                 .onSubmit {
@@ -242,14 +242,14 @@ struct BrowserManagementView: View {
                 Spacer()
                 TextField("Width", text: $viewportWidthText)
                     .keyboardType(.numberPad)
-                    .font(.system(size: 13, design: .monospaced))
+                    .font(AppFont.sw(13, weight: .regular, category: .code))
                     .multilineTextAlignment(.center)
                     .frame(width: 72)
                     .onSubmit { commitCustomViewport() }
                 Text("×").foregroundStyle(.secondary)
                 TextField("Height", text: $viewportHeightText)
                     .keyboardType(.numberPad)
-                    .font(.system(size: 13, design: .monospaced))
+                    .font(AppFont.sw(13, weight: .regular, category: .code))
                     .multilineTextAlignment(.center)
                     .frame(width: 72)
                     .onSubmit { commitCustomViewport() }
@@ -307,7 +307,7 @@ struct BrowserManagementView: View {
     private var quickSetPresets: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Quick Set")
-                .font(.caption)
+                .font(AppFont.sw(12, weight: .regular, category: .ui))
                 .foregroundStyle(.secondary)
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
@@ -319,9 +319,9 @@ struct BrowserManagementView: View {
                         } label: {
                             VStack(spacing: 2) {
                                 Text(preset.label)
-                                    .font(.system(size: 12, weight: .medium))
+                                    .font(AppFont.sw(12, weight: .medium, category: .ui))
                                 Text("\(preset.width)×\(preset.height)")
-                                    .font(.system(size: 10, design: .monospaced))
+                                    .font(AppFont.sw(10, weight: .regular, category: .code))
                                     .foregroundStyle(.secondary)
                             }
                             .padding(.horizontal, 10)
@@ -392,9 +392,9 @@ struct BrowserManagementView: View {
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(group.domain)
-                                .font(.system(size: 14, weight: .medium))
+                                .font(AppFont.sw(14, weight: .medium, category: .body))
                             Text("\(group.cookies.count) cookie\(group.cookies.count == 1 ? "" : "s")")
-                                .font(.system(size: 12))
+                                .font(AppFont.sw(12, weight: .regular, category: .ui))
                                 .foregroundStyle(.secondary)
                         }
                         Spacer()

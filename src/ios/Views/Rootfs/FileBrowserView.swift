@@ -78,7 +78,7 @@ struct FileBrowserView: View {
                             viewModel.navigateToPathComponent(at: index)
                         }) {
                             Text(viewModel.pathComponents[index])
-                                .font(.caption)
+                                .font(AppFont.sw(12, weight: .regular, category: .ui))
                                 .foregroundColor(.blue)
                         }
                         if index < viewModel.pathComponents.count - 1 {
@@ -154,7 +154,7 @@ struct FileBrowserView: View {
         .overlay(alignment: .bottom) {
             if copiedToast {
                 Label(AppLocalized("Copied"), systemImage: "checkmark.circle.fill")
-                    .font(.subheadline.weight(.medium))
+                    .font(AppFont.sw(15, weight: .medium, category: .body))
                     .foregroundStyle(.white)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 10)
@@ -478,7 +478,7 @@ private struct MarkdownFilePreview: View {
                                 .padding(.vertical, 12)
                         } else {
                             Text(text)
-                                .font(.system(.footnote, design: .monospaced))
+                                .font(AppFont.sw(13, weight: .regular, category: .code))
                                 .textSelection(.enabled)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(16)
@@ -583,7 +583,7 @@ private struct TextFilePreview: View {
             case .loaded(let text):
                 ScrollView(.vertical) {
                     Text(text.isEmpty ? " " : text)
-                        .font(.system(.footnote, design: .monospaced))
+                        .font(AppFont.sw(13, weight: .regular, category: .code))
                         .textSelection(.enabled)
                         .lineLimit(nil)
                         .fixedSize(horizontal: false, vertical: true)
@@ -625,9 +625,9 @@ private struct FileLoadErrorView: View {
                 .font(.system(size: 48))
                 .foregroundStyle(.secondary)
             Text("Could not read file")
-                .font(.headline)
+                .font(AppFont.sw(17, weight: .semibold, category: .body))
             Text(message)
-                .font(.caption)
+                .font(AppFont.sw(12, weight: .regular, category: .ui))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 24)
@@ -705,7 +705,7 @@ private struct FileInfoView: View {
                         .font(.system(size: 48))
                         .foregroundStyle(.secondary)
                     Text("Preview not available")
-                        .font(.subheadline)
+                        .font(AppFont.sw(15, weight: .regular, category: .body))
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity)
@@ -834,7 +834,7 @@ struct FileItemRow: View {
             // Name and info
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.name)
-                    .font(.body)
+                    .font(AppFont.sw(17, weight: .regular, category: .body))
                     .lineLimit(1)
 
                 HStack(spacing: 6) {
@@ -848,7 +848,7 @@ struct FileItemRow: View {
                         Text(item.formattedDate)
                     }
                 }
-                .font(.caption)
+                .font(AppFont.sw(12, weight: .regular, category: .ui))
                 .foregroundColor(.secondary)
             }
 
@@ -1608,7 +1608,7 @@ private struct DirectoryPickerView: View {
                     ForEach(pathComponents.indices, id: \.self) { index in
                         Button { navigateTo(index: index) } label: {
                             Text(pathComponents[index])
-                                .font(.caption)
+                                .font(AppFont.sw(12, weight: .regular, category: .ui))
                                 .foregroundColor(.blue)
                         }
                         if index < pathComponents.count - 1 {
@@ -1642,7 +1642,7 @@ private struct DirectoryPickerView: View {
                                 .font(.title2)
                                 .foregroundColor(.blue)
                             Text(item.name)
-                                .font(.body)
+                                .font(AppFont.sw(17, weight: .regular, category: .body))
                                 .lineLimit(1)
                             Spacer()
                             Image(systemName: "chevron.right")

@@ -488,7 +488,7 @@ struct QuickCommandButton: View {
                 Image(systemName: icon)
                     .font(.caption)
                 Text(label)
-                    .font(.caption)
+                    .font(AppFont.sw(12, weight: .regular, category: .ui))
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 6)

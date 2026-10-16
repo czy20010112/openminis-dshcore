@@ -779,7 +779,7 @@ private struct FolderPickerSheet: View {
                     // list, editable later from Rename Group.
                     TextField("Description (optional, guides auto-grouping)", text: $newFolderDesc, axis: .vertical)
                         .lineLimit(1...2)
-                        .font(.subheadline)
+                        .font(AppFont.sw(15, weight: .regular, category: .body))
                         .onChange(of: newFolderDesc) { v in
                             if v.count > 100 { newFolderDesc = String(v.prefix(100)) }
                         }
@@ -826,9 +826,9 @@ private struct FolderPickerSheet: View {
                                 VStack(alignment: .leading, spacing: 2) {
                                     // Folder name is user data — interpolated, not a key.
                                     Text("“\(dup.name)” already exists")
-                                        .font(.subheadline)
+                                        .font(AppFont.sw(15, weight: .regular, category: .body))
                                     Text("Rename to something else, or tap to use it")
-                                        .font(.caption)
+                                        .font(AppFont.sw(12, weight: .regular, category: .ui))
                                         .foregroundStyle(.secondary)
                                 }
                             } icon: {
@@ -891,7 +891,7 @@ private struct FolderPickerSheet: View {
                                         .foregroundStyle(Color(UIColor.label))
                                         .lineLimit(1)
                                     Text("Remove from its current group")
-                                        .font(.system(size: 13))
+                                        .font(AppFont.sw(13, weight: .regular, category: .body))
                                         .foregroundStyle(Color(UIColor.secondaryLabel))
                                         .lineLimit(1)
                                 }
@@ -928,7 +928,7 @@ private struct FolderPickerSheet: View {
                                                 Text("Empty group")
                                             }
                                         }
-                                        .font(.system(size: 13))
+                                        .font(AppFont.sw(13, weight: .regular, category: .body))
                                         .foregroundStyle(Color(UIColor.secondaryLabel))
                                         .lineLimit(1)
                                     }
@@ -2001,11 +2001,11 @@ struct ContentView: View {
                             .tint(ChatColors.primaryText)
                         if let p = exportProgress, p.total > 0 {
                             Text(AppLocalized("Exporting… \(p.done) / \(p.total)"))
-                                .font(.subheadline)
+                                .font(AppFont.sw(15, weight: .regular, category: .body))
                                 .foregroundStyle(.secondary)
                         } else {
                             Text(AppLocalized("Exporting…"))
-                                .font(.subheadline)
+                                .font(AppFont.sw(15, weight: .regular, category: .body))
                                 .foregroundStyle(.secondary)
                         }
                     }
@@ -2555,9 +2555,9 @@ struct ContentView: View {
                     .font(.system(size: 48))
                     .foregroundStyle(.secondary)
                 Text("No Conversation Selected")
-                    .font(.title3.bold())
+                    .font(AppFont.sw(20, weight: .bold, category: .title))
                 Text("Select a conversation or start a new one")
-                    .font(.subheadline)
+                    .font(AppFont.sw(15, weight: .regular, category: .body))
                     .foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -3038,7 +3038,7 @@ struct ContentView: View {
                     FolderComposedIcon(glyphs: folderMiniBarGlyphs(folder.id), diameter: 30)
                     // Folder names are user data — verbatim.
                     Text(folder.name)
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(AppFont.sw(14, weight: .semibold, category: .body))
                         .foregroundStyle(Color(UIColor.label))
                         .lineLimit(1)
                 }
@@ -3355,7 +3355,7 @@ struct ContentView: View {
                         sectionHeader(index: index, group: group)
                     } else if group.showsGroupsHeader {
                         Text("Groups")
-                            .font(.subheadline.weight(.semibold))
+                            .font(AppFont.sw(15, weight: .semibold, category: .body))
                             .foregroundStyle(Color(UIColor.secondaryLabel))
                             .textCase(nil)
                     }
@@ -3546,7 +3546,7 @@ struct ContentView: View {
                         sectionHeader(index: index, group: group)
                     } else if group.showsGroupsHeader {
                         Text("Groups")
-                            .font(.subheadline.weight(.semibold))
+                            .font(AppFont.sw(15, weight: .semibold, category: .body))
                             .foregroundStyle(Color(UIColor.secondaryLabel))
                             .textCase(nil)
                     }
@@ -3707,14 +3707,14 @@ struct ContentView: View {
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(.secondary)
                 Text("Sync paused")
-                    .font(.caption2)
+                    .font(AppFont.sw(11, weight: .regular, category: .ui))
                     .foregroundStyle(.secondary)
             case .migrating(let pct, let byType):
                 Image(systemName: "arrow.triangle.2.circlepath")
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(.secondary)
                 Text("\(pct)%")
-                    .font(.caption2.weight(.semibold).monospacedDigit())
+                    .font(AppFont.sw(11, weight: .semibold, category: .code))
                     .foregroundStyle(.secondary)
                 ForEach(byType.indices, id: \.self) { i in
                     syncTypeChip(label: byType[i].label, count: byType[i].count)
@@ -3731,14 +3731,14 @@ struct ContentView: View {
                     .font(.system(size: 8, weight: .bold))
                     .foregroundStyle(.green)
                 Text("Up to date")
-                    .font(.caption2)
+                    .font(AppFont.sw(11, weight: .regular, category: .ui))
                     .foregroundStyle(.secondary)
             case .waiting:
                 Image(systemName: "clock")
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(.secondary)
                 Text("Waiting")
-                    .font(.caption2)
+                    .font(AppFont.sw(11, weight: .regular, category: .ui))
                     .foregroundStyle(.secondary)
             }
         }
@@ -3752,10 +3752,10 @@ struct ContentView: View {
     private func syncTypeChip(label: String, count: Int) -> some View {
         HStack(spacing: 3) {
             Text(label)
-                .font(.system(size: 9, weight: .semibold))
+                .font(AppFont.sw(9, weight: .semibold, category: .ui))
                 .foregroundStyle(.secondary)
             Text(formatCompact(count))
-                .font(.caption2.monospacedDigit())
+                .font(AppFont.sw(11, weight: .regular, category: .code))
                 .foregroundStyle(.secondary)
         }
     }
@@ -3800,7 +3800,7 @@ struct ContentView: View {
                 // vs a short SOUL name) and shares the bar with Cancel and
                 // Select All, so the narrow sidebar column squeezes it harder.
                 Text(selectedIds.isEmpty ? "Select Sessions" : "\(selectedIds.count) Selected")
-                    .font(.headline)
+                    .font(AppFont.sw(17, weight: .semibold, category: .body))
                     .lineLimit(1)
                     .minimumScaleFactor(0.85)
                     .frame(maxWidth: .infinity, alignment: .center)
@@ -3828,7 +3828,7 @@ struct ContentView: View {
                 // drop a .soulMdChanged notification that arrives during the gap.
                 // This Text now only READS `soulName`.
                 let titleLabel = Text(soulName)
-                    .font(.system(size: 18.5, weight: .semibold))
+                    .font(AppFont.sw(18.5, weight: .semibold, category: .body))
                     .foregroundStyle(.primary)
                     // A custom SOUL name can be long, and the width claim below
                     // hands this label the whole column — without a limit a long
@@ -4532,9 +4532,9 @@ struct ContentView: View {
 
             VStack(spacing: 8) {
                 Text("Welcome to Minis")
-                    .font(.title2.bold())
+                    .font(AppFont.sw(22, weight: .bold, category: .title))
                 Text("Your first On-Device Agent is almost ready.")
-                    .font(.subheadline)
+                    .font(AppFont.sw(15, weight: .regular, category: .body))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
             }
@@ -4591,7 +4591,7 @@ struct ContentView: View {
                     showRestoreBackup = true
                 } label: {
                     Label("Have a backup? Restore from it", systemImage: "clock.arrow.circlepath")
-                        .font(.footnote)
+                        .font(AppFont.sw(13, weight: .regular, category: .body))
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
@@ -4655,17 +4655,17 @@ struct ContentView: View {
                             .foregroundColor(.white)
                     } else {
                         Text("\(number)")
-                            .font(.system(size: 15, weight: .semibold, design: .rounded))
+                            .font(AppFont.sw(15, weight: .semibold, category: .body))
                             .foregroundColor(.white)
                     }
                 }
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
-                        .font(.body.weight(.medium))
+                        .font(AppFont.sw(17, weight: .medium, category: .body))
                         .foregroundStyle(isDone ? .secondary : .primary)
                     Text(subtitle)
-                        .font(.caption)
+                        .font(AppFont.sw(12, weight: .regular, category: .ui))
                         .foregroundStyle(.secondary)
                 }
 
@@ -5228,11 +5228,11 @@ struct ContentView: View {
                     // Folder names are user data — render verbatim, not as a key.
                     if group.folderId != nil {
                         Text(group.label)
-                            .font(.subheadline.weight(.semibold))
+                            .font(AppFont.sw(15, weight: .semibold, category: .body))
                             .foregroundStyle(Color(UIColor.secondaryLabel))
                     } else {
                         Text(LocalizedStringKey(group.label))
-                            .font(.subheadline.weight(.semibold))
+                            .font(AppFont.sw(15, weight: .semibold, category: .body))
                             .foregroundStyle(Color(UIColor.secondaryLabel))
                     }
                 }
@@ -5249,7 +5249,7 @@ struct ContentView: View {
                 // group.label stays an English key for logic; LocalizedStringKey
                 // resolves the display string per system language.
                 Text(LocalizedStringKey(group.label))
-                    .font(.subheadline.weight(.semibold))
+                    .font(AppFont.sw(15, weight: .semibold, category: .body))
                     .foregroundStyle(Color(UIColor.secondaryLabel))
             }
             .textCase(nil)
@@ -5366,7 +5366,7 @@ struct ContentView: View {
                     // Folder names are user data — verbatim Text, never a
                     // LocalizedStringKey lookup.
                     Text(group.label)
-                        .font(.system(size: 16, weight: .semibold))
+                        .font(AppFont.sw(16, weight: .semibold, category: .body))
                         .foregroundStyle(Color(UIColor.label))
                         .lineLimit(1)
                     Group {
@@ -5378,7 +5378,7 @@ struct ContentView: View {
                             Text("Empty group")
                         }
                     }
-                    .font(.system(size: 14))
+                    .font(AppFont.sw(14, weight: .regular, category: .body))
                     .foregroundStyle(Color(UIColor.secondaryLabel))
                     .lineLimit(1)
                 }
@@ -5388,7 +5388,7 @@ struct ContentView: View {
                 VStack(alignment: .trailing, spacing: 6) {
                     if let date = group.latestDate {
                         Text(SessionRow.relativeDateImpl(date))
-                            .font(.system(size: 13))
+                            .font(AppFont.sw(13, weight: .regular, category: .body))
                             .foregroundStyle(Color(UIColor.tertiaryLabel))
                     }
                     HStack(spacing: 4) {
@@ -5609,7 +5609,7 @@ struct ContentView: View {
                     Image(systemName: "square.and.arrow.up")
                         .font(.system(size: 20))
                     Text("Export")
-                        .font(.caption2)
+                        .font(AppFont.sw(11, weight: .regular, category: .ui))
                 }
                 .frame(maxWidth: .infinity)
             }
@@ -5624,7 +5624,7 @@ struct ContentView: View {
                     Image(systemName: "folder")
                         .font(.system(size: 20))
                     Text("Move")
-                        .font(.caption2)
+                        .font(AppFont.sw(11, weight: .regular, category: .ui))
                 }
                 .frame(maxWidth: .infinity)
             }
@@ -5644,7 +5644,7 @@ struct ContentView: View {
                         Image(systemName: forceSyncInFlight ? "arrow.triangle.2.circlepath" : "icloud.and.arrow.up")
                             .font(.system(size: 20))
                         Text("Force Sync")
-                            .font(.caption2)
+                            .font(AppFont.sw(11, weight: .regular, category: .ui))
                     }
                     .frame(maxWidth: .infinity)
                 }
@@ -5666,7 +5666,7 @@ struct ContentView: View {
                     Image(systemName: "trash")
                         .font(.system(size: 20))
                     Text("Delete")
-                        .font(.caption2)
+                        .font(AppFont.sw(11, weight: .regular, category: .ui))
                 }
                 .frame(maxWidth: .infinity)
                 .foregroundStyle(selectedIds.isEmpty ? Color.gray : Color.red)
@@ -6319,7 +6319,7 @@ private struct DeleteConfirmSheet: View {
                             if info.totalFileCount > 0 {
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text("Associated Files")
-                                        .font(.subheadline.bold())
+                                        .font(AppFont.sw(15, weight: .bold, category: .body))
                                         .foregroundStyle(.primary)
                                     ForEach(info.fileNames, id: \.self) { name in
                                         HStack(spacing: 6) {
@@ -6327,13 +6327,13 @@ private struct DeleteConfirmSheet: View {
                                                 .font(.caption)
                                                 .foregroundStyle(.secondary)
                                             Text(name)
-                                                .font(.subheadline)
+                                                .font(AppFont.sw(15, weight: .regular, category: .body))
                                                 .foregroundStyle(.secondary)
                                         }
                                     }
                                     if info.totalFileCount > info.fileNames.count {
                                         Text("and \(info.totalFileCount - info.fileNames.count) more file\(info.totalFileCount - info.fileNames.count == 1 ? "" : "s")")
-                                            .font(.caption)
+                                            .font(AppFont.sw(12, weight: .regular, category: .ui))
                                             .foregroundStyle(.tertiary)
                                     }
                                 }
@@ -6355,7 +6355,7 @@ private struct DeleteConfirmSheet: View {
                             dismiss()
                         } label: {
                             Text("Delete (\(info.formattedSize))")
-                                .font(.body.bold())
+                                .font(AppFont.sw(17, weight: .bold, category: .body))
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 12)
                         }
@@ -6383,10 +6383,10 @@ private struct DeleteConfirmSheet: View {
     private func infoRow(title: String, value: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title)
-                .font(.subheadline.bold())
+                .font(AppFont.sw(15, weight: .bold, category: .body))
                 .foregroundStyle(.primary)
             Text(value)
-                .font(.subheadline)
+                .font(AppFont.sw(15, weight: .regular, category: .body))
                 .foregroundStyle(.secondary)
         }
     }
@@ -6431,7 +6431,7 @@ private struct ExportPreviewSheet: View {
                 } else {
                     ScrollView {
                         Text(previewText)
-                            .font(.system(size: 13, design: .monospaced))
+                            .font(AppFont.sw(13, weight: .regular, category: .code))
                             .foregroundStyle(Color(UIColor.label))
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(12)
@@ -6445,7 +6445,7 @@ private struct ExportPreviewSheet: View {
                 // File size info
                 if !fileSize.isEmpty {
                     Text(fileSize)
-                        .font(.caption)
+                        .font(AppFont.sw(12, weight: .regular, category: .ui))
                         .foregroundStyle(.tertiary)
                         .padding(.top, 6)
                 }
@@ -6548,11 +6548,11 @@ private struct ExportPreviewSheet: View {
     private func summaryRow(_ key: String, _ value: String) -> some View {
         HStack(alignment: .firstTextBaseline) {
             Text(key)
-                .font(.subheadline)
+                .font(AppFont.sw(15, weight: .regular, category: .body))
                 .foregroundStyle(.secondary)
             Spacer(minLength: 12)
             Text(value)
-                .font(.subheadline)
+                .font(AppFont.sw(15, weight: .regular, category: .body))
                 .foregroundStyle(.primary)
                 .multilineTextAlignment(.trailing)
         }
@@ -6621,7 +6621,7 @@ private struct ExportPreviewSheet: View {
                 Image(systemName: icon)
                     .font(.system(size: 20))
                 Text(label)
-                    .font(.caption2)
+                    .font(AppFont.sw(11, weight: .regular, category: .ui))
             }
             .frame(maxWidth: .infinity)
         }
@@ -7405,11 +7405,11 @@ private struct RemoteSessionRow: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(session.title ?? "Untitled")
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(AppFont.sw(16, weight: .semibold, category: .body))
                     .foregroundStyle(Color(UIColor.label))
                     .lineLimit(1)
                 Text(session.updatedAt, style: .relative)
-                    .font(.system(size: 14))
+                    .font(AppFont.sw(14, weight: .regular, category: .body))
                     .foregroundStyle(Color(UIColor.secondaryLabel))
                     .lineLimit(1)
             }
@@ -7500,7 +7500,7 @@ struct SessionEditSheet: View {
                                                 .fill(editCategory == cat.key ? cat.color : cat.color.opacity(0.12))
                                         )
                                     Text(LocalizedStringKey(cat.label))
-                                        .font(.caption2)
+                                        .font(AppFont.sw(11, weight: .regular, category: .ui))
                                         .foregroundStyle(editCategory == cat.key ? cat.color : .secondary)
                                 }
                             }
@@ -7659,7 +7659,7 @@ private struct FontScaleRow: View {
                     }
                 } label: {
                     Text("A")
-                        .font(.system(size: 13, weight: .medium))
+                        .font(AppFont.sw(13, weight: .medium, category: .body))
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
@@ -7678,7 +7678,7 @@ private struct FontScaleRow: View {
                     }
                 } label: {
                     Text("A")
-                        .font(.system(size: 22, weight: .medium))
+                        .font(AppFont.sw(22, weight: .medium, category: .title))
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
@@ -7952,7 +7952,7 @@ private struct AppearanceSettingsView: View {
                                     Text(LocalizedStringKey(option.title))
                                         .foregroundStyle(.primary)
                                     Text(LocalizedStringKey(option.subtitle))
-                                        .font(.caption)
+                                        .font(AppFont.sw(12, weight: .regular, category: .ui))
                                         .foregroundStyle(.secondary)
                                 }
                                 Spacer()
@@ -7998,7 +7998,7 @@ private struct AppearanceSettingsView: View {
                     } label: {
                         HStack(spacing: 12) {
                             if !lang.flag.isEmpty {
-                                Text(lang.flag).font(.title2)
+                                Text(lang.flag).font(AppFont.sw(22, weight: .regular, category: .title))
                             } else {
                                 Image(systemName: "globe")
                                     .font(.title3)
@@ -8790,7 +8790,7 @@ private struct ForceSyncToastBanner: View {
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(.white)
             Text(text)
-                .font(.subheadline.weight(.medium))
+                .font(AppFont.sw(15, weight: .medium, category: .body))
                 .foregroundStyle(.white)
                 .lineLimit(2)
                 .multilineTextAlignment(.leading)

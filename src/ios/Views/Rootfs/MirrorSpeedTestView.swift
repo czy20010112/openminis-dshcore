@@ -495,7 +495,7 @@ struct MirrorsSectionView: View {
                         if vm.isActive(for: category),
                            let selected = vm.selectedMirror(for: category) {
                             Text(selected.name)
-                                .font(.caption)
+                                .font(AppFont.sw(12, weight: .regular, category: .ui))
                                 .foregroundStyle(.secondary)
                         }
                         if let fastest = vm.fastestResult(for: category) {
@@ -511,7 +511,7 @@ struct MirrorsSectionView: View {
         Group {
             if let ms {
                 Text("\(ms)ms")
-                    .font(.caption.monospaced())
+                    .font(AppFont.sw(12, weight: .regular, category: .code))
                     .foregroundStyle(ms < 200 ? .green : ms < 500 ? .orange : .red)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
@@ -542,9 +542,9 @@ struct MirrorCategoryDetailView: View {
 
                 if vm.isActive(for: category), let mirror = vm.selectedMirror(for: category) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(mirror.name).font(.body.weight(.medium))
+                        Text(mirror.name).font(AppFont.sw(17, weight: .medium, category: .body))
                         Text(mirror.baseURL)
-                            .font(.caption)
+                            .font(AppFont.sw(12, weight: .regular, category: .ui))
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                     }
@@ -611,10 +611,10 @@ struct MirrorCategoryDetailView: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(mirror.name)
-                        .font(.body)
+                        .font(AppFont.sw(17, weight: .regular, category: .body))
                     if mirror.isOfficial {
                         Text(AppLocalized("Official"))
-                            .font(.caption2.weight(.medium))
+                            .font(AppFont.sw(11, weight: .medium, category: .ui))
                             .foregroundStyle(.secondary)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1)
@@ -622,11 +622,11 @@ struct MirrorCategoryDetailView: View {
                             .clipShape(Capsule())
                     }
                     Text(mirror.region)
-                        .font(.caption2)
+                        .font(AppFont.sw(11, weight: .regular, category: .ui))
                         .foregroundStyle(.tertiary)
                 }
                 Text(mirror.baseURL)
-                    .font(.caption)
+                    .font(AppFont.sw(12, weight: .regular, category: .ui))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
@@ -645,10 +645,10 @@ struct MirrorCategoryDetailView: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(result.mirror.name)
-                        .font(.body)
+                        .font(AppFont.sw(17, weight: .regular, category: .body))
                     if result.mirror.isOfficial {
                         Text(AppLocalized("Official"))
-                            .font(.caption2.weight(.medium))
+                            .font(AppFont.sw(11, weight: .medium, category: .ui))
                             .foregroundStyle(.secondary)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1)
@@ -656,11 +656,11 @@ struct MirrorCategoryDetailView: View {
                             .clipShape(Capsule())
                     }
                     Text(result.mirror.region)
-                        .font(.caption2)
+                        .font(AppFont.sw(11, weight: .regular, category: .ui))
                         .foregroundStyle(.tertiary)
                 }
                 Text(result.mirror.baseURL)
-                    .font(.caption)
+                    .font(AppFont.sw(12, weight: .regular, category: .ui))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
@@ -669,11 +669,11 @@ struct MirrorCategoryDetailView: View {
 
             if let ms = result.latencyMs {
                 Text("\(ms)ms")
-                    .font(.caption.monospaced())
+                    .font(AppFont.sw(12, weight: .regular, category: .code))
                     .foregroundStyle(ms < 200 ? .green : ms < 500 ? .orange : .red)
             } else {
                 Text(AppLocalized("Timeout"))
-                    .font(.caption)
+                    .font(AppFont.sw(12, weight: .regular, category: .ui))
                     .foregroundStyle(.secondary)
             }
         }

@@ -40,7 +40,7 @@ struct BackupDestinationPicker: View {
                 if let errorText {
                     Section {
                         Text(errorText)
-                            .font(.footnote)
+                            .font(AppFont.sw(13, weight: .regular, category: .body))
                             .foregroundStyle(.red)
                     }
                 }
@@ -98,7 +98,7 @@ struct BackupDestinationPicker: View {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(r.name)
                                 Text("\(r.backend.uppercased()) · /\(r.path)")
-                                    .font(.caption)
+                                    .font(AppFont.sw(12, weight: .regular, category: .ui))
                                     .foregroundStyle(.secondary)
                             }
                         }
@@ -135,7 +135,7 @@ struct BackupDestinationPicker: View {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(f.name)
                                 Text(f.sourceDisplayName)
-                                    .font(.caption)
+                                    .font(AppFont.sw(12, weight: .regular, category: .ui))
                                     .foregroundStyle(.secondary)
                             }
                         }
@@ -173,7 +173,7 @@ struct BackupDestinationPicker: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Add Server…").foregroundStyle(.primary)
                         Text("SMB, WebDAV, SFTP, S3, FTP")
-                            .font(.caption)
+                            .font(AppFont.sw(12, weight: .regular, category: .ui))
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -189,7 +189,7 @@ struct BackupDestinationPicker: View {
                         // Names both cases, because "folder" alone reads as
                         // on-device only and hides the more useful half.
                         Text("On this iPhone, iCloud Drive, or a server connected in Files")
-                            .font(.caption)
+                            .font(AppFont.sw(12, weight: .regular, category: .ui))
                             .foregroundStyle(.secondary)
                     }
                 }

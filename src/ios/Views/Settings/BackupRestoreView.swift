@@ -84,7 +84,7 @@ struct BackupRestoreView: View {
             if let errorText {
                 Section {
                     Text(errorText)
-                        .font(.footnote)
+                        .font(AppFont.sw(13, weight: .regular, category: .body))
                         .foregroundStyle(.red)
                 }
             }
@@ -184,7 +184,7 @@ struct BackupRestoreView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(name)
                 Text(subtitle)
-                    .font(.caption)
+                    .font(AppFont.sw(12, weight: .regular, category: .ui))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -257,7 +257,7 @@ struct BackupRestoreView: View {
                     // reassurance that work is happening, not information the
                     // user has to read.
                     Text(inspectStage)
-                        .font(.caption)
+                        .font(AppFont.sw(12, weight: .regular, category: .ui))
                         .foregroundStyle(.tertiary)
                         .lineLimit(1)
                         // The stage text changes underneath a fixed layout, so
@@ -292,11 +292,11 @@ struct BackupRestoreView: View {
                     BackupActionIcon(systemName: "doc.zipper", tint: .green)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(packageURL?.lastPathComponent ?? AppLocalized("Backup"))
-                            .font(.callout.weight(.medium))
+                            .font(AppFont.sw(16, weight: .medium, category: .body))
                             .lineLimit(2)
                             .truncationMode(.middle)
                         Text(packageHeadline(m))
-                            .font(.caption)
+                            .font(AppFont.sw(12, weight: .regular, category: .ui))
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -445,7 +445,7 @@ struct BackupRestoreView: View {
                             Text(displayName(category))
                             if let stat = m.categories[category.rawValue] {
                                 Text(detailText(category, stat))
-                                    .font(.caption)
+                                    .font(AppFont.sw(12, weight: .regular, category: .ui))
                                     .foregroundStyle(.secondary)
                             }
                         }
@@ -511,7 +511,7 @@ struct BackupRestoreView: View {
         } icon: {
             Image(systemName: "exclamationmark.triangle.fill")
         }
-        .font(.caption)
+        .font(AppFont.sw(12, weight: .regular, category: .ui))
         .foregroundStyle(.orange)
     }
 
@@ -540,7 +540,7 @@ struct BackupRestoreView: View {
             ForEach(r.categories, id: \.category) { c in
                 if let failed = c.failed {
                     Text("\(displayNameRaw(c.category)): \(failed)")
-                        .font(.caption)
+                        .font(AppFont.sw(12, weight: .regular, category: .ui))
                         .foregroundStyle(.red)
                 } else {
                     // Was `.secondary`, which made a real gap look like fine print.
@@ -871,9 +871,9 @@ struct FolderPackageListView: View {
                         .font(.system(size: 40))
                         .foregroundStyle(.secondary)
                     Text("No .minisbak files in this folder.")
-                        .font(.headline)
+                        .font(AppFont.sw(17, weight: .semibold, category: .body))
                     Text("If it's on a server, open it once in the Files app to reconnect, then pull down to refresh.")
-                        .font(.footnote)
+                        .font(AppFont.sw(13, weight: .regular, category: .body))
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
                 }
@@ -896,7 +896,7 @@ struct FolderPackageListView: View {
                             .truncationMode(.middle)
                             .foregroundStyle(.primary)
                         Text("\(ByteCountFormatter.string(fromByteCount: pkg.size, countStyle: .file)) · \(pkg.modified.formatted(date: .abbreviated, time: .shortened))")
-                            .font(.caption)
+                            .font(AppFont.sw(12, weight: .regular, category: .ui))
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -957,7 +957,7 @@ struct ServerRestorePickerSheet: View {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(r.name)
                                     Text("\(r.backend.uppercased()) · /\(r.path)")
-                                        .font(.caption)
+                                        .font(AppFont.sw(12, weight: .regular, category: .ui))
                                         .foregroundStyle(.secondary)
                                 }
                             }
@@ -1203,7 +1203,7 @@ struct ServerPackageListView: View {
     private func crumb(title: String, target: String, isLast: Bool) -> some View {
         if isLast {
             Text(title)
-                .font(.subheadline.weight(.semibold))
+                .font(AppFont.sw(15, weight: .semibold, category: .body))
                 .lineLimit(1)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 3)
@@ -1212,7 +1212,7 @@ struct ServerPackageListView: View {
                 jump(to: target)
             } label: {
                 Text(title)
-                    .font(.subheadline)
+                    .font(AppFont.sw(15, weight: .regular, category: .body))
                     .lineLimit(1)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 3)
@@ -1286,7 +1286,7 @@ struct ServerPackageListView: View {
                                 .truncationMode(.middle)
                                 .foregroundStyle(.primary)
                             Text(subtitle(e.asPackage))
-                                .font(.caption)
+                                .font(AppFont.sw(12, weight: .regular, category: .ui))
                                 .foregroundStyle(.secondary)
                         }
                     }
@@ -1296,7 +1296,7 @@ struct ServerPackageListView: View {
 
             if let errorText {
                 Text(errorText)
-                    .font(.footnote)
+                    .font(AppFont.sw(13, weight: .regular, category: .body))
                     .foregroundStyle(.red)
             }
         }
@@ -1305,9 +1305,9 @@ struct ServerPackageListView: View {
     private var downloadSheet: some View {
         VStack(spacing: 20) {
             Text("Downloading Backup")
-                .font(.headline)
+                .font(AppFont.sw(17, weight: .semibold, category: .body))
             Text(downloadingName)
-                .font(.footnote)
+                .font(AppFont.sw(13, weight: .regular, category: .body))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -1317,7 +1317,7 @@ struct ServerPackageListView: View {
             ProgressView(value: downloadFraction)
                 .progressViewStyle(.linear)
             Text(progressText)
-                .font(.callout.monospacedDigit())
+                .font(AppFont.sw(16, weight: .regular, category: .code))
                 .foregroundStyle(.secondary)
             // [T-restore-download-speed] Rate and time left, on their own
             // line so the byte counts above stay easy to read. Empty until
@@ -1325,7 +1325,7 @@ struct ServerPackageListView: View {
             // zero, which would read as a stalled transfer.
             if !speedText.isEmpty {
                 Text(speedText)
-                    .font(.caption.monospacedDigit())
+                    .font(AppFont.sw(12, weight: .regular, category: .code))
                     .foregroundStyle(.secondary)
             }
 

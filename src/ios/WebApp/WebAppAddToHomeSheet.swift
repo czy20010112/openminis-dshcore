@@ -50,14 +50,14 @@ struct WebAppAddToHomeSheet: View {
                                 Text("Associated with session")
                                 Spacer()
                                 Text(sid.prefix(8))
-                                    .font(.caption.monospaced())
+                                    .font(AppFont.sw(12, weight: .regular, category: .code))
                                     .foregroundStyle(.secondary)
                             }
                         }
                     }
                     if let err = errorMessage {
                         Section {
-                            Text(err).foregroundStyle(.red).font(.caption)
+                            Text(err).foregroundStyle(.red).font(AppFont.sw(12, weight: .regular, category: .ui))
                         }
                     }
                     Section {
@@ -102,9 +102,9 @@ struct WebAppAddToHomeSheet: View {
             Label {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Can't add this file")
-                        .font(.subheadline.weight(.semibold))
+                        .font(AppFont.sw(15, weight: .semibold, category: .body))
                     Text("Only files inside a session, the shared folder, or a mounted folder can be added to the Home Screen.")
-                        .font(.caption)
+                        .font(AppFont.sw(12, weight: .regular, category: .ui))
                         .foregroundStyle(.secondary)
                 }
             } icon: {
@@ -162,7 +162,7 @@ struct WebAppAddToHomeSheet: View {
                                 }
                             }
                             Text(c.label)
-                                .font(.caption2)
+                                .font(AppFont.sw(11, weight: .regular, category: .ui))
                                 .foregroundStyle(category == c ? c.color : .secondary)
                                 .lineLimit(1)
                                 .minimumScaleFactor(0.8)
@@ -406,7 +406,7 @@ private struct LauncherTilePreview: View {
             }
             .frame(width: tile, height: tile)
             Text(title.isEmpty ? category.label : title)
-                .font(.caption)
+                .font(AppFont.sw(12, weight: .regular, category: .ui))
                 .foregroundStyle(.primary)
                 .lineLimit(1)
                 .truncationMode(.middle)

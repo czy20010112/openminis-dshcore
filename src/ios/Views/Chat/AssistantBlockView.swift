@@ -102,7 +102,7 @@ struct AssistantBlockView: View {
             VStack(alignment: .leading, spacing: 3) {
                 ForEach(Array(displayReasons.enumerated()), id: \.offset) { _, line in
                     Text(line)
-                        .font(.system(size: 10))
+                        .font(AppFont.sw(10, weight: .regular, category: .ui))
                         .foregroundStyle(ChatColors.primaryText.opacity(0.45))
                         .lineLimit(2)
                 }
@@ -112,7 +112,7 @@ struct AssistantBlockView: View {
                             .font(.system(size: 10, weight: .semibold))
                             .foregroundStyle(.orange.opacity(0.8))
                         Text(switchedLine)
-                            .font(.system(size: 11, weight: .medium))
+                            .font(AppFont.sw(11, weight: .medium, category: .ui))
                             .foregroundStyle(ChatColors.primaryText.opacity(0.75))
                             .lineLimit(2)
                     }
@@ -375,7 +375,7 @@ struct ToolCapsuleView: View {
                 // Description text with bouncing dots during streaming
                 HStack(spacing: 0) {
                     Text(displayText)
-                        .font(.system(size: 13, weight: .medium))
+                        .font(AppFont.sw(13, weight: .medium, category: .body))
                         // [T-subagent-control-capsule] Sub agent control calls
                         // title in the accent, every other tool in the normal
                         // text colour.
@@ -393,7 +393,7 @@ struct ToolCapsuleView: View {
                     if isStreaming {
                         ForEach(0..<3, id: \.self) { i in
                             Text(".")
-                                .font(.system(size: 13, weight: .medium))
+                                .font(AppFont.sw(13, weight: .medium, category: .body))
                                 .foregroundStyle(ChatColors.primaryText)
                                 .offset(y: dotsActive ? -2 : 1)
                                 .animation(
@@ -413,7 +413,7 @@ struct ToolCapsuleView: View {
                 // pill list stays clean.
                 if let dur = durationText {
                     Text(dur)
-                        .font(.system(size: 11, weight: .regular, design: .monospaced))
+                        .font(AppFont.sw(11, weight: .regular, category: .code))
                         .foregroundStyle(ChatColors.tertiaryText)
                 }
 
@@ -808,7 +808,7 @@ struct ThinkingBlockView: View {
                 WhaleTailIcon(size: 14, animating: isStreaming)
                     .foregroundStyle(.blue)
                 Text(AppLocalized("Deep Thinking"))
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(AppFont.sw(13, weight: .semibold, category: .body))
                     .foregroundStyle(.blue)
                 if isStreaming {
                     ProgressView()
@@ -829,7 +829,7 @@ struct ThinkingBlockView: View {
                     if block.content.count > 0 || block.thinkingContentBuffer.count > 0 {
                         let charCount = max(block.content.count, block.thinkingContentBuffer.count)
                         Text(charCount > 1000 ? "\(charCount / 1000)K" : "\(charCount)")
-                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .font(AppFont.sw(11, weight: .medium, category: .code))
                             .foregroundStyle(.blue.opacity(0.6))
                     }
                     Image(systemName: isExpanded.wrappedValue ? "chevron.up" : "chevron.down")
@@ -889,7 +889,7 @@ struct ThinkingBlockView: View {
                         VStack(alignment: .leading, spacing: 0) {
                             if isTruncated {
                                 Text("Showing last \(displayContent.count / 1000)K of \(total / 1000)K characters", comment: "Thinking window truncation hint")
-                                    .font(.system(size: 11))
+                                    .font(AppFont.sw(11, weight: .regular, category: .ui))
                                     .foregroundStyle(.secondary)
                                     .padding(.horizontal, 12)
                                     .padding(.bottom, 4)
@@ -900,7 +900,7 @@ struct ThinkingBlockView: View {
                             // moving is useless anyway — enable it only once
                             // streaming finished.
                             let thinkingText = Text(displayContent)
-                                .font(.system(size: 13))
+                                .font(AppFont.sw(13, weight: .regular, category: .body))
                                 .foregroundStyle(ChatColors.tertiaryText)
                                 .lineSpacing(3)
                             Group {
@@ -1097,7 +1097,7 @@ struct TypingIndicator: View {
             let n = SoulStore.cachedMetadata.name.trimmingCharacters(in: .whitespacesAndNewlines)
             soulName = n.isEmpty ? "Minis" : n
         }
-        .font(.system(size: 15, weight: .medium))
+        .font(AppFont.sw(15, weight: .medium, category: .body))
         .foregroundStyle(ChatColors.tertiaryText)
         .padding(.top, 0)
         .onAppear {

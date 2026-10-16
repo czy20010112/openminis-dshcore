@@ -111,7 +111,7 @@ struct MessageImageGallery: View {
                 Spacer()
                 if let item = currentItem {
                     Text(item.title)
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(AppFont.sw(13, weight: .semibold, category: .body))
                         .foregroundStyle(ChatColors.primaryText)
                         .lineLimit(1)
                         .truncationMode(.middle)

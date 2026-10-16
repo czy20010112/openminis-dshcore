@@ -324,7 +324,7 @@ struct ChatMessageRow: View {
                         .font(.system(size: 10))
                 }
                 Text(message.content)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(AppFont.sw(12, weight: .medium, category: .ui))
                 if !message.isCompactLoading && message.compactSummary != nil {
                     Button {
                         let summary = message.compactSummary ?? ""
@@ -368,7 +368,7 @@ struct ChatMessageRow: View {
                         .font(.system(size: 10))
                 }
                 Text(message.content)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(AppFont.sw(12, weight: .medium, category: .ui))
                     .multilineTextAlignment(.center)
             }
             .foregroundStyle(.secondary)
@@ -612,7 +612,7 @@ struct ChatMessageRow: View {
                     // the clock shipped twice without ever being on screen.
                     if showUsage, let completedAt = message.completedAt {
                         Text(Self.completedAtFormatter.string(from: completedAt))
-                            .font(.system(size: 10, design: .monospaced))
+                            .font(AppFont.sw(10, weight: .regular, category: .code))
                             .foregroundStyle(ChatColors.tertiaryText)
                             .opacity(usageContentVisible ? 1 : 0)
                     }
@@ -729,7 +729,7 @@ struct ChatMessageRow: View {
             Image(systemName: "speedometer")
                 .font(.system(size: 9))
             Text(usageSummary(usage))
-                .font(.system(size: 10, design: .monospaced))
+                .font(AppFont.sw(10, weight: .regular, category: .code))
         }
         .foregroundStyle(ChatColors.tertiaryText)
         .padding(.horizontal, 8)
@@ -745,7 +745,7 @@ struct ChatMessageRow: View {
             Image(systemName: "arrow.clockwise")
                 .font(.system(size: 9, weight: .semibold))
             Text("\(count)")
-                .font(.system(size: 10, design: .monospaced))
+                .font(AppFont.sw(10, weight: .regular, category: .code))
         }
         .foregroundStyle(Color.orange.opacity(0.8))
         .padding(.horizontal, 7)
@@ -800,7 +800,7 @@ struct ChatMessageRow: View {
                 // stale-height family in CollectionViewMessageListV3). A static
                 // limit is measured correctly at first layout and cannot desync.
                 Text(error)
-                    .font(.caption)
+                    .font(AppFont.sw(12, weight: .regular, category: .ui))
                     .foregroundStyle(.red)
                     .lineLimit(8)
                     .fixedSize(horizontal: false, vertical: true)
@@ -819,7 +819,7 @@ struct ChatMessageRow: View {
 
             if autoRetryAttempt > 0 {
                 Text("Retry in \(autoRetryCountdown)s (\(autoRetryAttempt)/\(AIChatViewModel.retryDelays.count))")
-                    .font(.caption.weight(.semibold))
+                    .font(AppFont.sw(12, weight: .semibold, category: .ui))
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 6)
@@ -831,7 +831,7 @@ struct ChatMessageRow: View {
                         Image(systemName: "arrow.clockwise")
                             .font(.caption.weight(.semibold))
                         Text("Retry")
-                            .font(.caption.weight(.semibold))
+                            .font(AppFont.sw(12, weight: .semibold, category: .ui))
                     }
                     .foregroundStyle(ChatColors.primaryText)
                     .padding(.horizontal, 12)
@@ -854,7 +854,7 @@ struct ChatMessageRow: View {
                     .font(.caption)
                     .foregroundStyle(.orange)
                 Text("Interrupted — tap Resume to continue")
-                    .font(.caption)
+                    .font(AppFont.sw(12, weight: .regular, category: .ui))
                     .foregroundStyle(.secondary)
             }
 
@@ -866,7 +866,7 @@ struct ChatMessageRow: View {
                         Image(systemName: "play.fill")
                             .font(.caption.weight(.semibold))
                         Text("Resume")
-                            .font(.caption.weight(.semibold))
+                            .font(AppFont.sw(12, weight: .semibold, category: .ui))
                     }
                     .foregroundStyle(.white)
                     .padding(.horizontal, 12)

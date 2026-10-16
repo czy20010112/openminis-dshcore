@@ -145,7 +145,7 @@ struct PaginatedMarkdownView: View {
                 VStack(spacing: 12) {
                     ProgressView()
                     Text("Preparing large document…")
-                        .font(.footnote)
+                        .font(AppFont.sw(13, weight: .regular, category: .body))
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)

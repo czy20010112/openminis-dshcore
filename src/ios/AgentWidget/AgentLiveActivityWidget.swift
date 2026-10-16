@@ -17,7 +17,7 @@ struct AgentLiveActivityWidget: Widget {
                         Image(systemName: "sparkles")
                             .font(.caption2)
                         Text(context.state.soulName.isEmpty ? "Minis" : context.state.soulName)
-                            .font(.caption.bold())
+                            .font(AppFont.sw(12, weight: .bold, category: .ui))
                     }
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
@@ -31,7 +31,7 @@ struct AgentLiveActivityWidget: Widget {
                                 .font(.caption)
                                 .foregroundStyle(.green)
                             Text("\(context.state.sessions.count)")
-                                .font(.caption.bold())
+                                .font(AppFont.sw(12, weight: .bold, category: .ui))
                         }
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
@@ -40,10 +40,10 @@ struct AgentLiveActivityWidget: Widget {
                     } else {
                         HStack(spacing: 3) {
                             Text("\(context.state.activeSessionCount)")
-                                .font(.caption.bold())
+                                .font(AppFont.sw(12, weight: .bold, category: .ui))
                                 .contentTransition(.numericText())
                             Text(context.state.activeSessionCount == 1 ? "session" : "sessions")
-                                .font(.caption.bold())
+                                .font(AppFont.sw(12, weight: .bold, category: .ui))
                         }
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
@@ -60,11 +60,11 @@ struct AgentLiveActivityWidget: Widget {
                                     .foregroundStyle(.blue)
                                     .padding(.trailing, 5)
                                 Text(session.title)
-                                    .font(.callout.bold())
+                                    .font(AppFont.sw(16, weight: .bold, category: .body))
                                     .lineLimit(1)
                                 if context.state.activeSessionCount > 1 {
                                     Text("\(context.state.carouselIndex + 1)/\(context.state.activeSessionCount)")
-                                        .font(.caption.monospacedDigit())
+                                        .font(AppFont.sw(12, weight: .regular, category: .code))
                                         .foregroundStyle(.tertiary)
                                         .padding(.leading, 4)
                                 }
@@ -77,13 +77,13 @@ struct AgentLiveActivityWidget: Widget {
                                 // Screen view's guard.
                                 if !session.isCompleted {
                                     Text("00:00")
-                                        .font(.caption2.monospacedDigit())
+                                        .font(AppFont.sw(11, weight: .regular, category: .code))
                                         .hidden()
                                         .padding(.horizontal, 6)
                                         .padding(.vertical, 2)
                                         .overlay {
                                             Text(context.attributes.startDate, style: .timer)
-                                                .font(.caption2.monospacedDigit())
+                                                .font(AppFont.sw(11, weight: .regular, category: .code))
                                                 .multilineTextAlignment(.center)
                                                 .foregroundStyle(.secondary)
                                         }
@@ -93,7 +93,7 @@ struct AgentLiveActivityWidget: Widget {
                                     // Resting state: static total run time in
                                     // the slot the live timer occupied.
                                     Text(totalRunTime(from: context.attributes.startDate, to: finishedAt))
-                                        .font(.caption2.monospacedDigit())
+                                        .font(AppFont.sw(11, weight: .regular, category: .code))
                                         .foregroundStyle(.secondary)
                                         .padding(.horizontal, 6)
                                         .padding(.vertical, 2)
@@ -107,7 +107,7 @@ struct AgentLiveActivityWidget: Widget {
                                         .foregroundStyle(.green)
                                     if !session.lastMessage.isEmpty {
                                         Text(session.lastMessage)
-                                            .font(.caption)
+                                            .font(AppFont.sw(12, weight: .regular, category: .ui))
                                             .foregroundStyle(.secondary)
                                             .lineLimit(1)
                                     }
@@ -116,7 +116,7 @@ struct AgentLiveActivityWidget: Widget {
                                     // agent activity metadata — hidden in Privacy Mode.
                                     if !context.state.privacyMode {
                                         Text("Loop \(session.loopIteration)")
-                                            .font(.caption2.monospacedDigit())
+                                            .font(AppFont.sw(11, weight: .regular, category: .code))
                                             .foregroundStyle(.tertiary)
                                     }
                                 }
@@ -128,14 +128,14 @@ struct AgentLiveActivityWidget: Widget {
                                         .id(session.toolIcon)
                                         .transition(.opacity.animation(.easeInOut(duration: 0.35)))
                                     Text(session.toolStatus)
-                                        .font(.caption)
+                                        .font(AppFont.sw(12, weight: .regular, category: .ui))
                                         .foregroundStyle(.secondary)
                                         .lineLimit(1)
                                         .contentTransition(.interpolate)
                                     Spacer()
                                     if !context.state.privacyMode {
                                         Text("Loop \(session.loopIteration)")
-                                            .font(.caption2.monospacedDigit())
+                                            .font(AppFont.sw(11, weight: .regular, category: .code))
                                             .foregroundStyle(.tertiary)
                                     }
                                 }
@@ -151,7 +151,7 @@ struct AgentLiveActivityWidget: Widget {
                     Image(systemName: "list.bullet.circle")
                         .font(.callout)
                     Text("\(context.state.activeSessionCount)")
-                        .font(.callout.bold())
+                        .font(AppFont.sw(16, weight: .bold, category: .body))
                         .contentTransition(.numericText())
                 }
             } compactTrailing: {
@@ -221,7 +221,7 @@ struct AgentLockScreenView: View {
                     Image(systemName: "sparkles")
                         .font(.caption2)
                     Text(state.soulName.isEmpty ? "Minis" : state.soulName)
-                        .font(.caption.bold())
+                        .font(AppFont.sw(12, weight: .bold, category: .ui))
                 }
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
@@ -245,14 +245,14 @@ struct AgentLockScreenView: View {
                 // removing the glyph costs no information.
                 if state.allCompleted {
                     Text(doneSummary(state.sessions.count))
-                        .font(.caption.bold())
+                        .font(AppFont.sw(12, weight: .bold, category: .ui))
                         .contentTransition(.numericText())
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                         .background(.green.opacity(0.18), in: Capsule())
                 } else {
                     Text(doingSummary(state.activeSessionCount))
-                        .font(.caption.bold())
+                        .font(AppFont.sw(12, weight: .bold, category: .ui))
                         .contentTransition(.numericText())
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
@@ -267,23 +267,23 @@ struct AgentLockScreenView: View {
                             .font(.caption)
                             .foregroundStyle(.blue)
                         Text(session.title)
-                            .font(.subheadline.bold())
+                            .font(AppFont.sw(15, weight: .bold, category: .body))
                             .lineLimit(1)
                         if state.activeSessionCount > 1 {
                             Text("\(state.carouselIndex + 1)/\(state.activeSessionCount)")
-                                .font(.caption2.monospacedDigit())
+                                .font(AppFont.sw(11, weight: .regular, category: .code))
                                 .foregroundStyle(.tertiary)
                         }
                         Spacer(minLength: 6)
                         if !session.isCompleted {
                             Text("00:00")
-                                .font(.caption2.monospacedDigit())
+                                .font(AppFont.sw(11, weight: .regular, category: .code))
                                 .hidden()
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2)
                                 .overlay {
                                     Text(attributes.startDate, style: .timer)
-                                        .font(.caption2.monospacedDigit())
+                                        .font(AppFont.sw(11, weight: .regular, category: .code))
                                         .multilineTextAlignment(.center)
                                         .foregroundStyle(.secondary)
                                 }
@@ -292,7 +292,7 @@ struct AgentLockScreenView: View {
                             // [T-ios-live-activity-privacy-duration] Static
                             // total run time in the resting state.
                             Text(totalRunTime(from: attributes.startDate, to: finishedAt))
-                                .font(.caption2.monospacedDigit())
+                                .font(AppFont.sw(11, weight: .regular, category: .code))
                                 .foregroundStyle(.secondary)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2)
@@ -306,7 +306,7 @@ struct AgentLockScreenView: View {
                                 .foregroundStyle(.green)
                             if !session.lastMessage.isEmpty {
                                 Text(session.lastMessage)
-                                    .font(.caption)
+                                    .font(AppFont.sw(12, weight: .regular, category: .ui))
                                     .foregroundStyle(.secondary)
                                     .lineLimit(1)
                             }
@@ -319,7 +319,7 @@ struct AgentLockScreenView: View {
                                 .id(session.toolIcon)
                                 .transition(.opacity.animation(.easeInOut(duration: 0.35)))
                             Text(session.toolStatus)
-                                .font(.caption)
+                                .font(AppFont.sw(12, weight: .regular, category: .ui))
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
                                 .contentTransition(.interpolate)
@@ -327,7 +327,7 @@ struct AgentLockScreenView: View {
                             // [T-ios-live-activity-privacy-mode] Hide loop count.
                             if !state.privacyMode {
                                 Text("Loop \(session.loopIteration)")
-                                    .font(.caption2.monospacedDigit())
+                                    .font(AppFont.sw(11, weight: .regular, category: .code))
                                     .foregroundStyle(.tertiary)
                             }
                         }
@@ -361,7 +361,7 @@ struct MinimalIconView: View {
                 Image(systemName: "list.bullet.circle")
                     .font(.caption)
                 Text("\(state.activeSessionCount)")
-                    .font(.system(size: 7, weight: .bold).monospacedDigit())
+                    .font(AppFont.sw(7, weight: .bold, category: .code))
                     .offset(x: 6, y: -6)
             }
         }

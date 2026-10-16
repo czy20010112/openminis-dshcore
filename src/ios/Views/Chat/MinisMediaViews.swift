@@ -376,7 +376,7 @@ private struct MinisFileChipView: View {
                     .font(.system(size: 13))
                     .foregroundColor(ChatColors.accent)
                 Text(filename)
-                    .font(.system(size: 14, weight: .medium))
+                    .font(AppFont.sw(14, weight: .medium, category: .body))
                     .foregroundColor(ChatColors.primaryText)
                     .lineLimit(1)
             }
@@ -702,7 +702,7 @@ private struct MinisImageView: View {
                 }
                 Text(url.lastPathComponent)
                     .lineLimit(1)
-                    .font(.caption)
+                    .font(AppFont.sw(12, weight: .regular, category: .ui))
             }
             .foregroundColor(ChatColors.secondaryText)
             .frame(maxWidth: 400, minHeight: mediaPlaceholderHeight, maxHeight: mediaPlaceholderHeight)
@@ -828,7 +828,7 @@ struct PreviewTitleToggle: View {
 
     var body: some View {
         Text(showFullPath ? fileURL.path : fileURL.lastPathComponent)
-            .font(.headline)
+            .font(AppFont.sw(17, weight: .semibold, category: .body))
             .lineLimit(1)
             .truncationMode(.middle)
             .contentShape(Rectangle())
@@ -1105,7 +1105,7 @@ struct MinisHTMLPreviewView: View {
                             ? fileURL.path
                             : (holder.pageTitle.isEmpty ? fileURL.lastPathComponent : holder.pageTitle)
                         Text(label)
-                            .font(.headline)
+                            .font(AppFont.sw(17, weight: .semibold, category: .body))
                             .lineLimit(1)
                             .truncationMode(.middle)
                             .contentShape(Rectangle())

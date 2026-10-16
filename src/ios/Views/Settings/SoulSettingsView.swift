@@ -93,7 +93,7 @@ struct SoulSettingsView: View {
                             if showForceSyncDone {
                                 Text(AppLocalized("Queued"))
                                     .foregroundStyle(.green)
-                                    .font(.caption)
+                                    .font(AppFont.sw(12, weight: .regular, category: .ui))
                             }
                         }
                     }
@@ -103,7 +103,7 @@ struct SoulSettingsView: View {
             if let saveError {
                 Section {
                     Text(saveError)
-                        .font(.footnote)
+                        .font(AppFont.sw(13, weight: .regular, category: .body))
                         .foregroundStyle(.red)
                 }
             }
@@ -141,7 +141,7 @@ struct SoulSettingsView: View {
         .overlay(alignment: .bottom) {
             if didJustSave {
                 Text(AppLocalized("Saved"))
-                    .font(.footnote.weight(.medium))
+                    .font(AppFont.sw(13, weight: .medium, category: .body))
                     .padding(.horizontal, 14).padding(.vertical, 8)
                     .background(Color.green.opacity(0.85), in: Capsule())
                     .foregroundStyle(.white)
@@ -229,10 +229,10 @@ struct SoulSettingsView: View {
             }
             VStack(alignment: .leading, spacing: 2) {
                 Text(name.isEmpty ? "Minis" : name)
-                    .font(.title3.weight(.semibold))
+                    .font(AppFont.sw(20, weight: .semibold, category: .title))
                 if !style.trimmingCharacters(in: .whitespaces).isEmpty {
                     Text(style)
-                        .font(.footnote)
+                        .font(AppFont.sw(13, weight: .regular, category: .body))
                         .foregroundStyle(.secondary)
                 }
             }
@@ -245,7 +245,7 @@ struct SoulSettingsView: View {
         ZStack(alignment: .topLeading) {
             TextEditor(text: $bodyText)
                 .frame(minHeight: 220)
-                .font(.system(.body, design: .monospaced))
+                .font(AppFont.sw(17, weight: .regular, category: .code))
                 .scrollContentBackground(.hidden)
             // SwiftUI's TextEditor has no native placeholder. We render
             // a greyed hint on top when the body is empty + not being
@@ -253,7 +253,7 @@ struct SoulSettingsView: View {
             // to the editor below.
             if bodyText.isEmpty {
                 Text(AppLocalized("Describe the personality and voice you want for your agent"))
-                    .font(.system(.body, design: .monospaced))
+                    .font(AppFont.sw(17, weight: .regular, category: .code))
                     .foregroundStyle(.tertiary)
                     .padding(.top, 8)
                     .padding(.leading, 5)
@@ -281,7 +281,7 @@ struct SoulSettingsView: View {
                     .foregroundStyle(.red)
             }
         }
-        .font(.footnote)
+        .font(AppFont.sw(13, weight: .regular, category: .body))
     }
 
     /// Counter shown when the body is within budget.
@@ -444,7 +444,7 @@ private struct SoulEmojiPickerSheet: View {
                                 draft = emoji
                             } label: {
                                 Text(emoji)
-                                    .font(.system(size: 28))
+                                    .font(AppFont.sw(28, weight: .regular, category: .title))
                                     .frame(width: 38, height: 38)
                                     .background(
                                         Circle().fill(draft == emoji
@@ -458,7 +458,7 @@ private struct SoulEmojiPickerSheet: View {
                 }
 
                 TextField("✨", text: $draft)
-                    .font(.system(size: 28))
+                    .font(AppFont.sw(28, weight: .regular, category: .title))
                     .multilineTextAlignment(.center)
                     .frame(height: 52)
                     .background(Color.secondary.opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
@@ -472,7 +472,7 @@ private struct SoulEmojiPickerSheet: View {
                     }
 
                 Text(AppLocalized("Tap a suggestion or type one emoji. These render the same on iOS and Android."))
-                    .font(.footnote)
+                    .font(AppFont.sw(13, weight: .regular, category: .body))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
 

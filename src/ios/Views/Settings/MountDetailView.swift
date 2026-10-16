@@ -185,21 +185,21 @@ struct MountDetailView: View {
                     .background(context.iconColor, in: RoundedRectangle(cornerRadius: 8))
                 VStack(alignment: .leading, spacing: 4) {
                     Text(context.initialName)
-                        .font(.headline)
+                        .font(AppFont.sw(17, weight: .semibold, category: .body))
                     Text(context.linuxPath)
-                        .font(.caption.monospaced())
+                        .font(AppFont.sw(12, weight: .regular, category: .code))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .truncationMode(.middle)
                     if let source = context.sourceDisplayName {
                         Text(verbatim: "← \(source)")
-                            .font(.caption2)
+                            .font(AppFont.sw(11, weight: .regular, category: .ui))
                             .foregroundStyle(.tertiary)
                             .lineLimit(1)
                     }
                     if let subtitle = context.subtitle {
                         Text(subtitle)
-                            .font(.caption2)
+                            .font(AppFont.sw(11, weight: .regular, category: .ui))
                             .foregroundStyle(.tertiary)
                     }
                 }
@@ -216,7 +216,7 @@ struct MountDetailView: View {
                 .autocorrectionDisabled()
             if nameChanged && !nameIsValid {
                 Text("Mount name must not be empty, contain '/', or be '.' or '..'.")
-                    .font(.caption)
+                    .font(AppFont.sw(12, weight: .regular, category: .ui))
                     .foregroundStyle(.red)
             }
         } header: {
@@ -234,7 +234,7 @@ struct MountDetailView: View {
                     Text(allowWrite
                          ? AppLocalized("AI, shell, and Files browser can modify files in this mount.")
                          : AppLocalized("This mount is exposed as read-only to protect it from accidental edits."))
-                        .font(.caption)
+                        .font(AppFont.sw(12, weight: .regular, category: .ui))
                         .foregroundStyle(.secondary)
                 }
             }
@@ -253,13 +253,13 @@ struct MountDetailView: View {
                     Text(visibleInFiles
                          ? AppLocalized("This folder appears in Files → On My iPhone → Minis.")
                          : AppLocalized("This folder is hidden from the iOS Files app."))
-                        .font(.caption)
+                        .font(AppFont.sw(12, weight: .regular, category: .ui))
                         .foregroundStyle(.secondary)
                 }
             }
             if context.isReadOnlyFromFiles {
                 Text("Read-only from the Files app. The app itself can always read and write.")
-                    .font(.caption)
+                    .font(AppFont.sw(12, weight: .regular, category: .ui))
                     .foregroundStyle(.secondary)
             }
         } header: {
