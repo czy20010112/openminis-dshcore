@@ -68,6 +68,13 @@ public enum DSHSpillStore {
     /// Prefix of a session directory, matching upstream's `session-<hash>`.
     public static let sessionDirectoryPrefix = "session-"
 
+    /// The guest-visible folder every spill file lands in.
+    ///
+    /// Only the settings screen needs this — a real path is per session and comes
+    /// from `linuxPath(fileName:sessionId:)`. Kept here rather than spelled out in
+    /// the view so the folder appears in exactly one place in the app's code.
+    public static let offloadsDisplayPath = "/var/minis/offloads/\(subtreeName)/"
+
     /// Whether the one-shot expiry sweep has already run in this process.
     /// Guarded by a lock rather than the main actor: `write` is callable from a
     /// tool's own context and the sweep must not run twice under a race.

@@ -74,6 +74,15 @@ public enum DSHSpillFeature {
         // missing mount from turning a tool result into a thrown turn.
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 
+        // A probe build's whole purpose is to answer "is this package the one that
+        // spills?" from the log alone, without hunting for a decision line that may
+        // never come. So say it when the hook is installed, not only when it fires.
+        if DSHSpillConfig.probeEnabled {
+            AppLogger(category: "DSHSpill").warning(
+                "[DSHSpill] probe build — budget forced to \(budget) tokens, folder \(DSHSpillStore.offloadsDisplayPath)"
+            )
+        }
+
         return { block, result in
             let text = result.content
             guard !text.isEmpty else { return nil }

@@ -46,6 +46,11 @@ on:
         required: false
         type: boolean
         default: false
+      spill_probe:
+        description: 'TEST BUILD: force the tool-result spill on at a low budget (DSH_SPILL_PROBE), so a device log carries a real [DSHSpill] line. Never published — the probe overrides the stored setting.'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -75,9 +80,9 @@ jobs:
 
       - name: Resolve probe suffix
         run: |
-          if [ "${{ inputs.compaction_probe }}" = "true" ]; then
+          if [ "${{ inputs.compaction_probe }}" = "true" ] || [ "${{ inputs.spill_probe }}" = "true" ]; then
             echo "PROBE_SUFFIX=-probe" >> $GITHUB_ENV
-            echo "::warning::compaction probe build — this IPA is not publishable"
+            echo "::warning::probe build — this IPA is not publishable"
           else
             echo "PROBE_SUFFIX=" >> $GITHUB_ENV
           fi
@@ -154,15 +159,28 @@ jobs:
       - name: Build iOS App (Release)
         env:
           DSH_PROBE: ${{ inputs.compaction_probe }}
+          DSH_SPILL_PROBE: ${{ inputs.spill_probe }}
         run: |
-          # A compilation condition, not a runtime flag: the app registers its own
+          # Compilation conditions, not runtime flags: the app registers its own
           # defaults at launch and rewrites the plist, so a key written from
           # outside is discarded. Off unless explicitly asked for, and a probe
           # build is renamed and never published.
-          EXTRA=()
+          #
+          # Both conditions ride in ONE setting: a second
+          # SWIFT_ACTIVE_COMPILATION_CONDITIONS would replace the first instead of
+          # adding to it, so the list is assembled before it is passed.
+          PROBE_CONDS=""
           if [ "$DSH_PROBE" = "true" ]; then
-            EXTRA+=("SWIFT_ACTIVE_COMPILATION_CONDITIONS=\$(inherited) DSH_COMPACTION_PROBE")
+            PROBE_CONDS="$PROBE_CONDS DSH_COMPACTION_PROBE"
             echo "::warning::compaction probe ON — this build is for testing only"
+          fi
+          if [ "$DSH_SPILL_PROBE" = "true" ]; then
+            PROBE_CONDS="$PROBE_CONDS DSH_SPILL_PROBE"
+            echo "::warning::spill probe ON — this build is for testing only"
+          fi
+          EXTRA=()
+          if [ -n "$PROBE_CONDS" ]; then
+            EXTRA+=("SWIFT_ACTIVE_COMPILATION_CONDITIONS=\$(inherited)$PROBE_CONDS")
           fi
           xcodebuild -project src/ios/Minis.xcodeproj \
             -scheme Minis \
@@ -252,9 +270,9 @@ jobs:
       - name: Resolve probe suffix
         if: steps.probe.outputs.exists == 'true'
         run: |
-          if [ "${{ inputs.compaction_probe }}" = "true" ]; then
+          if [ "${{ inputs.compaction_probe }}" = "true" ] || [ "${{ inputs.spill_probe }}" = "true" ]; then
             echo "PROBE_SUFFIX=-probe" >> $GITHUB_ENV
-            echo "::warning::compaction probe build — this IPA is not publishable"
+            echo "::warning::probe build — this IPA is not publishable"
           else
             echo "PROBE_SUFFIX=" >> $GITHUB_ENV
           fi
@@ -375,11 +393,20 @@ jobs:
         if: steps.probe.outputs.exists == 'true'
         env:
           DSH_PROBE: ${{ inputs.compaction_probe }}
+          DSH_SPILL_PROBE: ${{ inputs.spill_probe }}
         run: |
-          EXTRA=()
+          PROBE_CONDS=""
           if [ "$DSH_PROBE" = "true" ]; then
-            EXTRA+=("SWIFT_ACTIVE_COMPILATION_CONDITIONS=\$(inherited) DSH_COMPACTION_PROBE")
+            PROBE_CONDS="$PROBE_CONDS DSH_COMPACTION_PROBE"
             echo "::warning::compaction probe ON — this build is for testing only"
+          fi
+          if [ "$DSH_SPILL_PROBE" = "true" ]; then
+            PROBE_CONDS="$PROBE_CONDS DSH_SPILL_PROBE"
+            echo "::warning::spill probe ON — this build is for testing only"
+          fi
+          EXTRA=()
+          if [ -n "$PROBE_CONDS" ]; then
+            EXTRA+=("SWIFT_ACTIVE_COMPILATION_CONDITIONS=\$(inherited)$PROBE_CONDS")
           fi
           xcodebuild -project src/ios/Minis.xcodeproj \
             -scheme Minis \
@@ -445,7 +472,7 @@ jobs:
     name: Publish to GitHub Release
     needs: [build-ios15, build-ios26]
     runs-on: ubuntu-latest
-    if: always() && !cancelled() && (needs.build-ios15.result == 'success' || needs.build-ios26.result == 'success') && (github.event_name != 'workflow_dispatch' || (inputs.create_release && !inputs.compaction_probe))
+    if: always() && !cancelled() && (needs.build-ios15.result == 'success' || needs.build-ios26.result == 'success') && (github.event_name != 'workflow_dispatch' || (inputs.create_release && !inputs.compaction_probe && !inputs.spill_probe))
 
     steps:
       - name: Checkout repository
