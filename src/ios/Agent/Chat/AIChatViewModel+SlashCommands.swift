@@ -37,6 +37,11 @@ extension AIChatViewModel {
         SlashCommand(id: "compact", icon: "arrow.down.right.and.arrow.up.left", title: "Compact", subtitle: "Compress conversation history into summary"),
         SlashCommand(id: "memory", icon: "brain.head.profile", title: "Memory", subtitle: "Toggle memory writes on/off (reads unaffected)"),
         SlashCommand(id: "thinking", icon: "lightbulb", title: "Thinking", subtitle: "Toggle deep thinking mode on/off"),
+        // [T-tools-todo-plan] DSH's `/plan`, reached the same two ways it is
+        // there: type `/` and pick the row, or tap the `/` button. Tapping it
+        // again leaves the mode, which is DSH's `/plan off` without needing a
+        // second word in a composer that sends the whole line as a message.
+        SlashCommand(id: "plan", icon: "list.bullet.rectangle", title: "Plan", subtitle: "Plan mode: explore and plan before changing anything (tap again to leave)"),
     ]
 
     /// Show slash menu without replacing existing input text.
@@ -409,6 +414,21 @@ extension AIChatViewModel {
             appendSystemInfo("Memory writes \(status). Reads are unaffected.", icon: "brain.head.profile")
         case "clear":
             clearChatConfirmRequested = true
+        case "plan":
+            // [T-tools-todo-plan] Toggle, and say which way it went. The mode is
+            // enforced by the `plan:policy` prompt section registered with the
+            // DSH turn — this switch only flips the state the section reads.
+            if DSHTodoStore.shared.planModeActive {
+                appendSystemInfo(
+                    "\(DSHPlanMode.leave()) The next turn may change files again.",
+                    icon: "list.bullet.rectangle"
+                )
+            } else {
+                appendSystemInfo(
+                    "\(DSHPlanMode.enter()) The model plans first and leaves the mode through exit_plan_mode, which posts the plan here.",
+                    icon: "list.bullet.rectangle"
+                )
+            }
         default:
             break
         }

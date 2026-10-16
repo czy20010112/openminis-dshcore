@@ -751,6 +751,10 @@ extension AIChatViewModel {
         errorMessage = nil
         cachedLatestMarker = nil
         toolLoopDetector.reset()
+        // [T-tools-todo-plan] The task list and plan mode belong to this
+        // conversation, so "Clear" clears them too. DSH scopes its `todos`
+        // projection to the session for the same reason.
+        DSHTodoStore.shared.clear()
 
         if let sessionId {
             Task { await ISHExecutionCoordinator.shared.sessionDidTerminate(sessionId: sessionId) }
