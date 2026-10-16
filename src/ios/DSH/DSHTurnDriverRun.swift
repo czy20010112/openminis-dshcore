@@ -322,6 +322,10 @@ extension AIChatViewModel {
             config: config
         )
         driver.delegate = self
+        // [T-dsh-spill] Overflow handling for oversized tool results, installed
+        // where the session is known. It is nil while the feature is
+        // unconfigured, and nil takes no branch in the tool path.
+        dshInstallSpillHook(on: driver)
 
         // The user's message is already in agentHistory; mirror it into the
         // session so the surface the driver builds includes it.
