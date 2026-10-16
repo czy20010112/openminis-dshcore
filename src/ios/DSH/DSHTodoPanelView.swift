@@ -81,9 +81,9 @@ struct DSHTodoPanelView: View {
                         Image(systemName: "list.bullet.rectangle")
                             .font(.system(size: 11, weight: .semibold))
                         Text("Plan mode")
-                            .font(.system(size: 12, weight: .medium))
+                            .font(Font(AppFont.ui(12, weight: .medium, category: .ui)))
                         Text("exit")
-                            .font(.system(size: 11))
+                            .font(Font(AppFont.ui(11, category: .ui)))
                             .foregroundStyle(.secondary)
                     }
                     .foregroundStyle(Color.accentColor)
@@ -107,7 +107,7 @@ struct DSHTodoPanelView: View {
                         Spacer(minLength: 8)
                         if !expanded, let active = store.activeContent {
                             Text(active)
-                                .font(.system(size: 12))
+                                .font(Font(AppFont.ui(12, category: .ui)))
                                 .foregroundStyle(.primary)
                                 .lineLimit(1)
                                 .truncationMode(.middle)
@@ -137,7 +137,7 @@ struct DSHTodoPanelView: View {
                     stateDot(todo.status)
                         .frame(width: 10)
                     Text(todo.content)
-                        .font(.system(size: 12))
+                        .font(Font(AppFont.ui(12, category: .ui)))
                         .foregroundStyle(todo.status == .completed ? .secondary : .primary)
                         // No strikethrough: `strikethrough(_:)` and
                         // `strikethrough(_:pattern:color:)` are both applicable to a
@@ -151,7 +151,7 @@ struct DSHTodoPanelView: View {
             }
             if store.todos.count > maxVisibleRows {
                 Text("+\(store.todos.count - maxVisibleRows) more")
-                    .font(.system(size: 11))
+                    .font(Font(AppFont.ui(11, category: .ui)))
                     .foregroundStyle(.tertiary)
                     .padding(.leading, 18)
             }

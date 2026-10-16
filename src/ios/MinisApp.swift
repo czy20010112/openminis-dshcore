@@ -88,6 +88,9 @@ struct MinisApp: App {
     @AppStorage("appLanguage") private var appLanguage: String = ""
     @StateObject private var shareCoordinator = ShareCoordinator.shared
     @ObservedObject private var fontSettings = FontSettings.shared
+    /// Owns the per-category faces and weights. Observed at the root so that a
+    /// change re-runs this body and pushes a new `\.font` down the whole tree.
+    @ObservedObject private var appFontStore = AppFontStore.shared
     @ObservedObject private var configConfirmGate = ConfigConfirmationGate.shared
     /// [review S14] Drives the root-level restore sheet for a `.minisbak`
     /// opened from outside the app.
@@ -163,6 +166,14 @@ struct MinisApp: App {
         // system font and nothing throws -- so a launch log line is the only
         // place the difference is visible.
         AppFont.logRegistrationState()
+        // [T-font-stack-2] Register the user's imported faces, apply the UIKit
+        // appearance proxies and start listening for font-setting changes.
+        // Deliberately in `init`, before any view exists: `UILabel.appearance()`
+        // and its siblings only apply to views created after the proxy is set, so
+        // running this from a view's `.onAppear` would leave the first screen on
+        // the system font. The stack itself comes from `AppFontStore`, and the
+        // root view hands it to `\.font` (see `body`).
+        AppFontRuntime.install()
         let lang = UserDefaults.standard.string(forKey: "appLanguage") ?? ""
         Bundle.setLanguage(lang.isEmpty ? nil : lang)
         // [T-ios-soul-name-sidebar-stale] Pre-load cachedMetadata synchronously so
@@ -282,6 +293,18 @@ struct MinisApp: App {
                 )
                 .environment(\.locale, appLanguage.isEmpty ? .current : Locale(identifier: appLanguage))
                 .dynamicTypeSize(fontSettings.appBaseScale.dynamicTypeSize)
+                // [T-font-stack-2] THE reason the chosen stack is the app's
+                // default rather than an opt-in: a SwiftUI `Text` with no
+                // `.font()` inherits nothing custom, so without this most of the
+                // app keeps rendering in SF no matter what the font settings
+                // say. Reading `appFontStore.takeOverAppText` here is also what
+                // subscribes the root to the store: a face change re-runs this
+                // body and the new environment font reaches every descendant.
+                // `nil` restores SwiftUI's own default (the takeover switch),
+                // and the size follows the app's own base scale setting.
+                .environment(\.font, appFontStore.takeOverAppText
+                            ? AppFont.environmentFont(appScale: fontSettings.appBaseScale)
+                            : nil)
                 .onOpenURL { url in
                     shareLog.info("[Share] onOpenURL: \(url.absoluteString)")
                     guard !SessionLockStore.shared.appIsLocked else {

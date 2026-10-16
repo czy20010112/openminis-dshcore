@@ -226,6 +226,21 @@
 		<string>Fonts/Inter-Regular.ttf</string>
 		<string>Fonts/Inter-Medium.ttf</string>
 		<string>Fonts/Inter-SemiBold.ttf</string>
+		<string>Fonts/Lora-Regular.ttf</string>
+		<string>Fonts/Lora-Medium.ttf</string>
+		<string>Fonts/Lora-SemiBold.ttf</string>
+		<string>Fonts/Lora-Bold.ttf</string>
+		<string>Fonts/Literata-Regular.ttf</string>
+		<string>Fonts/Literata-Medium.ttf</string>
+		<string>Fonts/Literata-SemiBold.ttf</string>
+		<string>Fonts/Literata-Bold.ttf</string>
+		<string>Fonts/JetBrainsMono-Regular.ttf</string>
+		<string>Fonts/JetBrainsMono-Medium.ttf</string>
+		<string>Fonts/JetBrainsMono-SemiBold.ttf</string>
+		<string>Fonts/JetBrainsMono-Bold.ttf</string>
+		<string>Fonts/NotoSerifSC-Regular.ttf</string>
+		<string>Fonts/NotoSerifSC-SemiBold.ttf</string>
+		<string>Fonts/NotoSerifSC-Bold.ttf</string>
 	</array>
 	<key>UIBackgroundModes</key>
 	<array>

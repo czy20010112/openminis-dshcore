@@ -260,10 +260,10 @@ struct DSHPlanReviewSheet: View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Plan review")
-                    .font(.system(size: 13, weight: .medium))
+                    .font(Font(AppFont.ui(13, weight: .medium, category: .body)))
                     .foregroundStyle(.secondary)
                 Text(request.title)
-                    .font(.system(size: 17, weight: .semibold))
+                    .font(Font(AppFont.ui(17, weight: .semibold, category: .body)))
                     .lineLimit(2)
             }
             Spacer(minLength: 8)
@@ -271,7 +271,7 @@ struct DSHPlanReviewSheet: View {
                 DSHPlanApproval.shared.resolve(.dismissed)
                 dismiss()
             }
-            .font(.system(size: 14))
+            .font(Font(AppFont.ui(14, category: .body)))
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 14)
@@ -282,7 +282,7 @@ struct DSHPlanReviewSheet: View {
     private var footer: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Approve this plan and leave plan mode?")
-                .font(.system(size: 15, weight: .medium))
+                .font(Font(AppFont.ui(15, weight: .medium, category: .body)))
 
             feedbackField
 
@@ -314,7 +314,7 @@ struct DSHPlanReviewSheet: View {
     private var feedbackField: some View {
         ZStack(alignment: .topLeading) {
             TextEditor(text: $feedback)
-                .font(.system(size: 14))
+                .font(Font(AppFont.ui(14, category: .body)))
                 .frame(minHeight: 64, maxHeight: 96)
                 .padding(4)
                 .background(ChatColors.secondaryBg)
@@ -325,7 +325,7 @@ struct DSHPlanReviewSheet: View {
                 )
             if feedback.isEmpty {
                 Text("Optional: what to change if you keep planning…")
-                    .font(.system(size: 14))
+                    .font(Font(AppFont.ui(14, category: .body)))
                     .foregroundStyle(.tertiary)
                     .padding(.horizontal, 9)
                     .padding(.vertical, 12)
@@ -356,7 +356,7 @@ struct DSHPlanReviewSheet: View {
             }
             .controlSize(.large)
             Text(caption)
-                .font(.system(size: 11))
+                .font(Font(AppFont.ui(11, category: .ui)))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
