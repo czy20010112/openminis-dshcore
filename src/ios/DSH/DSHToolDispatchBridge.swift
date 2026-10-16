@@ -41,6 +41,12 @@ enum DSHToolDispatch {
             return .exclusive
         case "file_read", "read_image", "memory_get":
             return .parallel
+        case "todo_write", "exit_plan_mode":
+            // [T-tools-todo-plan] Session state that the prompt and the composer
+            // panel both read. Both also default to exclusive, but state it: the
+            // next person to add a parallel class needs to see that this one was
+            // decided rather than inherited.
+            return .exclusive
         default:
             // Unknown tools default to exclusive. A new tool that is safe to
             // parallelize must say so, rather than inheriting parallelism by

@@ -202,6 +202,44 @@ extension AIChatViewModel {
             ))
         }
 
+        // [T-tools-todo-plan] The session task list, and the only way out of plan
+        // mode.
+        //
+        // `todo_write`'s description is DSH's own text (`packages/todo/tool-todo`,
+        // the `allowParallelInProgress: true` branch): it is what the model was
+        // tuned against, and rewording it to "fit" this app would be a silent
+        // behaviour change. `tool_title` is the one addition, because every other
+        // tool in this app carries it.
+        //
+        // `todos` is declared as a STRING because the app's tool schema has no
+        // array parameter type (`AgentParamType` is string / integer / boolean).
+        // The description therefore has to say "JSON array" and show the shape —
+        // the same workaround `browser_use`'s `cookies` uses. The parser accepts a
+        // real array too, so a provider that ignores the schema still works.
+        tools.append(AgentToolDefinition(
+            name: "todo_write",
+            description: "Record and update a structured task list for the current work. Send the ENTIRE list every call — it REPLACES the previous list (there are no partial updates, no per-item edits). Use it to plan multi-step work and show progress: add one todo per concrete step before you start. Mark every todo being actively worked on `in_progress` — several at once when work genuinely runs in parallel (e.g. concurrent subagents or background commands), one for sequential work; while work remains, at least one task should be `in_progress`. Mark a todo `completed` the moment it is done (do not batch completions), and allow no `in_progress` item only once all work is complete. Skip the list for trivial single-step tasks. Statuses: `pending` (not started), `in_progress` (being worked on now), `completed` (finished). The list is shown to the user in a panel above the input box, so keep each line short.",
+            parameters: [
+                "tool_title": AgentToolParam(type: .string, description: "A concise 5-10 word summary shown to the user, e.g. 'Plan the compression rewrite'. Use the same language as the user."),
+                "todos": AgentToolParam(type: .string, description: #"The COMPLETE task list, as a JSON array — this replaces whatever list exists now. Shape: [{"content": "Read the existing parser", "status": "completed"}, {"content": "Add the fallback branch", "status": "in_progress"}]. Each item needs `content` (a short imperative line, unique within the list) and `status` (pending | in_progress | completed)."#),
+            ],
+            required: ["todos"],
+            propertyOrdering: ["tool_title", "todos"]
+        ))
+
+        // DSH keeps this registered in every mode rather than adding it on entry,
+        // so the tool catalog of a request does not change when the mode flips.
+        // The call itself is refused outside plan mode.
+        tools.append(AgentToolDefinition(
+            name: "exit_plan_mode",
+            description: "Use only in plan mode. Present your plan and, on approval, leave plan mode. Send the COMPLETE plan as markdown, starting with a # heading that names it. The user may approve — carry out the plan from your next step — or disagree; their reply comes back as a message, so fold it in and present the plan again.",
+            parameters: [
+                "plan": AgentToolParam(type: .string, description: "The complete plan, as markdown, starting with a # heading that names it."),
+            ],
+            required: ["plan"],
+            propertyOrdering: ["plan"]
+        ))
+
         return tools
     }
 

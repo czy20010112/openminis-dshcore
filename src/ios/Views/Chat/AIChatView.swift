@@ -588,6 +588,13 @@ struct AIChatView: View {
                         VStack(spacing: 0) {
                             floatingToolPreview
                                 .shadow(color: Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 0, alpha: 0.25) : UIColor(white: 0, alpha: 0) }), radius: 6, x: 0, y: 4)
+                            // [T-tools-todo-plan] The task list, docked between the
+                            // tool status bar and the input box — DSH's slot for it
+                            // (`conversation.input.dock`). It sits inside this VStack
+                            // so it follows the keyboard and the safe area with the
+                            // composer, and it contributes no height at all when there
+                            // is no list.
+                            DSHTodoPanelView()
                             #if DEBUG
                             if isReadOnly {
                                 forkBanner

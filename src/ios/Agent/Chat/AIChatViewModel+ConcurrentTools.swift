@@ -799,6 +799,24 @@ extension AIChatViewModel {
             toolOutput = memResult.output
             toolSuccess = memResult.success
 
+        case "todo_write":
+            // [T-tools-todo-plan] Whole-list replacement, DSH's contract: the
+            // panel above the composer renders from the store, and this tool call
+            // is the only writer. A rejected list changes nothing.
+            let todoResult = DSHTodoStore.shared.replace(raw: toolArgs["todos"])
+            toolOutput = todoResult.success ? todoResult.output : "Error: \(todoResult.output)"
+            toolSuccess = todoResult.success
+            if msgIdx < messages.count, blockIdx < messages[msgIdx].blocks.count {
+                messages[msgIdx].blocks[blockIdx].content = toolOutput
+            }
+
+        case "exit_plan_mode":
+            let planResult = DSHPlanMode.exit(plan: toolArgs["plan"])
+            toolOutput = planResult.success ? planResult.output : "Error: \(planResult.output)"
+            toolSuccess = planResult.success
+            if msgIdx < messages.count, blockIdx < messages[msgIdx].blocks.count {
+                messages[msgIdx].blocks[blockIdx].content = toolOutput
+            }
         default:
             toolOutput = "Error: Unknown tool '\(tu.name)'"
             toolSuccess = false

@@ -227,6 +227,12 @@ extension AIChatViewModel {
         var disposers: [() -> Void] = []
         disposers.append(contentsOf: DSHMinisPrompt.registerBase(into: prompt))
 
+        // [T-tools-todo-plan] Plan mode's policy section. Registered for every
+        // turn and empty while the mode is off, so entering or leaving the mode
+        // does not change which sections a request carries — DSH holds its tool
+        // catalog constant across modes for the same reason.
+        disposers.append(prompt.section(DSHPlanMode.policySection()))
+
         // The app's own system prompt, verbatim.
         //
         // The port started by re-authoring this as a short DSH-flavoured base and
