@@ -337,6 +337,31 @@ public final class DSHTurnDriver {
                         )
                         toolCalls.append(block)
                         assistantParts.append(block)
+                        // [T-ios-tool-announce-in-stream] Announce now, not after
+                        // the stream ends.
+                        //
+                        // The batch announce below used to be the only one, so
+                        // every tool block of a step appeared in one frame at the
+                        // end of the provider stream — and the text tail the
+                        // throttle was holding landed in that same frame, which is
+                        // the reported "a few characters, then the rest together
+                        // with all the tool calls". Here the block lands as soon as
+                        // its own call finished streaming, so several parallel calls
+                        // appear in the order they completed, as the legacy loop's
+                        // per-`contentBlockStart` append did.
+                        //
+                        // A call the loop guard later refuses needs no special
+                        // case: it is announced like any other, and `recordBlocked`
+                        // renders its refusal through `didFinishTool`, which the
+                        // adapter resolves by call id into the block that already
+                        // exists.
+                        announcedCallIds.insert(id)
+                        delegate?.driver(
+                            self,
+                            willRunTool: name,
+                            callId: id,
+                            arguments: args
+                        )
 
                     case .usage(let reported):
                         usage.inputTokens += reported.inputTokens
@@ -415,7 +440,9 @@ public final class DSHTurnDriver {
             // the call starts. Announcing here — rather than inside the
             // scheduler — also gives a refused call a block carrying its own
             // header, instead of the anonymous note it would otherwise get.
-            for call in toolCalls {
+            // Anything the loop above already announced is skipped: its block
+            // exists, and announcing it twice would append a second one.
+            for call in toolCalls where !announcedCallIds.contains(call.id) {
                 delegate?.driver(
                     self,
                     willRunTool: call.name,
@@ -671,6 +698,14 @@ public final class DSHTurnDriver {
     ///
     /// The call never ran, so the model gets the reason as its result rather
     /// than a duplicate execution.
+    /// Call ids whose transcript block has already been announced this turn.
+    ///
+    /// [T-ios-tool-announce-in-stream] Tool calls are announced as they complete
+    /// streaming; this makes the pre-dispatch batch announce idempotent for the
+    /// paths that reach it without having announced (and guards against a provider
+    /// re-emitting a call id).
+    private var announcedCallIds = Set<String>()
+
     private func recordBlocked(
         callId: String,
         name: String,
