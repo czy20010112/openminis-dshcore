@@ -196,7 +196,7 @@ jobs:
           bash .github/scripts/adhoc-sign.sh "Payload/Minis.app" src/ios
 
           SHORT_SHA=$(git rev-parse --short HEAD)
-          OUT="Minis-DSH-ios15${PROBE_SUFFIX}-unsigned.ipa"
+          OUT="MinisDSH-ios15${PROBE_SUFFIX}-unsigned.ipa"
           zip -q -r9 "$OUT" Payload
           ls -lh "$OUT"
 
@@ -207,15 +207,15 @@ jobs:
             echo "base=zhaoxiufei/OpenMinis"
             echo "xcode=$(xcodebuild -version | head -n 1)"
             echo "sha=$(git rev-parse --short HEAD)"
-            echo "ipa=$(stat -f%z Minis-DSH-ios15${PROBE_SUFFIX}-unsigned.ipa) bytes"
+            echo "ipa=$(stat -f%z MinisDSH-ios15${PROBE_SUFFIX}-unsigned.ipa) bytes"
           } | tee build-report-ios15.txt
 
       - name: Upload IPA Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Minis-DSH-ios15-ipa
+          name: MinisDSH-ios15-ipa
           path: |
-            Minis-DSH-ios15*-unsigned.ipa
+            MinisDSH-ios15*-unsigned.ipa
             build-report-ios15.txt
           retention-days: 30
           if-no-files-found: error
@@ -412,7 +412,7 @@ jobs:
           bash "$CI_HELPERS/adhoc-sign.sh" "Payload/Minis.app" src/ios
 
           SHORT_SHA=$(git rev-parse --short HEAD)
-          OUT="Minis-DSH-ios26${PROBE_SUFFIX}-unsigned.ipa"
+          OUT="MinisDSH-ios26${PROBE_SUFFIX}-unsigned.ipa"
           zip -q -r9 "$OUT" Payload
           ls -lh "$OUT"
 
@@ -424,16 +424,16 @@ jobs:
             echo "base=OpenMinis/OpenMinis"
             echo "xcode=$(xcodebuild -version | head -n 1)"
             echo "sha=$(git rev-parse --short HEAD)"
-            echo "ipa=$(stat -f%z Minis-DSH-ios26${PROBE_SUFFIX}-unsigned.ipa) bytes"
+            echo "ipa=$(stat -f%z MinisDSH-ios26${PROBE_SUFFIX}-unsigned.ipa) bytes"
           } | tee build-report-ios26.txt
 
       - name: Upload IPA Artifact
         if: steps.probe.outputs.exists == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: Minis-DSH-ios26-ipa
+          name: MinisDSH-ios26-ipa
           path: |
-            Minis-DSH-ios26*-unsigned.ipa
+            MinisDSH-ios26*-unsigned.ipa
             build-report-ios26.txt
           retention-days: 30
           if-no-files-found: error
@@ -456,7 +456,7 @@ jobs:
       - name: Download built IPAs
         uses: actions/download-artifact@v4
         with:
-          pattern: Minis-DSH-*-ipa
+          pattern: MinisDSH-*-ipa
           merge-multiple: true
           path: release
 
@@ -473,7 +473,7 @@ jobs:
           else
             # Rolling release for the tip of main. Kept off the "Latest" badge so
             # a real tag release wins it, while the asset URL stays stable:
-            #   .../releases/download/latest-main/Minis-DSH-ios15-unsigned.ipa
+            #   .../releases/download/latest-main/MinisDSH-ios15-unsigned.ipa
             echo "tag=latest-main" >> $GITHUB_OUTPUT
             echo "title=Minis DSH — rolling main build" >> $GITHUB_OUTPUT
             echo "make_latest=false" >> $GITHUB_OUTPUT
@@ -502,8 +502,8 @@ jobs:
 
             | Line | Runs on | IPA |
             |---|---|---|
-            | iOS 15 (device baseline) | iOS 15.0+ arm64 | `Minis-DSH-ios15-unsigned.ipa` |
-            | iOS 26 (upstream v1.14 line) | iOS 16.0+ arm64 | `Minis-DSH-ios26-unsigned.ipa` |
+            | iOS 15 (device baseline) | iOS 15.0+ arm64 | `MinisDSH-ios15-unsigned.ipa` |
+            | iOS 26 (upstream v1.14 line) | iOS 16.0+ arm64 | `MinisDSH-ios26-unsigned.ipa` |
 
             Both are **unsigned**. Install with `ios-mcp` (`POST /upload_file`, then
             `install_app`) on a jailbroken device with AppSync Unified, or with
