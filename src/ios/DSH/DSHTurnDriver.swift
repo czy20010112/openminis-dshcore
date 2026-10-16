@@ -615,8 +615,30 @@ public final class DSHTurnDriver {
             + "chars=\(systemPrompt.count) tools=\(schemas.count) planMode=\(DSHTodoStore.shared.planModeActive)"
         )
 
+        // [T-ctx-breakdown] Measure the request HERE, where all three inputs are
+        // in hand at once: the rendered system prompt, the tool roster and the
+        // surface the messages are projected from. The composer's context panel
+        // shows these three as the request's components, and estimating them
+        // anywhere else would describe a different request than the one about to
+        // be sent — which is exactly what the old "estimate the surface from the
+        // UI" reads were.
+        //
+        // `sectionNames` is filtered to the sections that carried text, so the
+        // panel lists what actually reached the prompt: `plan:policy` is
+        // registered on every turn but renders empty while plan mode is off, and
+        // `renderPrompt` drops empty sections.
+        let requestMessages = projectMessages(session.surfaceMessages())
+        DSHContextBreakdownStore.shared.record(
+            systemPrompt: systemPrompt,
+            tools: schemas,
+            surface: session.surface(),
+            sectionNames: assembly.sections.filter { !$0.text.isEmpty }.map(\.name),
+            model: provider.model.id,
+            provider: provider.name
+        )
+
         return LoopRequest(
-            messages: projectMessages(session.surfaceMessages()),
+            messages: requestMessages,
             systemPrompt: systemPrompt.isEmpty ? nil : systemPrompt,
             tools: schemas.map(DSHToolSchemaBridge.toAgentToolDefinition),
             maxTokens: config.maxTokens,

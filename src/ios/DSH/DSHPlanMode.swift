@@ -16,16 +16,17 @@
 //      implementation after the plan is accepted. DSH states this in the policy
 //      text and this port keeps it.
 //
-//  One deliberate divergence. DSH routes `exit_plan_mode` through a
-//  user-questions approval channel and stays in plan mode unless the user picks
-//  "Approve"; there is no such channel wired to tools here, so the call exits the
-//  mode and the plan is posted in the transcript for the user to accept or argue
-//  with. A conversational rejection is still a rejection: the model is told the
-//  plan is what the user now sees, and revising means calling the tool again if
-//  the mode is re-entered. This is the degraded form DSH itself documents for a
-//  deployment without the review channel — it stays in the mode and asks the user
-//  to switch modes manually, and refusing to *ever* leave would make the mode a
-//  trap on a phone.
+//  The one section of DSH's behaviour that was missing in the first port is now
+//  implemented. DSH routes `exit_plan_mode` through a user-questions approval
+//  channel and stays in plan mode unless the user picks "Approve". The first
+//  port had no channel wired to tools, so the call approved itself and left the
+//  mode — the operator's report was "nothing happened and it got approved".
+//  `exit` now suspends on `DSHPlanApproval` (the review channel: sheet, two
+//  options, optional feedback) and no longer decides anything by itself.
+//
+//  Every non-approving answer — keep planning (with or without feedback), a
+//  dismissed review, a cancelled turn, a review that outlived its deadline —
+//  returns to the model as an ERROR and leaves the mode on, exactly as DSH does.
 //
 //  Also unlike DSH, nothing here hard-blocks mutating tools in plan mode. DSH
 //  does not either — its policy text says sandbox mode and approval policy are
@@ -101,8 +102,16 @@ public enum DSHPlanMode {
 
     /// Handle an `exit_plan_mode` call.
     ///
+    /// Suspends on the user's decision. The plan is presented through
+    /// `DSHPlanApproval` and this call does not return until the user approves,
+    /// asks to keep planning, dismisses the review to speak, cancels the turn,
+    /// or the review hits its deadline.
+    ///
     /// - Returns: the model-facing result, or the reason the call was rejected.
-    public static func exit(plan rawPlan: Any?) -> DSHToolOutcome {
+    ///   Every non-approving path is a failure on purpose: "the plan was not
+    ///   approved" has to read as a rejection to the model, because a success
+    ///   result is what tells it to start implementing.
+    public static func exit(plan rawPlan: Any?) async -> DSHToolOutcome {
         guard DSHTodoStore.shared.planModeActive else {
             return .failed("exit_plan_mode is only available in plan mode.")
         }
@@ -111,7 +120,7 @@ public enum DSHPlanMode {
         }
         let trimmed = plan.trimmingCharacters(in: .whitespacesAndNewlines)
         // DSH rejects a plan that does not open with a level-1 heading: the
-        // heading is what the transcript card and any later review pane title
+        // heading is what the transcript card and the review sheet title
         // themselves from, and a plan without one reads as a stray paragraph.
         guard trimmed.hasPrefix("# "),
               trimmed.dropFirst(2).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
@@ -119,7 +128,70 @@ public enum DSHPlanMode {
                 "exit_plan_mode requires a non-empty markdown plan starting with a # heading that names it."
             )
         }
-        DSHTodoStore.shared.setPlanMode(false)
-        return .ok("Plan approved — plan mode exited; carry out the plan starting with your next step.")
+
+        let decision = await DSHPlanApproval.shared.review(
+            plan: trimmed,
+            title: firstHeading(trimmed) ?? "Plan"
+        )
+
+        switch decision {
+        case .approve:
+            DSHTodoStore.shared.setPlanMode(false)
+            // DSH's own success text, verbatim (`plan-mode/src/index.ts`, the
+            // tool's output render). Deliberately unchanged: the model is told
+            // to carry on from its next step, and that phrasing is what its plan
+            // policy referred to.
+            return .ok("Plan approved — plan mode exited; carry out the plan starting with your next step.")
+
+        case .keepPlanning(let feedback):
+            // DSH's two texts, verbatim: unlike a rejection from prose, "keep
+            // planning" is an instruction to revise and resubmit, and the
+            // feedback is the revision brief.
+            return .failed(feedback.isEmpty
+                ? "The user chose to keep planning; revise the plan and present it again."
+                : "The user chose to keep planning; their feedback: \(feedback)")
+
+        case .dismissed:
+            return .failed(
+                "The user dismissed the plan review to speak instead; "
+                + "stay in plan mode, stop here, and wait for their message."
+            )
+
+        case .cancelled:
+            return .failed(
+                "The plan review was cancelled before the user answered; "
+                + "stay in plan mode and present the plan again when they ask."
+            )
+
+        case .timedOut:
+            // Our own text: DSH has no deadline, because its channel assumes an
+            // interactive session. The model must not treat "no answer" as an
+            // approval, so it is told plainly and sent back to the mode.
+            return .failed(
+                "The plan review was not answered within \(Int(DSHPlanApproval.reviewTimeout / 60)) minutes; "
+                + "stay in plan mode and present the plan again when the user is ready."
+            )
+
+        case .busy:
+            return .failed(
+                "A plan review is already open and waiting for the user; "
+                + "do not call exit_plan_mode again until it is answered."
+            )
+        }
+    }
+
+    /// The plan's first level-1 heading, for the review sheet's title.
+    ///
+    /// Ported from DSH's `firstHeading(args.plan) ?? 'Plan'`: the first
+    /// non-empty line, with `# ` stripped. Returns nil for anything that is not
+    /// a level-1 heading, and the caller falls back to "Plan".
+    static func firstHeading(_ markdown: String) -> String? {
+        let firstNonEmpty = markdown
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .first { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        guard let line = firstNonEmpty?.trimmingCharacters(in: .whitespaces) else { return nil }
+        guard line.hasPrefix("# ") else { return nil }
+        let title = String(line.dropFirst(2)).trimmingCharacters(in: .whitespaces)
+        return title.isEmpty ? nil : title
     }
 }

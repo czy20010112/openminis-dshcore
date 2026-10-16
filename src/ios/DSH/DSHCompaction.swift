@@ -58,6 +58,37 @@ public enum DSHTokenEstimate {
     public static func total(_ surface: [DSHLogEntry]) -> Int {
         surface.reduce(0) { $0 + tokens(for: $1) }
     }
+
+    /// Estimated tokens for a rendered string — the assembled system prompt, or
+    /// one tool's schema text.
+    ///
+    /// Same ratio as the per-message path above, so a component measured from
+    /// text stays comparable with one measured from blocks. `[T-ctx-breakdown]`
+    /// the composer's context panel is the caller: it reports the three
+    /// components of one request, and the conversation row comes from
+    /// `total(_:)` so the panel and the compaction decision can never disagree
+    /// about the conversation's size.
+    public static func tokens(forText text: String) -> Int {
+        Int((Double(text.count) / charsPerToken).rounded())
+    }
+
+    /// Estimated tokens for a tool roster, measured from what the model is
+    /// actually sent.
+    ///
+    /// The JSON Schema object is serialized rather than walked: the serialized
+    /// form is the thing that goes on the wire, and it needs no agreement with
+    /// the providers about which keys of a schema carry text. A schema that
+    /// cannot be serialized contributes its name and description only.
+    public static func tokens(forToolSchemas schemas: [DSHToolSchema]) -> Int {
+        schemas.reduce(0) { partial, schema in
+            var total = partial + tokens(forText: schema.name) + tokens(forText: schema.description)
+            if let data = try? JSONSerialization.data(withJSONObject: schema.parameters),
+               let json = String(data: data, encoding: .utf8) {
+                total += tokens(forText: json)
+            }
+            return total
+        }
+    }
 }
 
 // MARK: - Selection
