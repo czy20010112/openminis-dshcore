@@ -259,7 +259,7 @@ struct AppFontSettingsView: View {
                 }
             }
             Picker("Chinese weight", selection: binding(category).cjkWeight) {
-                ForEach(AppFontLibrary.face(id: selection.cjkFaceId)?.availableWeights ?? AppFontWeight.allCases) { weight in
+                ForEach(cjkWeightOptions(for: selection)) { weight in
                     Text(verbatim: weight.subfamily).tag(weight)
                 }
             }
@@ -276,6 +276,25 @@ struct AppFontSettingsView: View {
         } footer: {
             categoryFooter(category)
         }
+    }
+
+    /// The weights the Chinese-weight picker may offer for one category.
+    ///
+    /// A single-face Chinese font draws only Regular itself, but the category's
+    /// weight still means something: with weight lending on it is what the lending
+    /// face serves. Offering only the chosen face's own weights left the picker
+    /// with no option matching the stored selection — Titles stores Bold, the Song
+    /// face offers Regular — and SwiftUI draws a picker whose selection matches no
+    /// tag as an EMPTY row, so the row read as broken and could not be changed back.
+    private func cjkWeightOptions(for selection: AppFontSelection) -> [AppFontWeight] {
+        var offered = AppFontLibrary.face(id: selection.cjkFaceId)?.availableWeights ?? []
+        if AppFontStore.shared.lendsCJKWeight,
+           let lender = AppFontLibrary.face(id: AppFontLibrary.weightLendingCJKFaceId) {
+            offered += lender.availableWeights
+        }
+        if !offered.contains(selection.cjkWeight) { offered.append(selection.cjkWeight) }
+        if offered.isEmpty { return AppFontWeight.allCases }
+        return AppFontWeight.allCases.filter { offered.contains($0) }
     }
 
     @ViewBuilder

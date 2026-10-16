@@ -130,7 +130,14 @@ struct DSHSpillSettingsView: View {
 
     // MARK: - Rows
 
-    private func readout(_ label: String, _ value: String) -> some View {
+    /// One label/value row of the "current effect" readout.
+    ///
+    /// Both halves are `LocalizedStringKey`s rather than `String`s. They used to be
+    /// plain strings, and `Text(_: String)` does NOT consult the catalog, so the
+    /// whole readout stayed English on a Chinese device while every other row of
+    /// the same screen localised. A value that is a path, a tool name or a number
+    /// simply has no catalog entry and renders exactly as written.
+    private func readout(_ label: LocalizedStringKey, _ value: LocalizedStringKey) -> some View {
         HStack(alignment: .firstTextBaseline) {
             Text(label)
             Spacer(minLength: 12)
@@ -141,12 +148,12 @@ struct DSHSpillSettingsView: View {
         }
     }
 
-    private var storedState: String {
+    private var storedState: LocalizedStringKey {
         guard !DSHSpillConfig.probeEnabled else { return "forced on by the probe" }
         return enabled ? "on" : "off"
     }
 
-    private var budgetState: String {
+    private var budgetState: LocalizedStringKey {
         guard let budget = DSHSpillConfig.resolvedFromDefaults()?.effectiveBudget else {
             return "off — nothing spills"
         }
