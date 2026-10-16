@@ -177,6 +177,15 @@ public final class DSHTurnDriver {
 
     public weak var delegate: (any DSHTurnDriverDelegate)?
 
+    /// Post-execute overflow handler applied to every settled tool result
+    /// ([T-dsh-spill]).
+    ///
+    /// The seam DSH hangs `spill-policy` on. Installed once per turn by the
+    /// presentation layer, which is the only side that knows the session's
+    /// storage bucket; nil — the default — leaves the tool path exactly as it
+    /// was, with no branch taken.
+    public var spillHook: DSHResultOverflowHook?
+
     /// `AgentProvider` is internal to the Minis target, so this initializer is
     /// internal too — the driver is not a public API surface.
     init(
@@ -459,7 +468,8 @@ public final class DSHTurnDriver {
                 step: step,
                 toolCalls: admissible,
                 signal: token,
-                maxParallel: config.maxParallelToolCalls
+                maxParallel: config.maxParallelToolCalls,
+                applyOverflow: spillHook
             )
 
             if cancelled || outcome.aborted {
@@ -688,6 +698,12 @@ public final class DSHTurnDriver {
             result: commit.result
         )
 
+        // [T-dsh-spill] The overflow hook has already bounded `commit.result`,
+        // so what is appended here IS what the model will read: head, elision
+        // marker, tail, and the notice naming the file holding the whole thing.
+        // DSH reaches the same state from a `tools/post-execute` listener; the
+        // invariant both forms keep is that nothing downstream of the hook can
+        // observe the unbounded result.
         var content = commit.result.content
         if commit.started {
             let verdict = gate.record(

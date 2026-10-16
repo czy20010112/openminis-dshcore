@@ -92,7 +92,8 @@ public enum DSHToolScheduler {
         step: Int,
         toolCalls: [DSHToolCallBlock],
         signal: DSHCancellationToken,
-        maxParallel: Int = 4
+        maxParallel: Int = 4,
+        applyOverflow: DSHResultOverflowHook? = nil
     ) async -> DSHScheduleOutcome {
         var planned: [DSHPlannedCall] = []
         planned.reserveCapacity(toolCalls.count)
@@ -122,7 +123,8 @@ public enum DSHToolScheduler {
             let outcome = await runGroup(
                 registry: registry, turn: turn, step: step,
                 group: group, mode: mode, signal: signal,
-                maxParallel: maxParallel
+                maxParallel: maxParallel,
+                applyOverflow: applyOverflow
             ) { commit in
                 commits.append(commit)
             }
@@ -161,6 +163,7 @@ public enum DSHToolScheduler {
         mode: DSHToolExecutionMode,
         signal: DSHCancellationToken,
         maxParallel: Int,
+        applyOverflow: DSHResultOverflowHook?,
         emit: @escaping @Sendable (DSHToolCommit) -> Void
     ) async -> DSHGroupOutcome {
         let store = DSHSlotStore(count: group.count)
@@ -211,7 +214,20 @@ public enum DSHToolScheduler {
             )
 
             do {
-                settle(index, with: try await tool.run(call.arguments, context: context))
+                var result = try await tool.run(call.arguments, context: context)
+                // [T-dsh-spill] Post-execute overflow handling, the seam DSH hangs
+                // `spill-policy` on. It runs here — after the tool settled, before
+                // the slot is published — so the ordered committer and the session
+                // append below can only ever see the bounded result. Nothing else
+                // in the pipeline has to know the full one existed.
+                //
+                // A hook that throws must not fail the call: the tool succeeded,
+                // and DSH's own contract is that a spill failure keeps the inline
+                // content rather than losing the result.
+                if let applyOverflow, let bounded = await applyOverflow(call.block, result) {
+                    result = bounded
+                }
+                settle(index, with: result)
             } catch {
                 let message: String
                 if let failure = error as? DSHFailure {

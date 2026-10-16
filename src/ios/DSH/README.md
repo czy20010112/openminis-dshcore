@@ -48,6 +48,9 @@ advancing. See the known-gaps section of `docs/DSH-ARCHITECTURE.md`.
 | `DSHMinisPrompt.swift` | — Minis prompt sections |
 | `DSHMinisTools.swift` | — Minis tool schemas |
 | `DSHPromptAdapter.swift` | — supplies the prompt and tool set to the loop |
+| `DSHSpill.swift` | `packages/spill/spill-policy/src/{index,retention,notice}.ts` |
+| `DSHSpillStore.swift` | `packages/spill/spill-local/src/{index,store,cleanup}.ts` |
+| `DSHSpillHook.swift` | — the `tools/post-execute` seam, wired to the tool scheduler |
 
 ## Why the session model changed
 
@@ -87,6 +90,54 @@ land in model order by construction and there is no index to lose.
 
 The guard runs before dispatch, so a repeated no-progress call never executes
 and the model receives the reason as the tool result.
+
+## Tool-result spill
+
+A tool result too large to be worth its tokens is written to a file in full, the
+conversation keeps only its head and tail, and a notice says how many bytes went
+overlooked and where the whole thing now lives:
+
+```
+line 1: …
+line 271: the quick brown fox …
+
+[...]
+
+line 1120: …
+line 3121: the quick brown fox …
+
+(Omitted 55279 bytes. Full formatted result stored at:
+/var/minis/offloads/dsh-spill/session-1a2b3c4d5e6f/9f3c1a2b-shell_execute.txt.
+Use read with offset/limit, or grep this path to search within it.)
+```
+
+Ported semantics, unchanged from DSH: `read` results are never spilled (the
+notice tells the model to read the file back, so spilling that read would make
+recovery lossy); only text and image content is handled; the unit is TOKENS, not
+characters; the budget splits evenly between head and tail; an image is
+indivisible and is dropped whole when it does not fit; `\n\n[...]\n\n` marks the
+elision; and the notice wording is fixed.
+
+**Where the file goes.** The session's existing offload bucket:
+`/var/minis/offloads/dsh-spill/session-<sha256(sessionId)[0:12]>/<random>-<tool>.txt`.
+That path is what makes the notice's "use read with offset/limit, or grep this
+path" true — `/var/minis/offloads` is bind-mounted onto the session's persistent
+`offloads` directory, it is documented to the model in the app's own system
+prompt, and `file_read`, `grep` and `shell_execute` all resolve it. Nothing new
+is mounted and no new tool is added.
+
+**Off by default.** The budget is `maxInlineTokens`, its absence is the off
+switch (DSH's own rule for this plugin), and the shipped DSH value is 12 500.
+The value is read from `UserDefaults` key `minis.dshSpillMaxInlineTokens`; unset,
+non-numeric, zero or negative all leave the feature inert, and the hook is then
+never installed, so the tool path takes no branch. Note the caveat above about
+injecting defaults from outside the app.
+
+**The retention decision is pure** and lives in `DSHSpill.swift` free of UIKit
+and file I/O, so it can be exercised without a device:
+`_tools/dsh-spill-selftest.swift` is generated from the shipped file by
+`_tools/sync-dsh-spill-selftest.ps1` and run on a real Swift toolchain by
+`_tools/run-dsh-spill-selftest.ps1`.
 
 ## Compaction rule
 
