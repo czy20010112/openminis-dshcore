@@ -114,7 +114,9 @@ struct DSHTodoPanelView: View {
                     Text(todo.content)
                         .font(.system(size: 12))
                         .foregroundStyle(todo.status == .completed ? .secondary : .primary)
-                        .strikethrough(todo.status == .completed, color: .secondary)
+                        // The single-argument form: `strikethrough(_:pattern:color:)`
+                        // is iOS 16 and the iOS 15 line does not have it.
+                        .strikethrough(todo.status == .completed)
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 0)
                 }

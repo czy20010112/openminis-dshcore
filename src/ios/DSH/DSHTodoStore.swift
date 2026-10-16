@@ -35,7 +35,11 @@ import Foundation
 /// Not `Result<String, String>`: `Result`'s failure must conform to `Error`, and
 /// `String` does not. The two fields are exactly what the tool dispatcher wants
 /// to write anyway (`toolOutput` / `toolSuccess`).
-struct DSHToolOutcome {
+///
+/// `public` because `DSHPlanMode.exit` is public and returns it — a public method
+/// cannot expose an internal type. The members stay internal; nothing outside
+/// this module reads them.
+public struct DSHToolOutcome {
     let output: String
     let success: Bool
 
