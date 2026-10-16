@@ -12,12 +12,20 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
     private static let log = OSLog(subsystem: "com.openminis.app.FileProvider", category: "Extension")
 
     /// Root directory for all FileProvider-visible files in the App Group container.
+    ///
+    /// Falls back to `SharedContainerStore.persistentContainerRoot` rather than
+    /// force-unwrapping: when the App Group is not provisioned — a sideloaded or
+    /// re-signed build — the unwrap trapped this extension. The fallback resolves
+    /// to this process's own Library, so the extension serves an empty directory
+    /// instead of dying, which is the honest outcome when there is no shared
+    /// container to expose.
     static var providerRoot: URL {
-        let container = FileManager.default.containerURL(
+        let fm = FileManager.default
+        let container = fm.containerURL(
             forSecurityApplicationGroupIdentifier: "group.com.openminis.minidsh"
-        )!
+        ) ?? SharedContainerStore.persistentContainerRoot
         let url = container.appendingPathComponent("MinisFileProvider", isDirectory: true)
-        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        try? fm.createDirectory(at: url, withIntermediateDirectories: true)
         return url
     }
 
