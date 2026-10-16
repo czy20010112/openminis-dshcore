@@ -1818,7 +1818,12 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
         return _cachedTimeString
     }
 
-    private var baseSystemPrompt: String {
+    /// The app's own system prompt.
+    ///
+    /// Internal rather than private: the DSH turn registers it verbatim as a
+    /// prompt section, and `private` in Swift is file-scoped, so the port could
+    /// not see it from the DSH file.
+    var baseSystemPrompt: String {
         // [T-soul-md] Layer 1 is rendered by SystemPromptBuilder, which
         // owns the "You are <name>, a capable AI assistant running on an
         // iOS device ..." identity sentence (parametric on SOUL.md's
