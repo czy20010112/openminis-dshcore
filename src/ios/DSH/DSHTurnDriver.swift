@@ -563,6 +563,22 @@ public final class DSHTurnDriver {
             systemPrompt += "\n\n" + snapshot
         }
 
+        // [T-tools-todo-plan] Which sections actually made it into this request.
+        //
+        // The operator turned plan mode on and the model carried on with the work
+        // instead of planning, then only planned after being told in prose that the
+        // mode was on — which is what a policy section that never reached the
+        // request looks like from the outside. `assemble` evaluates a section's
+        // `dynamic` provider per assembly and `renderPrompt` drops empty ones, so the
+        // section CAN be absent for two different reasons (the mode is off, or the
+        // registry never got it) and the two are indistinguishable from the reply.
+        // One line makes them distinguishable, and names the section so a rename
+        // cannot quietly break the check.
+        AppLogger(category: "DSHLoop").info(
+            "[DSH] prompt sections=[\(assembly.sections.map(\.name).joined(separator: ","))] "
+            + "chars=\(systemPrompt.count) tools=\(schemas.count) planMode=\(DSHTodoStore.shared.planModeActive)"
+        )
+
         return LoopRequest(
             messages: projectMessages(session.surfaceMessages()),
             systemPrompt: systemPrompt.isEmpty ? nil : systemPrompt,
