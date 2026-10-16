@@ -123,8 +123,9 @@ elision; and the notice wording is fixed.
 That path is what makes the notice's "use read with offset/limit, or grep this
 path" true — `/var/minis/offloads` is bind-mounted onto the session's persistent
 `offloads` directory, it is documented to the model in the app's own system
-prompt, and `file_read`, `grep` and `shell_execute` all resolve it. Nothing new
-is mounted and no new tool is added.
+prompt, `file_read` and `read_image` resolve it, and a `shell_execute` grep sees
+the same bytes. Nothing new is mounted and no new tool is added. (The notice
+wording is DSH's, unchanged, so "read" there is this app's `file_read`.)
 
 **Off by default.** The budget is `maxInlineTokens`, its absence is the off
 switch (DSH's own rule for this plugin), and the shipped DSH value is 12 500.
