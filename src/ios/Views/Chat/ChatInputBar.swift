@@ -1366,7 +1366,7 @@ struct PastableTextView: UIViewRepresentable {
     func makeUIView(context: Context) -> PastableUITextView {
         let tv = PastableUITextView()
         tv.delegate = context.coordinator
-        tv.font = UIFont.systemFont(ofSize: FontSettings.shared.scaledChatInput(16.5))
+        tv.font = AppFont.ui(FontSettings.shared.scaledChatInput(16.5))
         tv.backgroundColor = .clear
         if let maxHeightOverride { tv.maxHeight = maxHeightOverride }
         tv.isScrollEnabled = false
@@ -1420,7 +1420,7 @@ struct PastableTextView: UIViewRepresentable {
         // word-order per locale (e.g. zh moves the verb and uses fullwidth brackets).
         let placeholderLabel = UILabel()
         placeholderLabel.text = placeholder
-        placeholderLabel.font = UIFont.systemFont(ofSize: FontSettings.shared.scaledChatInput(16.5))
+        placeholderLabel.font = AppFont.ui(FontSettings.shared.scaledChatInput(16.5))
         placeholderLabel.textColor = .placeholderText
         placeholderLabel.tag = 999
         placeholderLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -1571,8 +1571,14 @@ struct PastableTextView: UIViewRepresentable {
             }
         }
 
-        // Keep font in sync with FontSettings
-        let inputFont = UIFont.systemFont(ofSize: FontSettings.shared.scaledChatInput(16.5))
+        // Keep font in sync with FontSettings.
+        //
+        // [T-font-stack] AppFont caches one UIFont per (size, weight), so the
+        // `!=` guard below (and `label.font != inputFont` further down) still
+        // compares identical instances -- a freshly built descriptor font would
+        // compare "different" every pass and invalidate the intrinsic content
+        // size on every parent re-render.
+        let inputFont = AppFont.ui(FontSettings.shared.scaledChatInput(16.5))
         if tv.font != inputFont {
             tv.font = inputFont
             tv.invalidateIntrinsicContentSize()

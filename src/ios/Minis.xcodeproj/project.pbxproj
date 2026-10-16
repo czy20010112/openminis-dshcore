@@ -390,6 +390,7 @@
 		E5TWS001 /* ThinkingRuleResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5TWS002 /* ThinkingRuleResolver.swift */; };
 		E5U000001 /* KaTeXRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5U000011 /* KaTeXRenderer.swift */; };
 		E5U000002 /* KaTeX in Resources */ = {isa = PBXBuildFile; fileRef = E5U000012 /* KaTeX */; };
+		E5F0F0A1B2C3D4E5F6000001 /* Fonts in Resources */ = {isa = PBXBuildFile; fileRef = E5F0F0A1B2C3D4E5F6000002 /* Fonts */; };
 		E5UMP0001 /* UnifiedModelPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5UMP0011 /* UnifiedModelPicker.swift */; };
 		E5V000002 /* AlternateIcons in Resources */ = {isa = PBXBuildFile; fileRef = E5V000012 /* AlternateIcons */; };
 		E5V100001 /* MessageListLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5V100011 /* MessageListLayout.swift */; };
@@ -1071,6 +1072,7 @@
 		E5TWS002 /* ThinkingRuleResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ThinkingRuleResolver.swift; path = Thinking/ThinkingRuleResolver.swift; sourceTree = "<group>"; };
 		E5U000011 /* KaTeXRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KaTeXRenderer.swift; sourceTree = "<group>"; };
 		E5U000012 /* KaTeX */ = {isa = PBXFileReference; lastKnownFileType = folder; name = KaTeX; path = Resources/KaTeX; sourceTree = "<group>"; };
+		E5F0F0A1B2C3D4E5F6000002 /* Fonts */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Fonts; path = Resources/Fonts; sourceTree = "<group>"; };
 		E5UMP0011 /* UnifiedModelPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnifiedModelPicker.swift; sourceTree = "<group>"; };
 		E5V000012 /* AlternateIcons */ = {isa = PBXFileReference; lastKnownFileType = folder; name = AlternateIcons; path = Resources/AlternateIcons; sourceTree = "<group>"; };
 		E5V100011 /* MessageListLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageListLayout.swift; sourceTree = "<group>"; };
@@ -1438,6 +1440,7 @@
 				E5AS00010 /* AppShortcuts.strings */,
 				E5A000011 /* default_mount */,
 				E5U000012 /* KaTeX */,
+				E5F0F0A1B2C3D4E5F6000002 /* Fonts */,
 				E5V000012 /* AlternateIcons */,
 				E5D00060 /* models-dev-api.json */,
 				E5JB00014 /* jieba.dict.utf8 */,
@@ -2519,6 +2522,7 @@
 				AA0838D22F3B941A00049557 /* RootfsPatch.bundle in Resources */,
 				E5A000001 /* default_mount in Resources */,
 				E5U000002 /* KaTeX in Resources */,
+				E5F0F0A1B2C3D4E5F6000001 /* Fonts in Resources */,
 				E5V000002 /* AlternateIcons in Resources */,
 				AA71B0222F44BEB200A28A5E /* Launch Screen.storyboard in Resources */,
 				E51000003 /* Assets.xcassets in Resources */,

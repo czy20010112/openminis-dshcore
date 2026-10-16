@@ -157,6 +157,12 @@ struct MinisApp: App {
         AttributeQueryRecorder.install()
         // Enable in-app language override for String(localized:) and UIKit strings
         Bundle.enableLanguageOverride()
+        // [T-font-stack] Assert that the bundled faces resolved. A font missing
+        // from UIAppFonts, absent from the built bundle, or addressed by the
+        // wrong PostScript name all fail SILENTLY -- CoreText substitutes the
+        // system font and nothing throws -- so a launch log line is the only
+        // place the difference is visible.
+        AppFont.logRegistrationState()
         let lang = UserDefaults.standard.string(forKey: "appLanguage") ?? ""
         Bundle.setLanguage(lang.isEmpty ? nil : lang)
         // [T-ios-soul-name-sidebar-stale] Pre-load cachedMetadata synchronously so

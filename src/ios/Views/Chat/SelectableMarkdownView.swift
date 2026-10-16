@@ -317,7 +317,18 @@ struct SelectableMarkdownTheme {
         self.baseFontSize = baseFontSize ?? 16.5
     }
 
-    var baseFont: UIFont { .systemFont(ofSize: baseFontSize) }
+    var baseFont: UIFont { AppFont.ui(baseFontSize) }
+    /// Table cell font: header row semibold, body rows regular.
+    ///
+    /// Same constructor as `baseFont` on purpose. These fonts are used to
+    /// MEASURE (column widths, row heights) in three separate places in this
+    /// file and to RENDER in those same three places, so they have to be one
+    /// definition -- if the measurement and the painted text disagree, table
+    /// columns and row heights drift.
+    func tableFont(header: Bool) -> UIFont {
+        AppFont.ui(baseFontSize, weight: header ? .semibold : .regular)
+    }
+
     var labelColor: UIColor { .label }
     var secondaryLabelColor: UIColor { .secondaryLabel }
     var accentColor: UIColor { .systemOrange }
@@ -344,7 +355,7 @@ struct SelectableMarkdownTheme {
         case 6: size = baseFontSize * 0.85; weight = .semibold
         default: size = baseFontSize; weight = .semibold // H4 and fallback
         }
-        return .systemFont(ofSize: size, weight: weight)
+        return AppFont.ui(size, weight: weight)
     }
 
     var inlineCodeFont: UIFont {
@@ -1251,17 +1262,14 @@ fileprivate final class MarkdownNSRenderer {
         case .emphasis(let children):
             var emphAttrs = attrs
             if let font = attrs[.font] as? UIFont {
-                emphAttrs[.font] = font.withTraits(.traitItalic)
+                emphAttrs[.font] = AppFont.italic(font)
             }
             return renderInlines(children, baseAttributes: emphAttrs)
 
         case .strong(let children):
             var strongAttrs = attrs
             if let font = attrs[.font] as? UIFont {
-                let descriptor = font.fontDescriptor.addingAttributes([
-                    .traits: [UIFontDescriptor.TraitKey.weight: UIFont.Weight.bold]
-                ])
-                strongAttrs[.font] = UIFont(descriptor: descriptor, size: font.pointSize)
+                strongAttrs[.font] = AppFont.bold(font)
             }
             return renderInlines(children, baseAttributes: strongAttrs)
 
@@ -2038,8 +2046,8 @@ final class TableAttachment: NSTextAttachment {
             for (colIdx, cell) in row.cells.enumerated() where colIdx < colCount {
                 let text = cell.content.plainText
                 let font: UIFont = rowIdx == 0
-                    ? .systemFont(ofSize: theme.baseFontSize, weight: .semibold)
-                    : .systemFont(ofSize: theme.baseFontSize)
+                    ? theme.tableFont(header: true)
+                    : theme.tableFont(header: false)
                 let lines = text.components(separatedBy: "\n")
                 let maxLineWidth: CGFloat = lines.reduce(0) { maxW, line in
                     let size = (line as NSString).size(withAttributes: [.font: font])
@@ -2061,8 +2069,8 @@ final class TableAttachment: NSTextAttachment {
         for (rowIdx, row) in rows.enumerated() {
             for (colIdx, cell) in row.cells.enumerated() where colIdx < colCount {
                 let font: UIFont = rowIdx == 0
-                    ? .systemFont(ofSize: theme.baseFontSize, weight: .semibold)
-                    : .systemFont(ofSize: theme.baseFontSize)
+                    ? theme.tableFont(header: true)
+                    : theme.tableFont(header: false)
                 let cellWidth = max(columnWidths[colIdx] - Self.cellPaddingH * 2, 20)
                 let attrStr = renderCellInlines(cell.content, baseFont: font)
                 let boundingRect = attrStr.boundingRect(
@@ -2311,13 +2319,10 @@ final class TableAttachment: NSTextAttachment {
             }
             return NSAttributedString(string: h, attributes: attrs)
         case .emphasis(let children):
-            let italicFont = font.withTraits(.traitItalic)
+            let italicFont = AppFont.italic(font)
             return renderCellInlines(children, baseFont: italicFont)
         case .strong(let children):
-            let descriptor = font.fontDescriptor.addingAttributes([
-                .traits: [UIFontDescriptor.TraitKey.weight: UIFont.Weight.bold]
-            ])
-            let boldFont = UIFont(descriptor: descriptor, size: font.pointSize)
+            let boldFont = AppFont.bold(font)
             return renderCellInlines(children, baseFont: boldFont)
         case .strikethrough(let children):
             let result = NSMutableAttributedString(attributedString: renderCellInlines(children, baseFont: font))
@@ -2525,8 +2530,8 @@ final class TableAttachment: NSTextAttachment {
                 }
 
                 let baseFont: UIFont = rowIdx == 0
-                    ? .systemFont(ofSize: theme.baseFontSize, weight: .semibold)
-                    : .systemFont(ofSize: theme.baseFontSize)
+                    ? theme.tableFont(header: true)
+                    : theme.tableFont(header: false)
 
                 let attrStr = NSMutableAttributedString(attributedString: renderCellInlines(cell.content, baseFont: baseFont))
                 let paraStyle = NSMutableParagraphStyle()
@@ -3479,7 +3484,7 @@ final class MathAttachment: NSTextAttachment {
                 // not SwiftMath). Approximate: that path draws a single text
                 // line with 1pt top padding, so its baseline sits one descender
                 // plus that padding up from the bottom.
-                let fallbackFont = UIFont.systemFont(ofSize: theme.baseFontSize)
+                let fallbackFont = AppFont.ui(theme.baseFontSize)
                 let approxBaseline = min(abs(fallbackFont.descender) + 1, imgH)
                 return CGRect(x: 0, y: -approxBaseline, width: imgW, height: imgH)
             }
@@ -7968,7 +7973,7 @@ struct SelectableMarkdownView: UIViewRepresentable {
             if _hasPlainSuffix {
                 let mut = NSMutableAttributedString(attributedString: renderedBody)
                 let suffixAttrs: [NSAttributedString.Key: Any] = [
-                    .font: UIFont.systemFont(ofSize: FontSettings.shared.scaledMessage(16.5)),
+                    .font: AppFont.ui(FontSettings.shared.scaledMessage(16.5)),
                     .foregroundColor: UIColor.label,
                 ]
                 mut.append(NSAttributedString(string: _splitForUpdate.plainSuffix, attributes: suffixAttrs))
@@ -8511,7 +8516,7 @@ struct SelectableMarkdownView: UIViewRepresentable {
                 } else {
                     let mut = NSMutableAttributedString(attributedString: rendered)
                     let suffixAttrs: [NSAttributedString.Key: Any] = [
-                        .font: UIFont.systemFont(ofSize: FontSettings.shared.scaledMessage(16.5)),
+                        .font: AppFont.ui(FontSettings.shared.scaledMessage(16.5)),
                         .foregroundColor: UIColor.label,
                     ]
                     mut.append(NSAttributedString(string: split.plainSuffix, attributes: suffixAttrs))

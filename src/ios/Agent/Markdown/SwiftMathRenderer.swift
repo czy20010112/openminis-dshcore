@@ -249,9 +249,12 @@ enum SwiftMathRenderer {
         let unicode = latexToUnicode(latex)
         guard !unicode.isEmpty else { return nil }
 
-        let textFont = UIFont.systemFont(ofSize: fontSize)
+        // [T-font-stack] Unicode fallback draws CJK inside \text{} and the
+        // operators Latin Modern lacks, so it wants the app's mixed stack.
+        // Line below (STIXTwoMath-Regular) stays untouched.
+        let textFont = AppFont.ui(fontSize)
         let mathFont = UIFont(name: "STIXTwoMath-Regular", size: fontSize) ?? textFont
-        let boldFont = UIFont.boldSystemFont(ofSize: fontSize)
+        let boldFont = AppFont.bold(textFont)
 
         let attributed = buildAttributedString(unicode, textFont: textFont, mathFont: mathFont, boldFont: boldFont)
         guard attributed.length > 0 else { return nil }
