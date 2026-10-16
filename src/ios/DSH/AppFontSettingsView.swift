@@ -97,7 +97,7 @@ struct AppFontSettingsView: View {
             HStack(spacing: 8) {
                 Text(verbatim: face.displayName)
                 Spacer(minLength: 8)
-                Text(verbatim: scriptLabel(face))
+                Text(scriptLabel(face))
                     .font(AppFont.sw(12, category: .ui))
                     .foregroundStyle(.secondary)
             }
@@ -113,12 +113,19 @@ struct AppFontSettingsView: View {
         .padding(.vertical, 2)
     }
 
-    private func scriptLabel(_ face: AppFontFace) -> String {
+    /// The scripts a face can draw, as a localisable label.
+    ///
+    /// Returned as a `LocalizedStringKey` rather than a `String`: every composed
+    /// value ("Latin", "Chinese", "Latin + Chinese") is exactly a catalog key, so
+    /// the row localises with the rest of the screen. As a `String` it was rendered
+    /// verbatim and stayed English on a Chinese device while everything around it
+    /// changed.
+    private func scriptLabel(_ face: AppFontFace) -> LocalizedStringKey {
         if face.isSystem { return "Latin + Chinese" }
         var parts: [String] = []
         if face.scripts.contains(.latin) { parts.append("Latin") }
         if face.scripts.contains(.cjk) { parts.append("Chinese") }
-        return parts.joined(separator: " + ")
+        return LocalizedStringKey(parts.joined(separator: " + "))
     }
 
     // MARK: - Imported

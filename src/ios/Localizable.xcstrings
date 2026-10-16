@@ -113220,6 +113220,1767 @@
         }
       }
     }
+  ,
+    "Font Settings" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Schrifteinstellungen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Font Settings"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ajustes de fuente"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Réglages des polices"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "フォント設定"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "글꼴 설정"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Настройки шрифта"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "字体设置"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "字體設定"
+          }
+        }
+      }
+    },
+    "Font Library" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Schriftbibliothek"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Font Library"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Biblioteca de fuentes"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bibliothèque de polices"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "フォントライブラリ"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "글꼴 라이브러리"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Библиотека шрифтов"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "字体库"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "字體庫"
+          }
+        }
+      }
+    },
+    "Imported" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Importiert"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Imported"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Importadas"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Importées"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "読み込み済み"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "가져온 글꼴"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Импортированные"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已导入"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已匯入"
+          }
+        }
+      }
+    },
+    "Global" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Global"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Global"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Global"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Global"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "全体"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "전체"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Общие"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "全局"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "全域"
+          }
+        }
+      }
+    },
+    "Titles" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Titel"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Titles"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Títulos"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Titres"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "タイトル"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "제목"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Заголовки"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "标题"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "標題"
+          }
+        }
+      }
+    },
+    "Body Text" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fließtext"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Body Text"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Texto del cuerpo"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Texte courant"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "本文"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "본문"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Основной текст"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正文"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "內文"
+          }
+        }
+      }
+    },
+    "UI Chrome" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bedienoberfläche"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "UI Chrome"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Interfaz de la app"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Interface de l’app"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "UI 部品"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "UI 요소"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Элементы интерфейса"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "界面控件"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "介面控件"
+          }
+        }
+      }
+    },
+    "Latin face" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lateinische Schrift"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Latin face"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fuente latina"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Police latine"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ラテン文字フォント"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "라틴 글꼴"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Латинский шрифт"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "拉丁字体"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "拉丁字體"
+          }
+        }
+      }
+    },
+    "Latin weight" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lateinischer Schriftschnitt"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Latin weight"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Grosor latino"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Graisse latine"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ラテン文字のウェイト"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "라틴 글꼴 굵기"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Насыщенность латинского шрифта"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "拉丁字重"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "拉丁字重"
+          }
+        }
+      }
+    },
+    "Chinese face" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chinesische Schrift"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chinese face"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fuente china"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Police chinoise"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "中国語フォント"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "중국어 글꼴"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Китайский шрифт"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "中文字体"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "中文字體"
+          }
+        }
+      }
+    },
+    "Chinese weight" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chinesischer Schriftschnitt"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chinese weight"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Grosor chino"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Graisse chinoise"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "中国語フォントのウェイト"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "중국어 글꼴 굵기"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Насыщенность китайского шрифта"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "中文字重"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "中文字重"
+          }
+        }
+      }
+    },
+    "Resolves to" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ergibt"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Resolves to"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Se resuelve como"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Donne"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "実際に使われる組み合わせ"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "실제 적용"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Итоговый набор"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "实际使用"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "實際使用"
+          }
+        }
+      }
+    },
+    "Import Font from Files" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Schrift aus „Dateien“ importieren"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Import Font from Files"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Importar fuente desde Archivos"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Importer une police depuis Fichiers"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "「ファイル」からフォントを読み込む"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "파일에서 글꼴 가져오기"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Импортировать шрифт из «Файлов»"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "从「文件」导入字体"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "從「檔案」匯入字體"
+          }
+        }
+      }
+    },
+    "No imported fonts yet." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Noch keine importierten Schriften."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No imported fonts yet."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aún no hay fuentes importadas."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aucune police importée pour l’instant."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "読み込んだフォントはまだありません。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "아직 가져온 글꼴이 없습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Импортированных шрифтов пока нет."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "还没有导入的字体。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "還沒有匯入的字體。"
+          }
+        }
+      }
+    },
+    "Font import" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Schriftimport"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Font import"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Importación de fuentes"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Import de police"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "フォントの読み込み"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "글꼴 가져오기"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Импорт шрифта"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "字体导入"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "字體匯入"
+          }
+        }
+      }
+    },
+    "One weight only — see the note under each category." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nur ein Schriftschnitt — siehe den Hinweis unter jeder Kategorie."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "One weight only — see the note under each category."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Solo un grosor: consulta la nota bajo cada categoría."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Une seule graisse — voir la note sous chaque catégorie."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ウェイトは 1 つだけです — 各カテゴリの下の注記をご覧ください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "굵기가 하나뿐입니다 — 각 카테고리 아래의 설명을 참고하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Только одна насыщенность — см. примечание под каждой категорией."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "只有一个字重 — 请见每个分类下方的说明。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "只有一個字重 — 請見每個分類下方的說明。"
+          }
+        }
+      }
+    },
+    "Use this stack as the app's default text font" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dieses Gespann als Standard-Schrift der App verwenden"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Use this stack as the app's default text font"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Usar esta combinación como fuente de texto predeterminada de la app"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Utiliser ce duo comme police de texte par défaut de l’app"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "この組み合わせをアプリの既定のテキストフォントにする"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 조합을 앱의 기본 텍스트 글꼴로 사용"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Использовать этот набор как основной текстовый шрифт приложения"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "把这套字体组合作为 App 的默认正文字体"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "把這套字體組合做為 App 的預設內文字體"
+          }
+        }
+      }
+    },
+    "Let a single-weight Chinese face borrow weight" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Eine chinesische Schrift mit nur einem Schnitt darf Schnitt ausleihen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Let a single-weight Chinese face borrow weight"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Permitir que una fuente china de un solo grosor tome prestado otro grosor"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Autoriser une police chinoise à graisse unique à emprunter une graisse"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ウェイトが 1 つだけの中国語フォントにウェイトを補わせる"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "굵기가 하나뿐인 중국어 글꼴이 다른 굵기를 빌려오도록 허용"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Разрешить китайскому шрифту с одной насыщенностью занимать её у другого"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "允许只有一个字重的中文字体借用其他字重"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "允許只有一個字重的中文字體借用其他字重"
+          }
+        }
+      }
+    },
+    "Reset to the shipped defaults" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Auf die mitgelieferten Standardwerte zurücksetzen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reset to the shipped defaults"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Restablecer los valores predeterminados de fábrica"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rétablir les valeurs par défaut livrées"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "同梱の既定値に戻す"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "앱에 포함된 기본값으로 재설정"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сбросить к шрифтам, поставляемым с приложением"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "恢复为随 App 附带的默认值"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "恢復為隨 App 附帶的預設值"
+          }
+        }
+      }
+    },
+    "Markdown headings and the app's own large titles." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Markdown-Überschriften und die großen Titel der App selbst."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Markdown headings and the app's own large titles."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Encabezados de Markdown y los títulos grandes de la propia app."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Les titres Markdown et les grands titres de l’app elle-même."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Markdown の見出しと、アプリ自身の大きなタイトル。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Markdown 제목과 앱 자체의 큰 제목입니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Заголовки Markdown и крупные заголовки самого приложения."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Markdown 标题以及 App 自身的大标题。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Markdown 標題以及 App 自身的大標題。"
+          }
+        }
+      }
+    },
+    "Chat messages, the composer and every settings row that does not ask for another category." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chat-Nachrichten, das Eingabefeld und jede Einstellungszeile, die keine andere Kategorie verlangt."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chat messages, the composer and every settings row that does not ask for another category."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mensajes del chat, el campo de escritura y cada fila de ajustes que no pida otra categoría."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Les messages du chat, le champ de saisie et chaque ligne de réglages qui ne demande pas d’autre catégorie."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "チャットのメッセージ、入力欄、および別のカテゴリを指定していないすべての設定行。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "채팅 메시지, 입력창, 그리고 다른 카테고리를 지정하지 않은 모든 설정 행입니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сообщения чата, поле ввода и каждая строка настроек, которая не запрашивает другую категорию."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "聊天消息、输入框，以及所有没有指定其他分类的设置行。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "聊天訊息、輸入框，以及所有沒有指定其他分類的設定列。"
+          }
+        }
+      }
+    },
+    "Faces the app ships with. Latin faces carry the weight; a Chinese face is used for every character a Latin face cannot draw, which is the whole of Chinese." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die Schriften, die mit der App geliefert werden. Lateinische Schriften tragen den Schriftschnitt; die chinesische Schrift wird für jedes Zeichen verwendet, das eine lateinische Schrift nicht zeichnen kann — und das ist das gesamte Chinesisch."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Faces the app ships with. Latin faces carry the weight; a Chinese face is used for every character a Latin face cannot draw, which is the whole of Chinese."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Las fuentes que incluye la app. Las fuentes latinas aportan el grosor; la fuente china se usa para cada carácter que una fuente latina no puede dibujar, que es todo el chino."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Les polices fournies avec l’app. Les polices latines portent la graisse ; la police chinoise sert pour chaque caractère qu’une police latine ne sait pas dessiner — c’est-à-dire tout le chinois."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "アプリに同梱されているフォントです。ウェイトを担うのはラテン文字フォントで、ラテン文字フォントが描けない文字 — つまり中国語のすべて — は中国語フォントで描画されます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "앱에 포함된 글꼴입니다. 굵기는 라틴 글꼴이 담당하고, 라틴 글꼴이 그릴 수 없는 모든 문자 — 즉 중국어 전체 — 는 중국어 글꼴로 그립니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Шрифты, поставляемые с приложением. Насыщенность задают латинские шрифты; китайский шрифт используется для каждого знака, который латинский шрифт нарисовать не может, — то есть для всего китайского."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "App 自带的字体。字重由拉丁字体承担；拉丁字体画不出的每一个字符都交给中文字体，而中文的全部字符都是这样。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "App 自帶的字體。字重由拉丁字體承擔；拉丁字體畫不出的每一個字元都交給中文字體，而中文的全部字元都是這樣。"
+          }
+        }
+      }
+    },
+    "Pick a .ttf, .otf or .ttc from the Files app. The file is copied into the app's own storage and registered for this process at every launch, so it stays available until you delete it here. Redistribution of an imported face is your responsibility — check its licence before sharing a build." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wähle eine .ttf-, .otf- oder .ttc-Datei in der App „Dateien“. Die Datei wird in den eigenen Speicher der App kopiert und bei jedem Start für diesen Prozess registriert; sie bleibt also verfügbar, bis du sie hier löschst. Die Weitergabe einer importierten Schrift liegt in deiner Verantwortung — prüfe ihre Lizenz, bevor du einen Build teilst."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pick a .ttf, .otf or .ttc from the Files app. The file is copied into the app's own storage and registered for this process at every launch, so it stays available until you delete it here. Redistribution of an imported face is your responsibility — check its licence before sharing a build."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Elige un archivo .ttf, .otf o .ttc desde la app Archivos. El archivo se copia al almacenamiento propio de la app y se registra para este proceso en cada inicio, así que sigue disponible hasta que lo borres aquí. Redistribuir una fuente importada es responsabilidad tuya: revisa su licencia antes de compartir una compilación."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choisissez un fichier .ttf, .otf ou .ttc depuis l’app Fichiers. Le fichier est copié dans le stockage propre de l’app et enregistré pour ce processus à chaque lancement : il reste donc disponible jusqu’à ce que vous le supprimiez ici. La redistribution d’une police importée relève de votre responsabilité — vérifiez sa licence avant de partager une compilation."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "「ファイル」アプリから .ttf、.otf、.ttc を選んでください。ファイルはアプリ自身のストレージにコピーされ、起動のたびにこのプロセスへ登録されるため、ここで削除するまで利用できます。読み込んだフォントの再配布はご自身の責任です — ビルドを配布する前にライセンスを確認してください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "파일 앱에서 .ttf, .otf, .ttc를 선택하세요. 파일은 앱 자체 저장 공간으로 복사되고 실행할 때마다 이 프로세스에 등록되므로, 여기에서 삭제할 때까지 계속 사용할 수 있습니다. 가져온 글꼴을 재배포하는 책임은 사용자에게 있습니다 — 빌드를 공유하기 전에 라이선스를 확인하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выберите файл .ttf, .otf или .ttc в приложении «Файлы». Файл копируется в собственное хранилище приложения и регистрируется для этого процесса при каждом запуске, поэтому остаётся доступным, пока вы не удалите его здесь. За дальнейшее распространение импортированного шрифта отвечаете вы — проверьте его лицензию, прежде чем делиться сборкой."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "从「文件」App 里选一个 .ttf、.otf 或 .ttc。文件会被复制到 App 自己的存储中，并在每次启动时为本进程注册，因此在你在这里删除它之前一直可用。分发导入的字体由你自行负责 — 分享构建包之前请先确认它的授权。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "從「檔案」App 裡選一個 .ttf、.otf 或 .ttc。檔案會被複製到 App 自己的儲存空間中，並在每次啟動時為本行程註冊，因此在你於這裡刪除它之前一直可用。散佈匯入的字體由你自行負責 — 分享建置檔之前請先確認它的授權。"
+          }
+        }
+      }
+    },
+    "The first switch is what makes this the app's default: with it on, text that never asked for a font inherits the Body face above. The second switch is about Chinese weight — 方正宋三简体 has one face and iOS does not synthesise bold for a custom font, so with it on a heavier Chinese request is served by 思源宋体 with 方正宋三简体 kept directly behind it for coverage." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Der erste Schalter macht dieses Gespann zum Standard der App: Ist er an, erbt Text, der nie eine Schrift angefordert hat, die Körper-Schrift oben. Beim zweiten Schalter geht es um chinesischen Schriftschnitt — 方正宋三简体 hat nur einen Schnitt, und iOS synthetisiert kein Fett für eine eigene Schrift; ist er an, wird eine schwerere chinesische Anforderung von 思源宋体 bedient, wobei 方正宋三简体 für die Abdeckung direkt dahinter bleibt."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The first switch is what makes this the app's default: with it on, text that never asked for a font inherits the Body face above. The second switch is about Chinese weight — 方正宋三简体 has one face and iOS does not synthesise bold for a custom font, so with it on a heavier Chinese request is served by 思源宋体 with 方正宋三简体 kept directly behind it for coverage."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "El primer interruptor es lo que convierte esto en el valor predeterminado de la app: si está activado, el texto que nunca pidió una fuente hereda la fuente de cuerpo de arriba. El segundo interruptor trata del grosor chino: 方正宋三简体 solo tiene una fuente y iOS no sintetiza negrita para una fuente personalizada, así que, con él activado, una petición china más gruesa la sirve 思源宋体 con 方正宋三简体 justo detrás para la cobertura."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Le premier interrupteur fait de ce duo le réglage par défaut de l’app : activé, le texte qui n’a jamais demandé de police hérite de la police de corps ci-dessus. Le second concerne la graisse chinoise — 方正宋三简体 n’a qu’une seule police et iOS ne synthétise pas le gras pour une police personnalisée : activé, une demande chinoise plus grasse est servie par 思源宋体, 方正宋三简体 restant juste derrière pour la couverture."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1 つ目のスイッチがこれをアプリの既定にするものです。オンにすると、フォントを指定していないテキストが上の本文フォントを継承します。2 つ目は中国語のウェイトの話です — 方正宋三简体 は 1 つのフェイスしか持たず、iOS はカスタムフォントの太字を合成しないため、オンにすると、より太い中国語の要求は 思源宋体 が担い、方正宋三简体 はカバレッジのためにそのすぐ後ろに残ります。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "첫 번째 스위치가 이것을 앱의 기본으로 만듭니다. 켜면 글꼴을 지정한 적 없는 텍스트가 위의 본문 글꼴을 상속합니다. 두 번째 스위치는 중국어 굵기에 관한 것입니다 — 方正宋三简体은 페이스가 하나뿐이고 iOS는 사용자 글꼴의 볼드를 합성하지 않으므로, 켜면 더 굵은 중국어 요청은 思源宋体이 처리하고 方正宋三简体은 커버리지를 위해 그 바로 뒤에 남습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Первый переключатель и делает этот набор шрифтом приложения по умолчанию: когда он включён, текст, который никогда не запрашивал шрифт, наследует основной шрифт выше. Второй переключатель — про китайскую насыщенность: у 方正宋三简体 только одно начертание, а iOS не синтезирует полужирное для пользовательского шрифта, поэтому при включённом переключателе более жирный китайский запрос обслуживает 思源宋体, а 方正宋三简体 остаётся прямо за ним для покрытия."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "第一个开关才让它成为 App 的默认：打开后，从未指定字体的文本会继承上面的正文字体。第二个开关关系到中文的字重 — 方正宋三简体 只有一个字面，而 iOS 不会为自定义字体合成粗体，所以打开后，更粗的中文请求由 思源宋体 承担，方正宋三简体 紧跟在它后面提供字符覆盖。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "第一個開關才讓它成為 App 的預設：開啟後，從未指定字體的文字會繼承上面的內文字體。第二個開關關係到中文的字重 — 方正宋三简体 只有一個字面，而 iOS 不會為自訂字體合成粗體，所以開啟後，更粗的中文請求由 思源宋体 承擔，方正宋三简体 緊跟在它後面提供字元涵蓋。"
+          }
+        }
+      }
+    },
+    "Fenced code blocks and inline code spans. Chinese inside code is drawn by the Chinese face too, which is what keeps a code block's own alignment intact." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Eingezäunte Codeblöcke und Code-Spans im Fließtext. Chinesisch innerhalb von Code wird ebenfalls von der chinesischen Schrift gezeichnet — das erhält die Ausrichtung des Codeblocks."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fenced code blocks and inline code spans. Chinese inside code is drawn by the Chinese face too, which is what keeps a code block's own alignment intact."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bloques de código delimitados y fragmentos de código en línea. El chino dentro del código también lo dibuja la fuente china, y eso es lo que mantiene intacta la alineación del propio bloque de código."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Blocs de code délimités et extraits de code en ligne. Le chinois présent dans le code est lui aussi dessiné par la police chinoise — c’est ce qui préserve l’alignement propre du bloc de code."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "フェンス付きコードブロックとインラインコードスパン。コードの中の中国語も中国語フォントで描画され、これがコードブロック自身の整列を保ちます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "펜스 코드 블록과 인라인 코드 구간입니다. 코드 안의 중국어 역시 중국어 글꼴로 그려지며, 이것이 코드 블록 자체의 정렬을 유지합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ограждённые блоки кода и встроенные фрагменты кода. Китайский внутри кода тоже рисует китайский шрифт — именно это сохраняет собственное выравнивание блока кода."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "围栏代码块和行内代码。代码里的中文也由中文字体绘制，这样才能保持代码块自身的对齐。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "圍欄程式碼區塊和行內程式碼。程式碼裡的中文也由中文字體繪製，這樣才能保持程式碼區塊自身的對齊。"
+          }
+        }
+      }
+    },
+    "Navigation bars, bar buttons, tab bar items, segmented controls and plain UIKit labels. UIKit reads some of these when it builds a view, so a change may need a restart to reach chrome that was already on screen." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Navigationsleisten, Leisten-Schaltflächen, Tab-Leisten-Einträge, Segmentsteuerelemente und einfache UIKit-Labels. UIKit liest einige davon beim Aufbau einer Ansicht aus; eine Änderung erreicht bereits sichtbare Bedienelemente daher erst nach einem Neustart."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Navigation bars, bar buttons, tab bar items, segmented controls and plain UIKit labels. UIKit reads some of these when it builds a view, so a change may need a restart to reach chrome that was already on screen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Barras de navegación, botones de barra, ítems de la barra de pestañas, controles segmentados y etiquetas UIKit simples. UIKit lee algunos de ellos al construir una vista, así que un cambio puede necesitar reiniciar la app para llegar a elementos que ya estaban en pantalla."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Barres de navigation, boutons de barre, éléments de barre d’onglets, contrôles segmentés et libellés UIKit simples. UIKit lit certains d’entre eux au moment de construire une vue : un changement peut donc nécessiter un redémarrage pour atteindre des éléments déjà à l’écran."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ナビゲーションバー、バーボタン、タブバーの項目、セグメントコントロール、および素の UIKit ラベル。UIKit はビューを構築する際にこれらの一部を読み取るため、すでに画面にある部品に変更を届けるには再起動が必要なことがあります。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "내비게이션 바, 바 버튼, 탭 바 항목, 세그먼트 컨트롤, 일반 UIKit 레이블입니다. UIKit은 뷰를 만들 때 이들 중 일부를 읽으므로, 이미 화면에 있는 요소에 변경을 반영하려면 재시작이 필요할 수 있습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Панели навигации, кнопки панелей, элементы панели вкладок, сегментированные переключатели и обычные метки UIKit. UIKit читает часть из них при построении представления, поэтому изменение может дойти до уже показанных элементов только после перезапуска."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "导航栏、栏按钮、标签页栏项目、分段控件和普通 UIKit 标签。UIKit 在构建视图时会读取其中一些，因此要让改动影响到已经在屏幕上的界面元素，可能需要重启 App。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "導覽列、列上按鈕、標籤頁列項目、分段控制項和普通 UIKit 標籤。UIKit 在建構檢視時會讀取其中一些，因此要讓改動影響到已經在畫面上的介面元素，可能需要重新啟動 App。"
+          }
+        }
+      }
+    },
+    "Latin" : {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Latin"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Latein"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Latino"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Latin"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ラテン"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "라틴"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Латиница"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "拉丁"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "拉丁"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Latin"
+          }
+        },
+        "ms": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Latin"
+          }
+        },
+        "fil": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Latin"
+          }
+        },
+        "th": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ละติน"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Latin"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Łacina"
+          }
+        },
+        "ro": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Latină"
+          }
+        },
+        "hr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Latinica"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Latino"
+          }
+        }
+      }
+    },
+    "Latin + Chinese" : {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Latin + Chinese"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Latein + Chinesisch"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Latino + chino"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Latin + chinois"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ラテン + 中国語"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "라틴 + 중국어"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Латиница + китайский"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "拉丁 + 中文"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "拉丁 + 中文"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Latin + Tionghoa"
+          }
+        },
+        "ms": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Latin + Cina"
+          }
+        },
+        "fil": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Latin + Tsino"
+          }
+        },
+        "th": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ละติน + จีน"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Latin + Çince"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Łacina + chiński"
+          }
+        },
+        "ro": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Latină + chineză"
+          }
+        },
+        "hr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Latinica + kineski"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Latino + chinês"
+          }
+        }
+      }
+    }
   },
   "version" : "1.0"
 }
