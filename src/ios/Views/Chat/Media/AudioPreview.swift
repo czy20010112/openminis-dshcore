@@ -166,11 +166,11 @@ struct MinisAudioPreviewView: View {
         HStack {
             VStack(alignment: .leading, spacing: 4) {
                 Text(displayTitle)
-                    .font(.title2.bold())
+                    .font(AppFont.sw(22, weight: .bold, category: .title))
                     .lineLimit(1)
                     .foregroundColor(artworkImage != nil ? .white : Color(UIColor.label))
                 Text(displaySubtitle)
-                    .font(.subheadline)
+                    .font(AppFont.sw(15, weight: .regular, category: .body))
                     .lineLimit(1)
                     .foregroundColor(artworkImage != nil ? .white.opacity(0.7) : Color(UIColor.secondaryLabel))
             }
@@ -220,7 +220,7 @@ struct MinisAudioPreviewView: View {
                 Spacer()
                 Text(formatTime(player.duration))
             }
-            .font(.caption2.monospacedDigit())
+            .font(AppFont.sw(11, weight: .regular, category: .code))
             .foregroundColor(artworkImage != nil ? .white.opacity(0.7) : Color(UIColor.secondaryLabel))
         }
     }
@@ -282,7 +282,7 @@ struct MinisAudioPreviewView: View {
                 }
                 .overlay(alignment: .topTrailing) {
                     Text(rateLabel(player.rate))
-                        .font(.system(size: 9, weight: .bold))
+                        .font(AppFont.sw(9, weight: .bold, category: .ui))
                         .foregroundColor(.white)
                         .padding(.horizontal, 3)
                         .padding(.vertical, 1)

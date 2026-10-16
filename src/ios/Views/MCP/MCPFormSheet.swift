@@ -141,7 +141,7 @@ struct MCPFormSheet: View {
             .safeAreaInset(edge: .bottom) {
                 Button(action: save) {
                     Text("Save")
-                        .font(.headline)
+                        .font(AppFont.sw(17, weight: .semibold, category: .body))
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
@@ -155,7 +155,7 @@ struct MCPFormSheet: View {
             .overlay(alignment: .bottom) {
                 if copiedToast {
                     Label(AppLocalized("Copied"), systemImage: "checkmark.circle.fill")
-                        .font(.subheadline.weight(.medium))
+                        .font(AppFont.sw(15, weight: .medium, category: .body))
                         .foregroundStyle(.white)
                         .padding(.horizontal, 16)
                         .padding(.vertical, 10)
@@ -245,11 +245,11 @@ struct MCPFormSheet: View {
                     if isAuthorized {
                         Label(AppLocalized("Authorized"), systemImage: "checkmark.seal.fill")
                             .foregroundStyle(.green)
-                            .font(.subheadline)
+                            .font(AppFont.sw(15, weight: .regular, category: .body))
                     } else {
                         Label(AppLocalized("Not authorized"), systemImage: "xmark.seal")
                             .foregroundStyle(.secondary)
-                            .font(.subheadline)
+                            .font(AppFont.sw(15, weight: .regular, category: .body))
                     }
                     Spacer()
                     if isAuthorized {
@@ -257,7 +257,7 @@ struct MCPFormSheet: View {
                             MCPOAuthController.signOut(server: name.trimmingCharacters(in: .whitespaces))
                             isAuthorized = false
                         }
-                        .font(.subheadline)
+                        .font(AppFont.sw(15, weight: .regular, category: .body))
                     }
                     Button {
                         Task { await runAuthorize() }
@@ -274,7 +274,7 @@ struct MCPFormSheet: View {
                 }
                 if let oauthError {
                     Text(oauthError)
-                        .font(.caption)
+                        .font(AppFont.sw(12, weight: .regular, category: .ui))
                         .foregroundStyle(.red)
                 }
             }

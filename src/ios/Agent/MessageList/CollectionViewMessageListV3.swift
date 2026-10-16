@@ -243,7 +243,7 @@ private struct BridgedAssistantHeaderV3: View {
                 )
             )
             Text(soulMeta.name.isEmpty ? "Minis" : soulMeta.name)
-                .font(.body.weight(.semibold))
+                .font(AppFont.sw(17, weight: .semibold, category: .body))
                 .foregroundStyle(ChatColors.primaryText)
         }
         // [T-ios-assistant-header-open-soul] Hit area and tap, applied to the
@@ -587,14 +587,14 @@ private struct BridgedAssistantFooterV3: View {
             Spacer()
             if bridge.autoRetryAttempt > 0 {
                 Text("Retry in \(bridge.autoRetryCountdown)s (\(bridge.autoRetryAttempt)/\(AIChatViewModel.retryDelays.count))")
-                    .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    .font(AppFont.sw(12, weight: .semibold, category: .ui)).foregroundStyle(.secondary)
                     .padding(.horizontal, 12).padding(.vertical, 6)
                     .background(Color.secondary.opacity(0.12)).clipShape(Capsule())
             } else if let onRetry = bridge.onRetry {
                 Button(action: onRetry) {
                     HStack(spacing: 4) {
                         Image(systemName: "arrow.clockwise").font(.caption.weight(.semibold))
-                        Text(AppLocalized("Retry")).font(.caption.weight(.semibold))
+                        Text(AppLocalized("Retry")).font(AppFont.sw(12, weight: .semibold, category: .ui))
                     }
                     .foregroundStyle(ChatColors.primaryText)
                     .padding(.horizontal, 12).padding(.vertical, 6)
@@ -610,14 +610,14 @@ private struct BridgedAssistantFooterV3: View {
         HStack(alignment: .center, spacing: 8) {
             HStack(spacing: 6) {
                 Image(systemName: "pause.circle.fill").font(.caption).foregroundStyle(.orange)
-                Text(AppLocalized("Interrupted — tap Resume to continue")).font(.caption).foregroundStyle(.secondary)
+                Text(AppLocalized("Interrupted — tap Resume to continue")).font(AppFont.sw(12, weight: .regular, category: .ui)).foregroundStyle(.secondary)
             }
             Spacer()
             if let onResume = bridge.onResume {
                 Button(action: onResume) {
                     HStack(spacing: 4) {
                         Image(systemName: "play.fill").font(.caption.weight(.semibold))
-                        Text(AppLocalized("Resume")).font(.caption.weight(.semibold))
+                        Text(AppLocalized("Resume")).font(AppFont.sw(12, weight: .semibold, category: .ui))
                     }
                     .foregroundStyle(.white)
                     .padding(.horizontal, 12).padding(.vertical, 6)
@@ -633,7 +633,7 @@ private struct BridgedAssistantFooterV3: View {
     private func usageCapsule(_ usage: TokenUsage) -> some View {
         HStack(spacing: 4) {
             Image(systemName: "speedometer").font(.system(size: 9))
-            Text(usageSummary(usage)).font(.system(size: 10, design: .monospaced))
+            Text(usageSummary(usage)).font(AppFont.sw(10, weight: .regular, category: .code))
         }
         .foregroundStyle(ChatColors.tertiaryText)
         .padding(.horizontal, 8).padding(.vertical, 3)
@@ -645,7 +645,7 @@ private struct BridgedAssistantFooterV3: View {
     private func streamInterruptBadge(_ count: Int) -> some View {
         HStack(spacing: 3) {
             Image(systemName: "arrow.clockwise").font(.system(size: 9, weight: .semibold))
-            Text("\(count)").font(.system(size: 10, design: .monospaced))
+            Text("\(count)").font(AppFont.sw(10, weight: .regular, category: .code))
         }
         .foregroundStyle(Color.orange.opacity(0.8))
         .padding(.horizontal, 7).padding(.vertical, 3)

@@ -66,7 +66,7 @@ struct MinisVideoPlayerView: View {
                             .foregroundStyle(.secondary)
                         Text(url.lastPathComponent)
                             .lineLimit(1)
-                            .font(.caption)
+                            .font(AppFont.sw(12, weight: .regular, category: .ui))
                             .foregroundColor(ChatColors.secondaryText)
                     }
                 }
@@ -80,7 +80,7 @@ struct MinisVideoPlayerView: View {
                         .font(.caption2)
                     Text(url.lastPathComponent)
                         .lineLimit(1)
-                        .font(.caption)
+                        .font(AppFont.sw(12, weight: .regular, category: .ui))
                 }
                 .foregroundColor(ChatColors.secondaryText)
                 .padding(.top, 4)
@@ -98,7 +98,7 @@ struct MinisVideoPlayerView: View {
     private var placeholder: some View {
         VStack(spacing: 8) {
             ProgressView()
-            Text(url.lastPathComponent).lineLimit(1).font(.caption)
+            Text(url.lastPathComponent).lineLimit(1).font(AppFont.sw(12, weight: .regular, category: .ui))
         }
         .foregroundColor(ChatColors.secondaryText)
         .frame(maxWidth: 400, minHeight: mediaPlaceholderHeight, maxHeight: mediaPlaceholderHeight)
@@ -320,7 +320,7 @@ struct MinisVideoFullscreenPlayer: View {
 
                         // Current time
                         Text(formatTime(currentTime))
-                            .font(.caption.monospacedDigit())
+                            .font(AppFont.sw(12, weight: .regular, category: .code))
                             .foregroundStyle(.white.opacity(0.8))
 
                         // Progress slider
@@ -342,7 +342,7 @@ struct MinisVideoFullscreenPlayer: View {
 
                         // Duration
                         Text(formatTime(duration))
-                            .font(.caption.monospacedDigit())
+                            .font(AppFont.sw(12, weight: .regular, category: .code))
                             .foregroundStyle(.white.opacity(0.8))
                     }
                     .padding(.horizontal, 20)

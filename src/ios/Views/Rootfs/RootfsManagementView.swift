@@ -45,7 +45,7 @@ struct RootfsManagementView: View {
                         Text("Path")
                         Spacer()
                         Text(viewModel.rootfsPath)
-                            .font(.caption)
+                            .font(AppFont.sw(12, weight: .regular, category: .ui))
                             .foregroundColor(.secondary)
                             .lineLimit(1)
                             .truncationMode(.middle)
@@ -142,7 +142,7 @@ struct RootfsManagementView: View {
             if let message = viewModel.resultMessage {
                 Section {
                     Text(message)
-                        .font(.callout)
+                        .font(AppFont.sw(16, weight: .regular, category: .body))
                         .foregroundColor(viewModel.lastOperationSuccess ? .green : .red)
                 }
             }
@@ -150,14 +150,14 @@ struct RootfsManagementView: View {
             Section("Info") {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("About Rootfs")
-                        .font(.headline)
+                        .font(AppFont.sw(17, weight: .semibold, category: .body))
 
                     Text("The rootfs contains the Alpine Linux filesystem. Resetting will delete all data and restore to factory state.")
-                        .font(.caption)
+                        .font(AppFont.sw(12, weight: .regular, category: .ui))
                         .foregroundColor(.secondary)
 
                     Text("• Reset: Delete everything\n• Backup: Save /root directory\n• Restore: Recover saved data")
-                        .font(.caption)
+                        .font(AppFont.sw(12, weight: .regular, category: .ui))
                         .foregroundColor(.secondary)
                 }
             }

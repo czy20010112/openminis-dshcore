@@ -116,6 +116,19 @@ enum AppFont {
         return Font(ui(scaled, weight: weight, category: category))
     }
 
+    /// A `Font` at an ALREADY-SCALED point size — no Dynamic Type applied.
+    ///
+    /// For the call sites that scale the size themselves
+    /// (`fontSettings.scaledApp(13)`), which is this app's OWN scale axis rather
+    /// than the system one. Feeding such a size through `sw(_:)` would apply the
+    /// system's scale ON TOP of the app's, and the setting would read as
+    /// doubled; this method takes the size as final.
+    static func scaled(_ size: CGFloat,
+                       weight: UIFont.Weight = .regular,
+                       category: AppFontCategory = .body) -> Font {
+        Font(ui(size, weight: weight, category: category))
+    }
+
     /// What the app root hands to `\.font`.
     ///
     /// `nil` when the user has switched the takeover off, which restores the

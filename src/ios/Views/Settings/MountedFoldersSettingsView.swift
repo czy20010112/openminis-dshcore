@@ -44,9 +44,9 @@ struct MountedFoldersSettingsView: View {
                             .font(.system(size: 40))
                             .foregroundStyle(.secondary)
                         Text("No mounted folders")
-                            .font(.headline)
+                            .font(AppFont.sw(17, weight: .semibold, category: .body))
                         Text("Tap + to pick a folder from Files (e.g. an Obsidian vault in iCloud Drive).")
-                            .font(.caption)
+                            .font(AppFont.sw(12, weight: .regular, category: .ui))
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)
                     }
@@ -81,7 +81,7 @@ struct MountedFoldersSettingsView: View {
                         Text("Mounted Folders")
                         Spacer()
                         Text("\(model.entries.count) / \(MountedFoldersManager.maxMountCount)")
-                            .font(.caption.monospacedDigit())
+                            .font(AppFont.sw(12, weight: .regular, category: .code))
                             .foregroundStyle(model.isAtCapacity ? .orange : .secondary)
                     }
                 } footer: {
@@ -256,9 +256,9 @@ private struct InfoBanner: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Label("Mount external folders", systemImage: "info.circle")
-                .font(.subheadline.weight(.semibold))
+                .font(AppFont.sw(15, weight: .semibold, category: .body))
             Text("Picked folders are bind-mounted at /var/minis/mounts/<name>. You can browse them in Browse Files and read/write them directly from the iSH shell, just like /var/minis/shared. Up to 10 folders can be mounted at a time.")
-                .font(.caption)
+                .font(AppFont.sw(12, weight: .regular, category: .ui))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -278,17 +278,17 @@ private struct MountedFolderRow: View {
                 Image(systemName: "folder.fill")
                     .foregroundStyle(.blue)
                 Text(entry.name)
-                    .font(.body.weight(.medium))
+                    .font(AppFont.sw(17, weight: .medium, category: .body))
                 accessBadge
                 Spacer()
             }
             Text("/var/minis/mounts/\(entry.name)")
-                .font(.caption.monospaced())
+                .font(AppFont.sw(12, weight: .regular, category: .code))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .truncationMode(.middle)
             Text(verbatim: "← \(sourceURL?.path ?? entry.sourceDisplayName)")
-                .font(.caption2)
+                .font(AppFont.sw(11, weight: .regular, category: .ui))
                 .foregroundStyle(.tertiary)
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -313,7 +313,7 @@ private struct MountedFolderRow: View {
 
     private func badgePill(text: String, color: Color) -> some View {
         Text(text)
-            .font(.caption2.weight(.semibold))
+            .font(AppFont.sw(11, weight: .semibold, category: .ui))
             .foregroundStyle(color)
             .padding(.horizontal, 5)
             .padding(.vertical, 1)
@@ -339,10 +339,10 @@ private struct AddMountSheet: View {
                     Section {
                         VStack(alignment: .leading, spacing: 6) {
                             Text("Source path")
-                                .font(.caption.weight(.semibold))
+                                .font(AppFont.sw(12, weight: .semibold, category: .ui))
                                 .foregroundStyle(.secondary)
                             Text(url.path)
-                                .font(.caption2.monospaced())
+                                .font(AppFont.sw(11, weight: .regular, category: .code))
                                 .foregroundStyle(.primary)
                                 .textSelection(.enabled)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -350,7 +350,7 @@ private struct AddMountSheet: View {
                         .padding(.vertical, 2)
                     } footer: {
                         Text("The path above is how iOS exposes the folder you picked. Use it to confirm which app this data belongs to.")
-                            .font(.caption2)
+                            .font(AppFont.sw(11, weight: .regular, category: .ui))
                     }
                 }
 
@@ -359,7 +359,7 @@ private struct AddMountSheet: View {
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                     Text("This will be the folder name under /var/minis/mounts/")
-                        .font(.caption)
+                        .font(AppFont.sw(12, weight: .regular, category: .ui))
                         .foregroundStyle(.secondary)
                 }
 
@@ -370,7 +370,7 @@ private struct AddMountSheet: View {
                             Text(allowWrite
                                 ? AppLocalized("AI, shell, and Files browser can modify files in this mount.")
                                 : AppLocalized("This mount will be exposed as read-only. Useful for reference vaults you don't want the AI to touch."))
-                                .font(.caption)
+                                .font(AppFont.sw(12, weight: .regular, category: .ui))
                                 .foregroundStyle(.secondary)
                         }
                     }
@@ -378,7 +378,7 @@ private struct AddMountSheet: View {
                     Text("Permissions")
                 } footer: {
                     Text("You can change the write permission later from the mount details page.")
-                        .font(.caption)
+                        .font(AppFont.sw(12, weight: .regular, category: .ui))
                 }
             }
             .navigationTitle("New Mount")

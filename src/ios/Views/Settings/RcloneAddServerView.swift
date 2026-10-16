@@ -88,7 +88,7 @@ struct RcloneAddServerView: View {
                 if let errorText, connectedRemote == nil {
                     Section {
                         Text(errorText)
-                            .font(.footnote)
+                            .font(AppFont.sw(13, weight: .regular, category: .body))
                             .foregroundStyle(.red)
                     }
                 }
@@ -180,7 +180,7 @@ struct RcloneAddServerView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(b.title).foregroundStyle(.primary)
                             Text(b.subtitle)
-                                .font(.caption)
+                                .font(AppFont.sw(12, weight: .regular, category: .ui))
                                 .foregroundStyle(.secondary)
                         }
                         Spacer()
@@ -222,11 +222,11 @@ struct RcloneAddServerView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 6) {
                             Text(f.label)
-                                .font(.footnote.weight(.medium))
+                                .font(AppFont.sw(13, weight: .medium, category: .body))
                                 .foregroundStyle(.secondary)
                             if f.isOptional {
                                 Text("Optional")
-                                    .font(.caption2)
+                                    .font(AppFont.sw(11, weight: .regular, category: .ui))
                                     .foregroundStyle(.tertiary)
                             }
                         }
@@ -243,7 +243,7 @@ struct RcloneAddServerView: View {
                         }
                         if !f.hint.isEmpty {
                             Text(f.hint)
-                                .font(.caption)
+                                .font(AppFont.sw(12, weight: .regular, category: .ui))
                                 .foregroundStyle(.tertiary)
                         }
                     }
@@ -290,7 +290,7 @@ struct RcloneAddServerView: View {
 
             if !requiredFieldsFilled && !isConnecting {
                 Text("Fill in the required fields to continue.")
-                    .font(.footnote)
+                    .font(AppFont.sw(13, weight: .regular, category: .body))
                     .foregroundStyle(.secondary)
             }
 
@@ -304,13 +304,13 @@ struct RcloneAddServerView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Trust this certificate")
                         Text("The server's certificate isn't signed by a known authority — usual for a NAS using its own certificate.")
-                            .font(.caption)
+                            .font(AppFont.sw(12, weight: .regular, category: .ui))
                             .foregroundStyle(.secondary)
                     }
                 }
                 if allowInsecureTLS {
                     Text("The connection stays encrypted, but its identity isn't verified. Only do this on a network and server you trust.")
-                        .font(.caption)
+                        .font(AppFont.sw(12, weight: .regular, category: .ui))
                         .foregroundStyle(.orange)
                 }
             }
@@ -370,7 +370,7 @@ struct RcloneAddServerView: View {
                 } label: {
                     ScrollView(.horizontal, showsIndicators: false) {
                         Text(displayPath)
-                            .font(.footnote.weight(.medium))
+                            .font(AppFont.sw(13, weight: .medium, category: .body))
                             .foregroundStyle(.primary)
                             .lineLimit(1)
                             .padding(.horizontal, 10)
@@ -386,7 +386,7 @@ struct RcloneAddServerView: View {
                 } label: {
                     Label("New Folder", systemImage: "folder.badge.plus")
                         .labelStyle(.iconOnly)
-                        .font(.body)
+                        .font(AppFont.sw(17, weight: .regular, category: .body))
                 }
                 .buttonStyle(.borderless)
                 .disabled(isListing)

@@ -69,10 +69,10 @@ struct SessionMemoryView: View {
                 .frame(width: 20)
             VStack(alignment: .leading, spacing: 2) {
                 Text(name)
-                    .font(.body)
+                    .font(AppFont.sw(17, weight: .regular, category: .body))
                 if !detail.isEmpty {
                     Text(detail)
-                        .font(.caption)
+                        .font(AppFont.sw(12, weight: .regular, category: .ui))
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                 }
@@ -259,12 +259,12 @@ private struct MemoryContentView: View {
         Group {
             if isEditing {
                 TextEditor(text: $editedContent)
-                    .font(.system(.caption, design: .monospaced))
+                    .font(AppFont.sw(12, weight: .regular, category: .code))
                     .padding(.horizontal, 8)
             } else {
                 ScrollView {
                     Text(content)
-                        .font(.system(.caption, design: .monospaced))
+                        .font(AppFont.sw(12, weight: .regular, category: .code))
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding()
                         .textSelection(.enabled)
@@ -294,7 +294,7 @@ private struct MemoryContentView: View {
         .overlay(alignment: .bottom) {
             if saved {
                 Text("Saved")
-                    .font(.caption)
+                    .font(AppFont.sw(12, weight: .regular, category: .ui))
                     .padding(.horizontal, 12)
                     .padding(.vertical, 6)
                     .background(.ultraThinMaterial, in: Capsule())
@@ -345,7 +345,7 @@ private struct MemoryWriteDetailView: View {
         Group {
             if isEditing {
                 TextEditor(text: $editedContent)
-                    .font(.system(.caption, design: .monospaced))
+                    .font(AppFont.sw(12, weight: .regular, category: .code))
                     .padding(.horizontal, 8)
             } else {
                 ScrollView {
@@ -353,7 +353,7 @@ private struct MemoryWriteDetailView: View {
                         if let written = item.writtenContent {
                             SectionHeader(title: "Written Content")
                             Text(written)
-                                .font(.system(.caption, design: .monospaced))
+                                .font(AppFont.sw(12, weight: .regular, category: .code))
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(.horizontal)
                                 .textSelection(.enabled)
@@ -361,7 +361,7 @@ private struct MemoryWriteDetailView: View {
 
                         SectionHeader(title: "Tool Result")
                         Text(item.content)
-                            .font(.system(.caption, design: .monospaced))
+                            .font(AppFont.sw(12, weight: .regular, category: .code))
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.horizontal)
@@ -398,7 +398,7 @@ private struct MemoryWriteDetailView: View {
         .overlay(alignment: .bottom) {
             if saved {
                 Text("Saved")
-                    .font(.caption)
+                    .font(AppFont.sw(12, weight: .regular, category: .ui))
                     .padding(.horizontal, 12)
                     .padding(.vertical, 6)
                     .background(.ultraThinMaterial, in: Capsule())
@@ -511,14 +511,14 @@ private struct MemoryGetDetailView: View {
                         Image(systemName: "magnifyingglass")
                             .foregroundStyle(.secondary)
                         Text(kw)
-                            .font(.subheadline.bold())
+                            .font(AppFont.sw(15, weight: .bold, category: .body))
                     }
                     .padding(.horizontal)
                     .padding(.top, 8)
                 }
 
                 Text(item.content)
-                    .font(.system(.caption, design: .monospaced))
+                    .font(AppFont.sw(12, weight: .regular, category: .code))
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal)
                     .textSelection(.enabled)
@@ -536,7 +536,7 @@ private struct SectionHeader: View {
     let title: String
     var body: some View {
         Text(title)
-            .font(.caption.bold())
+            .font(AppFont.sw(12, weight: .bold, category: .ui))
             .foregroundStyle(.secondary)
             .textCase(.uppercase)
             .padding(.horizontal)

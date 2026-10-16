@@ -60,13 +60,13 @@ struct SkillsManagementView: View {
                 Section {
                     Text(AppLocalized("No skills installed. Tap + to import a SKILL.md from GitHub or paste one manually."))
                         .foregroundStyle(.secondary)
-                        .font(.subheadline)
+                        .font(AppFont.sw(15, weight: .regular, category: .body))
                 }
             } else if filteredSkills.isEmpty {
                 Section {
                     Text(AppLocalized("No skills match \"\(searchQuery)\"."))
                         .foregroundStyle(.secondary)
-                        .font(.subheadline)
+                        .font(AppFont.sw(15, weight: .regular, category: .body))
                 }
             }
 
@@ -77,12 +77,12 @@ struct SkillsManagementView: View {
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
                             HStack(spacing: 4) {
-                                Text(skill.name).font(.body)
+                                Text(skill.name).font(AppFont.sw(17, weight: .regular, category: .body))
                                 importSourceBadge(skill.importSource)
                             }
                             if !skill.description.isEmpty {
                                 Text(skill.description)
-                                    .font(.caption)
+                                    .font(AppFont.sw(12, weight: .regular, category: .ui))
                                     .foregroundStyle(.secondary)
                                     .lineLimit(2)
                             }
@@ -168,7 +168,7 @@ struct SkillsManagementView: View {
         .overlay(alignment: .top) {
             if let msg = forceSyncAllToast {
                 Text(msg)
-                    .font(.subheadline.weight(.medium))
+                    .font(AppFont.sw(15, weight: .medium, category: .body))
                     .foregroundStyle(.white)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 10)
@@ -254,7 +254,7 @@ private struct ImportSkillSheet: View {
                 case .paste:
                     Section("SKILL.md Content") {
                         TextEditor(text: $pastedContent)
-                            .font(.system(.caption, design: .monospaced))
+                            .font(AppFont.sw(12, weight: .regular, category: .code))
                             .frame(minHeight: 200)
                     }
 
@@ -270,7 +270,7 @@ private struct ImportSkillSheet: View {
                     Section {
                         Text(errorMessage)
                             .foregroundStyle(.red)
-                            .font(.caption)
+                            .font(AppFont.sw(12, weight: .regular, category: .ui))
                     }
                 }
             }
@@ -518,7 +518,7 @@ private struct SkillDetailView: View {
                         switch skill.importSource {
                         case .url(let url):
                             Text(url)
-                                .font(.caption)
+                                .font(AppFont.sw(12, weight: .regular, category: .code))
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
                         case .file:
@@ -548,7 +548,7 @@ private struct SkillDetailView: View {
                                 } else {
                                     Text(updatedAgoText)
                                         .foregroundStyle(.secondary)
-                                        .font(.caption)
+                                        .font(AppFont.sw(12, weight: .regular, category: .ui))
                                 }
                             }
                         }
@@ -576,7 +576,7 @@ private struct SkillDetailView: View {
                             }
                             Spacer()
                             if showRescanDone {
-                                Text(AppLocalized("Done")).foregroundStyle(.green).font(.caption)
+                                Text(AppLocalized("Done")).foregroundStyle(.green).font(AppFont.sw(12, weight: .regular, category: .ui))
                             }
                         }
                     }
@@ -600,7 +600,7 @@ private struct SkillDetailView: View {
                                 }
                                 Spacer()
                                 if showForceSyncDone {
-                                    Text(AppLocalized("Queued")).foregroundStyle(.green).font(.caption)
+                                    Text(AppLocalized("Queued")).foregroundStyle(.green).font(AppFont.sw(12, weight: .regular, category: .ui))
                                 }
                             }
                         }
@@ -611,7 +611,7 @@ private struct SkillDetailView: View {
                 if !bodyPreview.isEmpty {
                     Section("Description") {
                         Text(bodyPreview)
-                            .font(.system(.caption, design: .monospaced))
+                            .font(AppFont.sw(12, weight: .regular, category: .code))
                             .foregroundStyle(.secondary)
                             .lineLimit(nil)
                     }
@@ -625,7 +625,7 @@ private struct SkillDetailView: View {
                         } label: {
                             Label {
                                 Text(relativePath)
-                                    .font(.system(.subheadline, design: .monospaced))
+                                    .font(AppFont.sw(15, weight: .regular, category: .code))
                             } icon: {
                                 Image(systemName: fileIcon(for: relativePath))
                                     .foregroundStyle(.secondary)
@@ -636,7 +636,7 @@ private struct SkillDetailView: View {
 
                 if let updateError {
                     Section {
-                        Text(updateError).foregroundStyle(.red).font(.caption)
+                        Text(updateError).foregroundStyle(.red).font(AppFont.sw(12, weight: .regular, category: .ui))
                     }
                 }
 
@@ -865,14 +865,14 @@ private struct SkillFileDetailView: View {
 
     var body: some View {
         TextEditor(text: $content)
-            .font(.system(.caption, design: .monospaced))
+            .font(AppFont.sw(12, weight: .regular, category: .code))
             .padding(.horizontal, 8)
             .onChange(of: content) { _ in hasChanges = true }
             .overlay(alignment: .bottom) {
                 if let saveError {
                     Text(saveError)
                         .foregroundStyle(.red)
-                        .font(.caption)
+                        .font(AppFont.sw(12, weight: .regular, category: .ui))
                         .padding(8)
                         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
                         .padding()
@@ -983,7 +983,7 @@ struct MinisSkillsBrowserView: View {
                 EmptyView()
             }
         }
-        .font(.subheadline.weight(.medium))
+        .font(AppFont.sw(15, weight: .medium, category: .body))
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .background(.black.opacity(0.75), in: Capsule())

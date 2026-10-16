@@ -72,7 +72,7 @@ struct ProviderInstancesView: View {
                                 .foregroundStyle(.secondary)
                             Text("A voice service is configured more than once. Voice is merged into a single row here; you can delete the extra provider above if you want.",
                                  comment: "Duplicate voice provider hint")
-                                .font(.caption)
+                                .font(AppFont.sw(12, weight: .regular, category: .ui))
                                 .foregroundStyle(.secondary)
                         }
                     }
@@ -93,10 +93,10 @@ struct ProviderInstancesView: View {
                             .font(.system(size: 32))
                             .foregroundStyle(.quaternary)
                         Text("No providers configured")
-                            .font(.subheadline)
+                            .font(AppFont.sw(15, weight: .regular, category: .body))
                             .foregroundStyle(.secondary)
                         Text("Add a provider to get started.")
-                            .font(.caption)
+                            .font(AppFont.sw(12, weight: .regular, category: .ui))
                             .foregroundStyle(.tertiary)
                     }
                     .frame(maxWidth: .infinity)
@@ -420,22 +420,22 @@ private struct InstanceRow: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(instance.label)
-                    .font(.body.weight(.medium))
+                    .font(AppFont.sw(17, weight: .medium, category: .body))
                 HStack(spacing: 6) {
                     Text(instance.credentialType == .apiKey ? "API Key" : "OAuth")
-                        .font(.caption)
+                        .font(AppFont.sw(12, weight: .regular, category: .ui))
                         .foregroundStyle(.secondary)
                     Text("·")
-                        .font(.caption)
+                        .font(AppFont.sw(12, weight: .regular, category: .ui))
                         .foregroundStyle(.quaternary)
                     Text(credentialSummary)
-                        .font(.caption)
+                        .font(AppFont.sw(12, weight: .regular, category: .ui))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
                 if modelCount > 0 {
                     Text(AppLocalized("\(modelCount) models"))
-                        .font(.caption2)
+                        .font(AppFont.sw(11, weight: .regular, category: .ui))
                         .foregroundStyle(.tertiary)
                 }
             }
@@ -444,7 +444,7 @@ private struct InstanceRow: View {
 
             if !instance.isEnabled {
                 Text("Disabled")
-                    .font(.caption2.weight(.medium))
+                    .font(AppFont.sw(11, weight: .medium, category: .ui))
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
@@ -476,7 +476,7 @@ private struct ShadowVoiceRow: View {
                 .frame(width: 22)
             VStack(alignment: .leading, spacing: 2) {
                 Text(shadow.displayName)
-                    .font(.body)
+                    .font(AppFont.sw(17, weight: .regular, category: .body))
                 let asr = shadow.inputModels.count
                 let tts = shadow.outputModels.count
                 Text(voiceSummary(asr: asr, tts: tts))

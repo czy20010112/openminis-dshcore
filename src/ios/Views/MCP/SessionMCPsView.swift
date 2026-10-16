@@ -90,23 +90,23 @@ struct SessionMCPsView: View {
                     Section {
                         Text("No MCP servers configured. Add servers in Settings → MCP Integrations.")
                             .foregroundStyle(.secondary)
-                            .font(.subheadline)
+                            .font(AppFont.sw(15, weight: .regular, category: .body))
                     }
                 } else if filteredServers.isEmpty {
                     Section {
                         Text(AppLocalized("No MCP servers match \"\(searchQuery)\"."))
                             .foregroundStyle(.secondary)
-                            .font(.subheadline)
+                            .font(AppFont.sw(15, weight: .regular, category: .body))
                     }
                 } else {
                     Section(footer: Text("Toggles override the server's default for this session only.")) {
                         ForEach(filteredServers) { server in
                             HStack {
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text(server.id).font(.body)
+                                    Text(server.id).font(AppFont.sw(17, weight: .regular, category: .body))
                                     if let note = server.note, !note.isEmpty {
                                         Text(note)
-                                            .font(.caption)
+                                            .font(AppFont.sw(12, weight: .regular, category: .ui))
                                             .foregroundStyle(.secondary)
                                             .lineLimit(2)
                                     }
@@ -136,7 +136,7 @@ struct SessionMCPsView: View {
                             let newValue = !allEnabled
                             applyToAll(scope, enabled: newValue)
                         }
-                        .font(.subheadline)
+                        .font(AppFont.sw(15, weight: .regular, category: .body))
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {

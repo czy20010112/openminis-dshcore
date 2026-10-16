@@ -37,10 +37,10 @@ private struct OffloadPermissionDialogContent: View {
                             .foregroundStyle(.orange)
 
                         Text("Permission Request")
-                            .font(.title3.bold())
+                            .font(AppFont.sw(20, weight: .bold, category: .title))
 
                         Text("The agent wants to use **\(request.commandName)**")
-                            .font(.subheadline)
+                            .font(AppFont.sw(15, weight: .regular, category: .body))
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)
                     }
@@ -50,7 +50,7 @@ private struct OffloadPermissionDialogContent: View {
                     // Description
                     if !request.description.isEmpty {
                         Text(request.description)
-                            .font(.footnote)
+                            .font(AppFont.sw(13, weight: .regular, category: .body))
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.horizontal, 20)
@@ -64,11 +64,11 @@ private struct OffloadPermissionDialogContent: View {
                             ForEach(Array(args.enumerated()), id: \.offset) { idx, arg in
                                 HStack {
                                     Text(arg.key)
-                                        .font(.footnote.bold())
+                                        .font(AppFont.sw(13, weight: .bold, category: .body))
                                         .foregroundStyle(.secondary)
                                         .frame(width: 80, alignment: .trailing)
                                     Text(arg.value)
-                                        .font(.footnote.monospaced())
+                                        .font(AppFont.sw(13, weight: .regular, category: .code))
                                         .lineLimit(2)
                                     Spacer()
                                 }
@@ -94,7 +94,7 @@ private struct OffloadPermissionDialogContent: View {
                     OffloadPermissionManager.shared.respond(to: request.id, allowed: true)
                 } label: {
                     Text("Allow in Session")
-                        .font(.headline)
+                        .font(AppFont.sw(17, weight: .semibold, category: .body))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 12)
                 }
@@ -105,7 +105,7 @@ private struct OffloadPermissionDialogContent: View {
                     OffloadPermissionManager.shared.respond(to: request.id, allowed: false)
                 } label: {
                     Text("Deny in Session")
-                        .font(.headline)
+                        .font(AppFont.sw(17, weight: .semibold, category: .body))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 12)
                 }

@@ -587,7 +587,7 @@ struct InlineVoiceInputView: View {
         VStack(spacing: 6) {
             if !viewModel.transcript.isEmpty {
                 Text("… \(viewModel.transcript.count) chars …", comment: "Compact voice buffered char count")
-                    .font(.caption2)
+                    .font(AppFont.sw(11, weight: .regular, category: .ui))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
@@ -610,7 +610,7 @@ struct InlineVoiceInputView: View {
             // ── Status line (with Exit chip while editing). ──
             HStack(spacing: 8) {
                 Text(stateLabel)
-                    .font(.subheadline)
+                    .font(AppFont.sw(15, weight: .regular, category: .body))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                 if viewModel.isEditingTranscript {
@@ -618,7 +618,7 @@ struct InlineVoiceInputView: View {
                         viewModel.endEditing(resume: false)
                     } label: {
                         Text("Exit", comment: "Exit transcript editing")
-                            .font(.caption.weight(.semibold))
+                            .font(AppFont.sw(12, weight: .semibold, category: .ui))
                             .foregroundStyle(.secondary)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 3)
@@ -650,24 +650,24 @@ struct InlineVoiceInputView: View {
                         .foregroundStyle(.orange)
                     if let countdown = viewModel.retryCountdown {
                         Text("Network error, retrying in \(countdown)s…")
-                            .font(.caption2)
+                            .font(AppFont.sw(11, weight: .regular, category: .ui))
                             .foregroundStyle(.secondary)
                     } else if viewModel.canManualRetry {
                         Text(viewModel.transcribeError ?? "")
-                            .font(.caption2)
+                            .font(AppFont.sw(11, weight: .regular, category: .ui))
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                         Button {
                             viewModel.manualRetry()
                         } label: {
                             Text("Retry", comment: "Manual retry transcription")
-                                .font(.caption2.weight(.semibold))
+                                .font(AppFont.sw(11, weight: .semibold, category: .ui))
                                 .foregroundStyle(.orange)
                         }
                         .buttonStyle(.plain)
                     } else {
                         Text(viewModel.transcribeError ?? "")
-                            .font(.caption2)
+                            .font(AppFont.sw(11, weight: .regular, category: .ui))
                             .foregroundStyle(.secondary)
                             .lineLimit(2)
                             .multilineTextAlignment(.center)
@@ -751,7 +751,7 @@ struct InlineVoiceInputView: View {
                 set: { viewModel.setTranscript($0); inputText = $0 }
             ))
                 .focused($editFocused)
-                .font(.body)
+                .font(AppFont.sw(17, weight: .regular, category: .body))
                 .multilineTextAlignment(.center)
                 .foregroundStyle(ChatColors.primaryText)
                 .onAppear { editFocused = true }
@@ -767,7 +767,7 @@ struct InlineVoiceInputView: View {
                             viewModel.endEditing(resume: false)
                         } label: {
                             Text("Done")
-                                .font(.body.weight(.semibold))
+                                .font(AppFont.sw(17, weight: .semibold, category: .body))
                         }
                     }
                 }
@@ -794,7 +794,7 @@ struct InlineVoiceInputView: View {
             ScrollViewReader { proxy in
                 ScrollView(.vertical, showsIndicators: true) {
                     Text(viewModel.transcript)
-                        .font(.body)
+                        .font(AppFont.sw(17, weight: .regular, category: .body))
                         .foregroundStyle(ChatColors.primaryText)
                         .multilineTextAlignment(.center)
                         .fixedSize(horizontal: false, vertical: true)
@@ -867,12 +867,12 @@ struct InlineVoiceInputView: View {
             HStack(spacing: 5) {
                 if let g = activeGroupName {
                     Text(g)
-                        .font(.caption2.weight(.medium))
+                        .font(AppFont.sw(11, weight: .medium, category: .ui))
                         .foregroundStyle(.secondary)
-                    Text("·").font(.caption2).foregroundStyle(.quaternary)
+                    Text("·").font(AppFont.sw(11, weight: .regular, category: .ui)).foregroundStyle(.quaternary)
                 }
                 Text(activeModelLabel)
-                    .font(.caption2)
+                    .font(AppFont.sw(11, weight: .regular, category: .ui))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                 Image(systemName: "chevron.up.chevron.down")

@@ -235,7 +235,7 @@ struct AlarmListView: View {
                             .font(.system(size: 48, weight: .thin))
                             .foregroundStyle(.secondary)
                         Text("No Alarms")
-                            .font(.title3)
+                            .font(AppFont.sw(20, weight: .regular, category: .title))
                             .foregroundStyle(.secondary)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -297,16 +297,16 @@ private struct AlarmRowView: View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
                 Text(alarm.displayTime)
-                    .font(.system(size: 34, weight: .thin, design: .default))
+                    .font(AppFont.sw(34, weight: .thin, category: .title))
                     .monospacedDigit()
                 if !alarm.label.isEmpty {
                     Text(alarm.label)
-                        .font(.subheadline)
+                        .font(AppFont.sw(15, weight: .regular, category: .body))
                         .foregroundStyle(.primary)
                 }
                 if !alarm.subtitle.isEmpty {
                     Text(alarm.subtitle)
-                        .font(.caption)
+                        .font(AppFont.sw(12, weight: .regular, category: .ui))
                         .foregroundStyle(.secondary)
                 }
             }
@@ -315,7 +315,7 @@ private struct AlarmRowView: View {
                 stateIndicator
                 if let day = alarm.weekdayLabel {
                     Text(day)
-                        .font(.caption)
+                        .font(AppFont.sw(12, weight: .regular, category: .ui))
                         .foregroundStyle(.secondary)
                 }
             }

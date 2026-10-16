@@ -51,7 +51,7 @@ struct CloudSyncSettingsV2View: View {
                 }
             } footer: {
                 Text("Toggle takes effect on next app launch.")
-                    .font(.caption)
+                    .font(AppFont.sw(12, weight: .regular, category: .ui))
             }
 
             if v2Enabled {
@@ -72,7 +72,7 @@ struct CloudSyncSettingsV2View: View {
                     Text("Upload (This Device)")
                 } footer: {
                     Text("This device name is broadcast to your other devices in the iCloud Sync zone.")
-                        .font(.caption)
+                        .font(AppFont.sw(12, weight: .regular, category: .ui))
                 }
 
                 Section {
@@ -119,26 +119,26 @@ struct CloudSyncSettingsV2View: View {
                     }
                 } footer: {
                     Text("Choose which data this device pushes to iCloud. API keys and secrets are synced securely via iCloud Keychain.")
-                        .font(.caption)
+                        .font(AppFont.sw(12, weight: .regular, category: .ui))
                 }
 
                 Section {
                     if remoteDevices.isEmpty {
                         Text("No other devices found yet. Devices appear here once they enable iCloud Sync.")
-                            .font(.caption)
+                            .font(AppFont.sw(12, weight: .regular, category: .ui))
                             .foregroundStyle(.secondary)
                             .padding(.vertical, 4)
                     } else {
                         ForEach(remoteDevices, id: \.id) { d in
                             VStack(alignment: .leading, spacing: 4) {
                                 HStack {
-                                    Text(d.deviceName).font(.body)
+                                    Text(d.deviceName).font(AppFont.sw(17, weight: .regular, category: .body))
                                     Spacer()
-                                    Text(relativeDate(d.lastSeen)).font(.caption2).foregroundStyle(.secondary)
+                                    Text(relativeDate(d.lastSeen)).font(AppFont.sw(11, weight: .regular, category: .ui)).foregroundStyle(.secondary)
                                 }
                                 if !d.uploadTypes.isEmpty {
                                     Text(uploadTypesSummary(d.uploadTypes))
-                                        .font(.caption)
+                                        .font(AppFont.sw(12, weight: .regular, category: .ui))
                                         .foregroundStyle(.secondary)
                                         .lineLimit(2)
                                 }
@@ -149,7 +149,7 @@ struct CloudSyncSettingsV2View: View {
                     Text("Other Devices")
                 } footer: {
                     Text("Devices that are signed in to the same iCloud account and have sync enabled. Last seen reflects the most recent push from that device.")
-                        .font(.caption)
+                        .font(AppFont.sw(12, weight: .regular, category: .ui))
                 }
             }
         }

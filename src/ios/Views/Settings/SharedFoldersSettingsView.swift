@@ -19,9 +19,9 @@ struct SharedFoldersSettingsView: View {
             Section {
                 VStack(alignment: .leading, spacing: 6) {
                     Label("Shared folders", systemImage: "info.circle")
-                        .font(.subheadline.weight(.semibold))
+                        .font(AppFont.sw(15, weight: .semibold, category: .body))
                     Text("These directories appear in iOS Files under On My iPhone → Minis. Tap a row to see details, browse, or toggle visibility.")
-                        .font(.caption)
+                        .font(AppFont.sw(12, weight: .regular, category: .ui))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -85,11 +85,11 @@ private struct SharedFolderRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(entry.displayName)
-                        .font(.body)
+                        .font(AppFont.sw(17, weight: .regular, category: .body))
                     accessBadge
                     if !isVisible {
                         Text("Hidden")
-                            .font(.caption2.weight(.semibold))
+                            .font(AppFont.sw(11, weight: .semibold, category: .ui))
                             .foregroundStyle(.secondary)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1)
@@ -99,7 +99,7 @@ private struct SharedFolderRow: View {
                     }
                 }
                 Text(entry.linuxPath)
-                    .font(.caption.monospaced())
+                    .font(AppFont.sw(12, weight: .regular, category: .code))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -113,7 +113,7 @@ private struct SharedFolderRow: View {
     private var accessBadge: some View {
         if entry.isWritableFromFiles {
             Text("R/W")
-                .font(.caption2.weight(.semibold))
+                .font(AppFont.sw(11, weight: .semibold, category: .ui))
                 .foregroundStyle(.green)
                 .padding(.horizontal, 5)
                 .padding(.vertical, 1)
@@ -122,7 +122,7 @@ private struct SharedFolderRow: View {
                 )
         } else {
             Text("Read-only")
-                .font(.caption2.weight(.semibold))
+                .font(AppFont.sw(11, weight: .semibold, category: .ui))
                 .foregroundStyle(.orange)
                 .padding(.horizontal, 5)
                 .padding(.vertical, 1)

@@ -34,7 +34,7 @@ struct ShadowVoiceProviderDetailView: View {
                 if let base = instance?.effectiveCustomBaseURL {
                     LabeledContent {
                         Text(base)
-                            .font(.system(.caption, design: .monospaced))
+                            .font(AppFont.sw(12, weight: .regular, category: .code))
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                             .truncationMode(.middle)

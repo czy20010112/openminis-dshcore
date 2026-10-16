@@ -126,7 +126,7 @@ struct ThinkingRuleEditorView: View {
 
                 Section {
                     Text(previewText)
-                        .font(.system(.caption, design: .monospaced))
+                        .font(AppFont.sw(12, weight: .regular, category: .code))
                         .textSelection(.enabled)
                 } header: {
                     Text("Request preview")
@@ -162,7 +162,7 @@ struct ThinkingRuleEditorView: View {
                 // This is not a cosmetic choice: sending an off tier to a strict-enum
                 // backend killed whole requests on MiMo (c5efeb1e).
                 Text("The field is omitted entirely when thinking is off.")
-                    .font(.caption)
+                    .font(AppFont.sw(12, weight: .regular, category: .ui))
                     .foregroundStyle(.secondary)
             }
         case .booleanToggle:

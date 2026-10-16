@@ -191,14 +191,14 @@ struct SyncMigrationDetailView: View {
                             LabeledContent {
                                 Text("\(vm.pendingPushNew)").foregroundStyle(.secondary)
                             } label: {
-                                Text("· New writes").foregroundStyle(.secondary).font(.callout)
+                                Text("· New writes").foregroundStyle(.secondary).font(AppFont.sw(16, weight: .regular, category: .body))
                             }
                         }
                         if vm.pendingPushMigration > 0 {
                             LabeledContent {
                                 Text("\(vm.pendingPushMigration)").foregroundStyle(.secondary)
                             } label: {
-                                Text("· Migration backlog").foregroundStyle(.secondary).font(.callout)
+                                Text("· Migration backlog").foregroundStyle(.secondary).font(AppFont.sw(16, weight: .regular, category: .body))
                             }
                         }
                     } else {
@@ -246,7 +246,7 @@ struct SyncMigrationDetailView: View {
                     Text("Historical Data")
                 } footer: {
                     Text("Local chats and files created before this build are not pushed to iCloud automatically. Tap above to backfill them — this only needs to run once per device. Already-pushed records are skipped, so it's safe to re-run.")
-                        .font(.caption)
+                        .font(AppFont.sw(12, weight: .regular, category: .ui))
                 }
             }
 
@@ -260,15 +260,15 @@ struct SyncMigrationDetailView: View {
                     if let err = vm.lastFailureMessage {
                         VStack(alignment: .leading, spacing: 4) {
                             Text("Last attempt failed")
-                                .font(.caption.weight(.medium))
+                                .font(AppFont.sw(12, weight: .medium, category: .ui))
                                 .foregroundStyle(.red)
                             Text(err)
-                                .font(.caption.monospaced())
+                                .font(AppFont.sw(12, weight: .regular, category: .code))
                                 .foregroundStyle(.secondary)
                         }
                     } else if vm.isCanceledByUser {
                         Text("Migration canceled. Tap to resume backfilling local history.")
-                            .font(.caption)
+                            .font(AppFont.sw(12, weight: .regular, category: .ui))
                             .foregroundStyle(.secondary)
                     }
                     Button {
@@ -301,7 +301,7 @@ struct SyncMigrationDetailView: View {
                             Image(systemName: "pause.circle.fill")
                                 .foregroundStyle(.orange)
                             Text("Paused — reopen Minis to continue")
-                                .font(.caption)
+                                .font(AppFont.sw(12, weight: .regular, category: .ui))
                                 .foregroundStyle(.secondary)
                         }
                     } else {
@@ -328,7 +328,7 @@ struct SyncMigrationDetailView: View {
                     Text("Migration")
                 } footer: {
                     Text("Backfilling pre-v2 history into v2's shared zone. Already-uploaded records stay on iCloud if you cancel.\n\nIf migration is stuck and retrying doesn't help, Reset Migration Progress clears the local progress so it can start over. Your iCloud data is not deleted.")
-                        .font(.caption)
+                        .font(AppFont.sw(12, weight: .regular, category: .ui))
                 }
 
                 Section {
@@ -347,7 +347,7 @@ struct SyncMigrationDetailView: View {
                                 Text("V1 zone deleted")
                                     .foregroundStyle(.primary)
                                 Text(AppLocalized("Deleted \(deletedAtRelativeString())"))
-                                    .font(.caption2)
+                                    .font(AppFont.sw(11, weight: .regular, category: .ui))
                                     .foregroundStyle(.secondary)
                             }
                         }
@@ -370,7 +370,7 @@ struct SyncMigrationDetailView: View {
                         .disabled(forceDeleteV1InProgress)
                         if let status = forceDeleteV1Status {
                             Text(status)
-                                .font(.caption)
+                                .font(AppFont.sw(12, weight: .regular, category: .ui))
                                 .foregroundStyle(status.hasPrefix("⚠️") ? .red : .secondary)
                         }
                     }
@@ -378,12 +378,12 @@ struct SyncMigrationDetailView: View {
                     Text("Reclaim v1 space")
                 } footer: {
                     Text("v1 records are deleted in batches of 100 as their v2 counterparts are confirmed saved, so iCloud usage doesn't double-up during migration.\n\n⚠️ Force-deleting the v1 zone permanently removes ALL legacy records from iCloud and CANNOT be undone. The cloud copy is gone for good. Only proceed if you've confirmed v2 push is at 100% AND every other device of yours has also finished migrating — peers that haven't yet may lose access to legacy data they hadn't received locally.")
-                        .font(.caption)
+                        .font(AppFont.sw(12, weight: .regular, category: .ui))
                 }
 
                 if let err = m.lastError {
                     Section("Last error") {
-                        Text(err).font(.caption.monospaced()).foregroundStyle(.red)
+                        Text(err).font(AppFont.sw(12, weight: .regular, category: .code)).foregroundStyle(.red)
                     }
                 }
             }
@@ -578,7 +578,7 @@ struct SyncMigrationDetailView: View {
                     Text("Loading zones…").foregroundStyle(.secondary)
                 }
             } else if let err = zonesLoadError {
-                Text(err).font(.caption).foregroundStyle(.red)
+                Text(err).font(AppFont.sw(12, weight: .regular, category: .ui)).foregroundStyle(.red)
             } else if zonesList.isEmpty {
                 Text("No zones found.").foregroundStyle(.secondary)
             } else {
@@ -604,7 +604,7 @@ struct SyncMigrationDetailView: View {
             Text("iCloud Zones")
         } footer: {
             Text("Every zone Minis has created in your iCloud private database. **V2** holds the current sync engine's data; **V1** holds legacy per-device backups from older builds. Deleting a zone is permanent and removes everything inside (records + assets). Use this to reclaim space after migration completes.")
-                .font(.caption)
+                .font(AppFont.sw(12, weight: .regular, category: .ui))
         }
     }
 
@@ -614,7 +614,7 @@ struct SyncMigrationDetailView: View {
         HStack(spacing: 10) {
             // Color-coded badge by kind.
             Text(badgeText(for: row.kind))
-                .font(.caption2.weight(.semibold))
+                .font(AppFont.sw(11, weight: .semibold, category: .ui))
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
                 .background(badgeColor(for: row.kind).opacity(0.18))
@@ -623,7 +623,7 @@ struct SyncMigrationDetailView: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 4) {
                     Text(row.name)
-                        .font(.system(.subheadline, design: .monospaced))
+                        .font(AppFont.sw(15, weight: .regular, category: .code))
                         .lineLimit(1)
                         .truncationMode(.middle)
                     if row.isOwn {
@@ -633,7 +633,7 @@ struct SyncMigrationDetailView: View {
                     }
                 }
                 Text(zoneDescription(for: row))
-                    .font(.caption2)
+                    .font(AppFont.sw(11, weight: .regular, category: .ui))
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
             }
@@ -822,9 +822,9 @@ struct SyncMigrationDetailView: View {
                 .foregroundStyle(.orange)
             VStack(alignment: .leading, spacing: 4) {
                 Text("iCloud Sync upgraded to v2")
-                    .font(.caption.weight(.semibold))
+                    .font(AppFont.sw(12, weight: .semibold, category: .ui))
                 Text("To improve sync experience and reduce iCloud storage, we've upgraded the sync engine. Historical data is being migrated automatically — this may consume some extra battery or cellular data. You can cancel migration any time below.")
-                    .font(.caption2)
+                    .font(AppFont.sw(11, weight: .regular, category: .ui))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }

@@ -434,7 +434,7 @@ struct UnifiedModelPicker: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         Text(note)
-                            .font(.caption)
+                            .font(AppFont.sw(12, weight: .regular, category: .ui))
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -459,7 +459,7 @@ struct UnifiedModelPicker: View {
                             showGroupsManager = true
                         } label: {
                             Text("Edit")
-                                .font(.caption)
+                                .font(AppFont.sw(12, weight: .regular, category: .ui))
                                 .textCase(nil)
                         }
                         .buttonStyle(.plain)
@@ -493,7 +493,7 @@ struct UnifiedModelPicker: View {
                         showCreateGroupSheet = true
                     } label: {
                         Label("Create group from models…", systemImage: "plus.rectangle.on.folder")
-                            .font(.subheadline)
+                            .font(AppFont.sw(15, weight: .regular, category: .body))
                     }
                 }
             }
@@ -619,7 +619,7 @@ struct UnifiedModelPicker: View {
                     config.onAddMulti?(selectedEntryIds)
                     dismiss()
                 }
-                .font(.body.weight(.semibold))
+                .font(AppFont.sw(17, weight: .semibold, category: .body))
                 .disabled(selectedEntryIds.isEmpty)
             } else {
                 Button("Done") { dismiss() }
@@ -654,7 +654,7 @@ struct UnifiedModelPicker: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(group.name)
-                        .font(.subheadline.weight(.medium))
+                        .font(AppFont.sw(15, weight: .medium, category: .body))
                         .foregroundStyle(Color(UIColor.label))
                     strategyBadge(group.strategy)
                 }
@@ -666,7 +666,7 @@ struct UnifiedModelPicker: View {
             if case .all = config.groupScope,
                store.defaultPrimaryGroupId == group.id {
                 Text("Default")
-                    .font(.caption2.weight(.medium))
+                    .font(AppFont.sw(11, weight: .medium, category: .ui))
                     .foregroundStyle(.blue)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 1)
@@ -715,28 +715,28 @@ struct UnifiedModelPicker: View {
     private func groupSubtitle(_ group: ModelGroup) -> some View {
         if group.memberEntryIds.isEmpty {
             Text(AppLocalized("No models"))
-                .font(.caption)
+                .font(AppFont.sw(12, weight: .regular, category: .ui))
                 .foregroundStyle(.tertiary)
         } else if isGroupSelected(group),
                   let eid = config.currentEntryId?(),
                   let entry = store.entry(for: eid) {
             Text("→ \(entry.model.displayName)")
-                .font(.caption)
+                .font(AppFont.sw(12, weight: .regular, category: .ui))
                 .foregroundStyle(.secondary)
         } else {
             let available = availableMemberEntryIds(group).count
             let total = group.memberEntryIds.count
             if available == total {
                 Text(AppLocalized("\(total) models"))
-                    .font(.caption)
+                    .font(AppFont.sw(12, weight: .regular, category: .ui))
                     .foregroundStyle(.tertiary)
             } else if available == 0 {
                 Text(AppLocalized("\(total) models · all unavailable"))
-                    .font(.caption)
+                    .font(AppFont.sw(12, weight: .regular, category: .ui))
                     .foregroundStyle(.red.opacity(0.7))
             } else {
                 Text(AppLocalized("\(available)/\(total) available"))
-                    .font(.caption)
+                    .font(AppFont.sw(12, weight: .regular, category: .ui))
                     .foregroundStyle(.orange)
             }
         }
@@ -747,7 +747,7 @@ struct UnifiedModelPicker: View {
             Image(systemName: strategy == .fallback ? "arrow.down.circle" : "arrow.triangle.branch")
                 .font(.system(size: 8))
             Text(strategy == .fallback ? "FB" : "LB")
-                .font(.system(size: 9, weight: .medium, design: .rounded))
+                .font(AppFont.sw(9, weight: .medium, category: .ui))
         }
         .foregroundStyle(.secondary)
         .padding(.horizontal, 4)
@@ -843,7 +843,7 @@ struct UnifiedModelPicker: View {
     private func groupMemberRows(_ group: ModelGroup) -> some View {
         if group.memberEntryIds.isEmpty {
             Text("No models in this group")
-                .font(.caption)
+                .font(AppFont.sw(12, weight: .regular, category: .ui))
                 .foregroundStyle(.secondary)
                 .padding(.leading, 30)
                 .padding(.vertical, 4)
@@ -887,11 +887,11 @@ struct UnifiedModelPicker: View {
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 4) {
                     Text(entry.model.displayName)
-                        .font(.subheadline)
+                        .font(AppFont.sw(15, weight: .regular, category: .body))
                         .foregroundStyle(disabled ? Color(UIColor.tertiaryLabel) : Color(UIColor.label))
                     if disabled {
                         Text("unavailable", comment: "Modality-incompatible model tag")
-                            .font(.system(size: 9, weight: .medium))
+                            .font(AppFont.sw(9, weight: .medium, category: .ui))
                             .foregroundStyle(.orange)
                     }
                 }
@@ -901,11 +901,11 @@ struct UnifiedModelPicker: View {
                             .font(.caption2.weight(.medium))
                             .foregroundStyle(.secondary)
                         Text("·")
-                            .font(.caption2)
+                            .font(AppFont.sw(11, weight: .regular, category: .ui))
                             .foregroundStyle(.tertiary)
                     }
                     Text(entry.model.id)
-                        .font(.caption2)
+                        .font(AppFont.sw(11, weight: .regular, category: .ui))
                         .foregroundStyle(.tertiary)
                 }
             }
@@ -914,7 +914,7 @@ struct UnifiedModelPicker: View {
 
             if isActive {
                 Text("Active")
-                    .font(.caption2.weight(.medium))
+                    .font(AppFont.sw(11, weight: .medium, category: .ui))
                     .foregroundStyle(.green)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 1)
@@ -958,29 +958,29 @@ struct UnifiedModelPicker: View {
 
                 VStack(alignment: .leading, spacing: 1) {
                     Text(entry.model.displayName)
-                        .font(.subheadline)
+                        .font(AppFont.sw(15, weight: .regular, category: .body))
                         .foregroundStyle(Color(UIColor.tertiaryLabel))
                     HStack(spacing: 4) {
                         if let instanceLabel = store.instance(for: entry.providerInstanceId)?.label {
                             Text(instanceLabel)
-                                .font(.caption2.weight(.medium))
+                                .font(AppFont.sw(11, weight: .medium, category: .ui))
                                 .foregroundStyle(.tertiary)
                         }
                         Text("·")
-                            .font(.caption2)
+                            .font(AppFont.sw(11, weight: .regular, category: .ui))
                             .foregroundStyle(.quaternary)
                         Text(reason)
-                            .font(.caption2)
+                            .font(AppFont.sw(11, weight: .regular, category: .ui))
                             .foregroundStyle(.red.opacity(0.7))
                     }
                 }
             } else {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(entryId.components(separatedBy: "/").last ?? entryId)
-                        .font(.subheadline)
+                        .font(AppFont.sw(15, weight: .regular, category: .body))
                         .foregroundStyle(Color(UIColor.tertiaryLabel))
                     Text(reason)
-                        .font(.caption2)
+                        .font(AppFont.sw(11, weight: .regular, category: .ui))
                         .foregroundStyle(.red.opacity(0.7))
                 }
             }
@@ -1025,7 +1025,7 @@ struct UnifiedModelPicker: View {
                         Image(systemName: "chevron.down")
                             .font(.system(size: 11, weight: .medium))
                         Text(AppLocalized("Show \(item.entries.count) models"))
-                            .font(.caption)
+                            .font(AppFont.sw(12, weight: .regular, category: .ui))
                     }
                     .foregroundStyle(.tint)
                 }
@@ -1092,22 +1092,22 @@ struct UnifiedModelPicker: View {
 
                 VStack(alignment: .leading, spacing: 1) {
                     Text(entry.model.displayName)
-                        .font(.subheadline)
+                        .font(AppFont.sw(15, weight: .regular, category: .body))
                         .foregroundStyle(disabled ? Color(UIColor.tertiaryLabel) : Color(UIColor.label))
                     HStack(spacing: 4) {
                         // Subtitle from traits (e.g. "iOS built-in, works offline")
                         // for built-ins; the raw model id for cloud models.
                         Text(traits.subtitle ?? entry.model.id)
-                            .font(.caption2)
+                            .font(AppFont.sw(11, weight: .regular, category: .ui))
                             .foregroundStyle(.tertiary)
                         let badges = traits.subtitle == nil ? modalityBadges(entry.model) : []
                         if !badges.isEmpty {
                             Text("·")
-                                .font(.caption2)
+                                .font(AppFont.sw(11, weight: .regular, category: .ui))
                                 .foregroundStyle(.quaternary)
                             ForEach(badges, id: \.self) { badge in
                                 Text(badge)
-                                    .font(.system(size: 9, weight: .medium))
+                                    .font(AppFont.sw(9, weight: .medium, category: .ui))
                                     .foregroundStyle(.secondary)
                                     .padding(.horizontal, 4)
                                     .padding(.vertical, 1)
@@ -1117,7 +1117,7 @@ struct UnifiedModelPicker: View {
                         }
                         if disabled {
                             Text("unavailable", comment: "Modality-incompatible model tag")
-                                .font(.system(size: 9, weight: .medium))
+                                .font(AppFont.sw(9, weight: .medium, category: .ui))
                                 .foregroundStyle(.orange)
                         }
                     }
@@ -1128,7 +1128,7 @@ struct UnifiedModelPicker: View {
                 if !isMulti, config.currentGroupId?() != nil,
                    config.currentEntryId?() == entry.id {
                     Text("Active")
-                        .font(.caption2.weight(.medium))
+                        .font(AppFont.sw(11, weight: .medium, category: .ui))
                         .foregroundStyle(.green)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1)
@@ -1168,12 +1168,12 @@ struct UnifiedModelPicker: View {
                     .font(.system(size: 28))
                     .foregroundStyle(.quaternary)
                 Text(searchText.isEmpty ? "No models available" : "No results")
-                    .font(.subheadline)
+                    .font(AppFont.sw(15, weight: .regular, category: .body))
                     .foregroundStyle(.secondary)
                 Text(searchText.isEmpty
                      ? "Configure providers in Settings to see models here."
                      : "Try a different search term.")
-                    .font(.caption)
+                    .font(AppFont.sw(12, weight: .regular, category: .ui))
                     .foregroundStyle(.tertiary)
                     .multilineTextAlignment(.center)
             }

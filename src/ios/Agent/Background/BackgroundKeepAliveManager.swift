@@ -2164,10 +2164,10 @@ struct BackgroundInterruptionBanner: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 Text("Background Task Interrupted")
-                    .font(.subheadline.bold())
+                    .font(AppFont.sw(15, weight: .bold, category: .body))
                     .foregroundColor(.white)
                 Text("Turn on Background Boost to keep tasks running")
-                    .font(.caption)
+                    .font(AppFont.sw(12, weight: .regular, category: .ui))
                     .foregroundColor(.white.opacity(0.85))
             }
 
@@ -2188,7 +2188,7 @@ struct BackgroundInterruptionBanner: View {
                     withAnimation { tracker.dismiss() }
                 } label: {
                     Text("Enable")
-                        .font(.caption.bold())
+                        .font(AppFont.sw(12, weight: .bold, category: .ui))
                         .padding(.horizontal, 12)
                         .padding(.vertical, 5)
                         .background(Color.white)
@@ -2204,7 +2204,7 @@ struct BackgroundInterruptionBanner: View {
                     withAnimation { tracker.dismiss() }
                 } label: {
                     Text("Choose a mode")
-                        .font(.caption2)
+                        .font(AppFont.sw(11, weight: .regular, category: .ui))
                         .foregroundColor(.white.opacity(0.85))
                         .underline()
                 }
@@ -2213,7 +2213,7 @@ struct BackgroundInterruptionBanner: View {
                     withAnimation { tracker.remindLaterAndDismiss() }
                 } label: {
                     Text("Remind me later")
-                        .font(.caption2)
+                        .font(AppFont.sw(11, weight: .regular, category: .ui))
                         .foregroundColor(.white.opacity(0.8))
                 }
             }

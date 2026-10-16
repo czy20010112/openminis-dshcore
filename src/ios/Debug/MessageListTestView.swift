@@ -523,7 +523,7 @@ struct MessageListTestView: View {
         .overlay(alignment: .bottomLeading) {
             // Hidden element for UITest to read FPS data
             Text("FPS:\(fpsMonitor.avgFPS)/\(fpsMonitor.minFPS)/\(fpsMonitor.maxFPS)/\(fpsMonitor.dropCount)")
-                .font(.system(size: 1))
+                .font(AppFont.sw(1, weight: .regular, category: .ui))
                 .foregroundStyle(.clear)
                 .accessibilityIdentifier("fpsData")
                 .accessibilityLabel("FPS:\(fpsMonitor.avgFPS)/\(fpsMonitor.minFPS)/\(fpsMonitor.maxFPS)/\(fpsMonitor.dropCount)")
@@ -551,65 +551,65 @@ struct MessageListTestView: View {
         VStack(alignment: .leading, spacing: 3) {
             HStack {
                 Text("Case #\(jitterMonitor.caseNumber)")
-                    .font(.system(.caption, design: .monospaced).weight(.bold))
+                    .font(AppFont.sw(12, weight: .bold, category: .code))
                 Text("Action #\(jitterMonitor.actionNumber)")
-                    .font(.system(.caption, design: .monospaced).weight(.bold))
+                    .font(AppFont.sw(12, weight: .bold, category: .code))
                     .foregroundStyle(.cyan)
             }
             if !jitterMonitor.actionDesc.isEmpty {
                 Text(jitterMonitor.actionDesc)
-                    .font(.system(.caption, design: .monospaced))
+                    .font(AppFont.sw(12, weight: .regular, category: .code))
                     .foregroundStyle(.primary)
                     .lineLimit(2)
                     .minimumScaleFactor(0.8)
             }
             HStack(spacing: 6) {
                 Text("Diff:")
-                    .font(.system(.caption, design: .monospaced))
+                    .font(AppFont.sw(12, weight: .regular, category: .code))
                 Text(String(format: "%.1f%%", jitterMonitor.liveDiffRatio * 100))
-                    .font(.system(.caption, design: .monospaced).weight(.bold))
+                    .font(AppFont.sw(12, weight: .bold, category: .code))
                     .foregroundStyle(jitterMonitor.liveDiffRatio < 0.02 ? .green :
                                      jitterMonitor.liveDiffRatio < 0.05 ? .yellow : .red)
                 Text("Spk:")
-                    .font(.system(.caption, design: .monospaced))
+                    .font(AppFont.sw(12, weight: .regular, category: .code))
                 Text("\(jitterMonitor.liveSpikes)")
-                    .font(.system(.caption, design: .monospaced).weight(.bold))
+                    .font(AppFont.sw(12, weight: .bold, category: .code))
                     .foregroundStyle(jitterMonitor.liveSpikes == 0 ? .green : .red)
             }
             HStack(spacing: 6) {
                 Text("Peak:")
-                    .font(.system(.caption, design: .monospaced))
+                    .font(AppFont.sw(12, weight: .regular, category: .code))
                 Text(String(format: "%.0f", jitterMonitor.livePeakRegion))
-                    .font(.system(.caption, design: .monospaced).weight(.bold))
+                    .font(AppFont.sw(12, weight: .bold, category: .code))
                     .foregroundStyle(jitterMonitor.livePeakRegion < 20 ? .green :
                                      jitterMonitor.livePeakRegion < 40 ? .yellow : .red)
                 Text("CSJ:")
-                    .font(.system(.caption, design: .monospaced))
+                    .font(AppFont.sw(12, weight: .regular, category: .code))
                 Text("\(jitterMonitor.contentSizeJumps)")
-                    .font(.system(.caption, design: .monospaced).weight(.bold))
+                    .font(AppFont.sw(12, weight: .bold, category: .code))
                     .foregroundStyle(jitterMonitor.contentSizeJumps == 0 ? .green : .red)
             }
             HStack(spacing: 6) {
                 Text("Act:")
-                    .font(.system(.caption, design: .monospaced))
+                    .font(AppFont.sw(12, weight: .regular, category: .code))
                 Text(String(format: "%.1f", jitterMonitor.actionScore))
-                    .font(.system(.caption, design: .monospaced).weight(.bold))
+                    .font(AppFont.sw(12, weight: .bold, category: .code))
                     .foregroundStyle(jitterMonitor.actionPassed ? .green : .red)
                 Text(jitterMonitor.actionPassed ? "PASS" : "FAIL")
-                    .font(.system(.caption, design: .monospaced).weight(.heavy))
+                    .font(AppFont.sw(12, weight: .heavy, category: .code))
                     .foregroundStyle(jitterMonitor.actionPassed ? .green : .red)
             }
             // FPS monitor
             HStack(spacing: 6) {
                 Text("FPS:")
-                    .font(.system(.caption, design: .monospaced))
+                    .font(AppFont.sw(12, weight: .regular, category: .code))
                 Text("\(fpsMonitor.currentFPS)")
-                    .font(.system(.caption, design: .monospaced).weight(.bold))
+                    .font(AppFont.sw(12, weight: .bold, category: .code))
                     .foregroundStyle(fpsMonitor.currentFPS >= 55 ? .green :
                                      fpsMonitor.currentFPS >= 30 ? .yellow : .red)
                 if !fpsMonitor.samples.isEmpty {
                     Text("avg=\(fpsMonitor.avgFPS) min=\(fpsMonitor.minFPS)")
-                        .font(.system(.caption2, design: .monospaced))
+                        .font(AppFont.sw(11, weight: .regular, category: .code))
                         .foregroundStyle(.secondary)
                 }
             }
@@ -633,14 +633,14 @@ struct MessageListTestView: View {
                     .fill(statusColor)
                     .frame(width: 8, height: 8)
                 Text(simulator.progress)
-                    .font(.caption.monospaced())
+                    .font(AppFont.sw(12, weight: .regular, category: .code))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                 Spacer()
                 Text(simulator.state == .playing ? "PLAYING" :
                      simulator.state == .paused ? "PAUSED" :
                      simulator.state == .finished ? "DONE" : "IDLE")
-                    .font(.caption2.weight(.bold).monospaced())
+                    .font(AppFont.sw(11, weight: .bold, category: .code))
                     .foregroundStyle(statusColor)
                     .accessibilityIdentifier("simulatorState")
             }
@@ -649,7 +649,7 @@ struct MessageListTestView: View {
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Speed: \(simulator.charsPerTick) ch/tick")
-                        .font(.caption2).foregroundStyle(.secondary)
+                        .font(AppFont.sw(11, weight: .regular, category: .ui)).foregroundStyle(.secondary)
                     Slider(value: Binding(
                         get: { Double(simulator.charsPerTick) },
                         set: { simulator.charsPerTick = Int($0) }
@@ -658,7 +658,7 @@ struct MessageListTestView: View {
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Interval: \(String(format: "%.0f", simulator.tickInterval * 1000))ms")
-                        .font(.caption2).foregroundStyle(.secondary)
+                        .font(AppFont.sw(11, weight: .regular, category: .ui)).foregroundStyle(.secondary)
                     Slider(value: $simulator.tickInterval, in: 0.01...0.2, step: 0.01)
                 }
             }
@@ -697,7 +697,7 @@ struct MessageListTestView: View {
                     }
                 } label: {
                     Label("Load", systemImage: "tray.and.arrow.down")
-                        .font(.caption.weight(.semibold))
+                        .font(AppFont.sw(12, weight: .semibold, category: .ui))
                         .padding(.horizontal, 12).padding(.vertical, 6)
                         .background(Color.blue.opacity(0.15)).clipShape(Capsule())
                 }
@@ -768,11 +768,11 @@ struct MessageListTestView: View {
         CompatNavigationStack {
             VStack(spacing: 12) {
                 Text("Paste session JSON from \"Copy Session Data\"")
-                    .font(.caption)
+                    .font(AppFont.sw(12, weight: .regular, category: .ui))
                     .foregroundStyle(.secondary)
 
                 TextEditor(text: $pastedJSON)
-                    .font(.system(.caption, design: .monospaced))
+                    .font(AppFont.sw(12, weight: .regular, category: .code))
                     .border(Color.secondary.opacity(0.3))
                     .frame(maxHeight: .infinity)
             }

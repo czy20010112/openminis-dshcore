@@ -45,7 +45,7 @@ struct KimiDeviceLoginSheet: View {
                         .font(.system(size: 44))
                         .foregroundStyle(.green)
                     Text(AppLocalized("Signed in to Kimi Code"))
-                        .font(.headline)
+                        .font(AppFont.sw(17, weight: .semibold, category: .body))
 
                 case let .failed(message):
                     Image(systemName: "exclamationmark.triangle.fill")
@@ -77,7 +77,7 @@ struct KimiDeviceLoginSheet: View {
     @ViewBuilder
     private func awaitingBody(userCode: String, url: String) -> some View {
         Text(AppLocalized("1. Open the verification page\n2. Enter this code to authorize Minis"))
-            .font(.subheadline)
+            .font(AppFont.sw(15, weight: .regular, category: .body))
             .foregroundStyle(.secondary)
             .multilineTextAlignment(.center)
 
@@ -109,7 +109,7 @@ struct KimiDeviceLoginSheet: View {
         HStack(spacing: 6) {
             ProgressView().controlSize(.small)
             Text(AppLocalized("Waiting for authorization…"))
-                .font(.footnote)
+                .font(AppFont.sw(13, weight: .regular, category: .body))
                 .foregroundStyle(.secondary)
         }
         .padding(.top, 4)

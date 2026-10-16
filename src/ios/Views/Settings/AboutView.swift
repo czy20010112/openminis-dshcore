@@ -44,17 +44,17 @@ struct AboutView: View {
                             )
                     }
                     Text("Minis")
-                        .font(.title2.bold())
+                        .font(AppFont.sw(22, weight: .bold, category: .title))
                     Text("Version \(appVersion)")
-                        .font(.subheadline)
+                        .font(AppFont.sw(15, weight: .regular, category: .body))
                         .foregroundStyle(.secondary)
                     Text("Built \(buildDate)")
-                        .font(.caption)
+                        .font(AppFont.sw(12, weight: .regular, category: .ui))
                         .foregroundStyle(.tertiary)
                         // Selectable so it can be copied into a bug report.
                         .textSelection(.enabled)
                     Text("Minis is Your Fully Local, Fully Private On-Device Agent.")
-                        .font(.subheadline)
+                        .font(AppFont.sw(15, weight: .regular, category: .body))
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity)

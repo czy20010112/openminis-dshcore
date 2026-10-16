@@ -43,7 +43,7 @@ struct SwipeToSendHint: View {
                 Text(isEnqueue
                      ? AppLocalized("Release to queue")
                      : AppLocalized("Release to send"))
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(AppFont.sw(13, weight: .semibold, category: .body))
                     .foregroundStyle(chipFg)
                     .padding(.horizontal, 14)
                     .frame(height: 34)
@@ -202,7 +202,7 @@ private struct VideoLoadingChip: View {
                 .controlSize(.small)
 
             Text("Loading…")
-                .font(.caption2)
+                .font(AppFont.sw(11, weight: .regular, category: .ui))
                 .foregroundStyle(ChatColors.secondaryText)
         }
         .frame(width: 64, height: 64)
@@ -281,7 +281,7 @@ private struct AttachmentChip: View {
                     .font(.system(size: 18))
                     .foregroundStyle(.orange)
                 Text("Failed")
-                    .font(.caption2)
+                    .font(AppFont.sw(11, weight: .regular, category: .ui))
                     .foregroundStyle(ChatColors.secondaryText)
             }
             .frame(width: 64, height: 64)
@@ -410,7 +410,7 @@ private struct AttachmentChip: View {
                     .frame(maxHeight: .infinity, alignment: .bottom)
 
                 Text(attachment.fileName)
-                    .font(.system(size: 9))
+                    .font(AppFont.sw(9, weight: .regular, category: .ui))
                     .foregroundStyle(ChatColors.primaryText)
                     .lineLimit(2)
                     .multilineTextAlignment(.center)
@@ -673,7 +673,7 @@ struct UserAttachmentList: View {
                     .frame(maxHeight: .infinity, alignment: .bottom)
 
                 Text(meta.fileName)
-                    .font(.system(size: 9))
+                    .font(AppFont.sw(9, weight: .regular, category: .ui))
                     .foregroundStyle(ChatColors.primaryText)
                     .lineLimit(2)
                     .multilineTextAlignment(.center)
@@ -775,7 +775,7 @@ struct QueuedAttachmentPreview: View {
                 .font(.title3)
                 .foregroundStyle(.secondary)
             Text(fileName)
-                .font(.system(size: 8))
+                .font(AppFont.sw(8, weight: .regular, category: .ui))
                 .foregroundStyle(.tertiary)
                 .lineLimit(1)
         }

@@ -472,7 +472,7 @@ struct SpeechPlayerControl: View {
             speakerGlyph(size: 15, ring: 40).frame(width: 40, height: 40)
             if state.speechSpeed > 1.0 {
                 Text(Self.speedLabel(state.speechSpeed))
-                    .font(.system(size: 9, weight: .bold))
+                    .font(AppFont.sw(9, weight: .bold, category: .ui))
                     .foregroundStyle(.white)
                     .padding(.horizontal, 4).padding(.vertical, 1)
                     .background(Capsule().fill(Color.accentColor))
@@ -510,7 +510,7 @@ struct SpeechPlayerControl: View {
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(.secondary)
                     Text(modelLabel.isEmpty ? "Voice" : modelLabel)
-                        .font(.caption.weight(.medium))
+                        .font(AppFont.sw(12, weight: .medium, category: .ui))
                         .foregroundStyle(.primary)
                         .lineLimit(1)
                     Image(systemName: "chevron.up.chevron.down")
@@ -526,7 +526,7 @@ struct SpeechPlayerControl: View {
                 state.nextSpeed(); bumpIdle()
             } label: {
                 Text(Self.speedLabel(state.speechSpeed))
-                    .font(.caption2.weight(.bold))
+                    .font(AppFont.sw(11, weight: .bold, category: .ui))
                     .lineLimit(1)
                     .foregroundStyle(state.speechSpeed > 1.0 ? Color.accentColor : .secondary)
                     // Fixed width sized for the widest label ("1.25×") so cycling

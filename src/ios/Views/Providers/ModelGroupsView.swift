@@ -24,10 +24,10 @@ struct ModelGroupsView: View {
                             .font(.system(size: 32))
                             .foregroundStyle(.quaternary)
                         Text("No model groups")
-                            .font(.subheadline)
+                            .font(AppFont.sw(15, weight: .regular, category: .body))
                             .foregroundStyle(.secondary)
                         Text("Groups let you combine models for fallback or load balancing.")
-                            .font(.caption)
+                            .font(AppFont.sw(12, weight: .regular, category: .ui))
                             .foregroundStyle(.tertiary)
                             .multilineTextAlignment(.center)
                     }
@@ -77,7 +77,7 @@ struct ModelGroupsView: View {
                         Text("Groups")
                         Spacer()
                         EditButton()
-                            .font(.caption)
+                            .font(AppFont.sw(12, weight: .regular, category: .ui))
                             .textCase(nil)
                     }
                 }
@@ -173,7 +173,7 @@ struct ModelGroupsView: View {
         .overlay(alignment: .top) {
             if let msg = forceSyncToast {
                 Text(msg)
-                    .font(.subheadline.weight(.medium))
+                    .font(AppFont.sw(15, weight: .medium, category: .body))
                     .foregroundStyle(.white)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 10)
@@ -366,7 +366,7 @@ private struct GroupRow: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text(group.name)
-                    .font(.body.weight(.medium))
+                    .font(AppFont.sw(17, weight: .medium, category: .body))
                 // [T-ios-modelgroup-modality-icons] Mark the group's top-2 most
                 // distinctive modalities (inputs + outputs) right after the title,
                 // in priority order, for at-a-glance "what is this group for".
@@ -387,26 +387,26 @@ private struct GroupRow: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                 Text(group.strategy == .fallback ? "Fallback" : "Load Balance")
-                    .font(.caption)
+                    .font(AppFont.sw(12, weight: .regular, category: .ui))
                     .foregroundStyle(.secondary)
                 if group.strategy == .fallback {
                     Text("·")
-                        .font(.caption)
+                        .font(AppFont.sw(12, weight: .regular, category: .ui))
                         .foregroundStyle(.quaternary)
                     Text(group.fallbackStrategy == .always ? AppLocalized("Always") : AppLocalized("Default"))
-                        .font(.caption)
+                        .font(AppFont.sw(12, weight: .regular, category: .ui))
                         .foregroundStyle(group.fallbackStrategy == .always ? .orange : .secondary)
                 }
                 Text("·")
-                    .font(.caption)
+                    .font(AppFont.sw(12, weight: .regular, category: .ui))
                     .foregroundStyle(.quaternary)
                 Text(AppLocalized("\(group.memberEntryIds.count) models"))
-                    .font(.caption)
+                    .font(AppFont.sw(12, weight: .regular, category: .ui))
                     .foregroundStyle(.secondary)
             }
 
             Text(memberSummary)
-                .font(.caption2)
+                .font(AppFont.sw(11, weight: .regular, category: .ui))
                 .foregroundStyle(.tertiary)
                 .lineLimit(1)
         }
@@ -415,7 +415,7 @@ private struct GroupRow: View {
 
     private func badge(_ text: String, color: Color) -> some View {
         Text(text)
-            .font(.caption2.weight(.semibold))
+            .font(AppFont.sw(11, weight: .semibold, category: .ui))
             .foregroundStyle(color)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)

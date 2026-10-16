@@ -212,7 +212,7 @@ struct BackupSettingsView: View {
                             .textContentType(.newPassword)
                         if passphrase != confirmPassphrase {
                             Text("Passphrases don't match.")
-                                .font(.footnote)
+                                .font(AppFont.sw(13, weight: .regular, category: .body))
                                 .foregroundStyle(.red)
                         }
                     }
@@ -296,7 +296,7 @@ struct BackupSettingsView: View {
                     // Without maxWidth the row sizes to its content and sits
                     // left; this is what centres it in the Form row.
                     .frame(maxWidth: .infinity)
-                    .font(.body.weight(.medium))
+                    .font(AppFont.sw(17, weight: .medium, category: .body))
                 }
                 // The start-time requirements gate STARTING only. Applying
                 // them while running would disable the button mid-run and
@@ -328,28 +328,28 @@ struct BackupSettingsView: View {
                         // most likely to be missing — the categories arrive
                         // already selected.
                         Text("Add a storage destination to continue.")
-                            .font(.footnote)
+                            .font(AppFont.sw(13, weight: .regular, category: .body))
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity)
                             .multilineTextAlignment(.center)
                             .compatListRowSeparatorLeadingZero()
                     } else if selected.isEmpty {
                         Text("Choose at least one thing to include.")
-                            .font(.footnote)
+                            .font(AppFont.sw(13, weight: .regular, category: .body))
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity)
                             .multilineTextAlignment(.center)
                             .compatListRowSeparatorLeadingZero()
                     } else if encryptBackup && passphrase.isEmpty {
                         Text("Set a passphrase to encrypt this backup.")
-                            .font(.footnote)
+                            .font(AppFont.sw(13, weight: .regular, category: .body))
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity)
                             .multilineTextAlignment(.center)
                             .compatListRowSeparatorLeadingZero()
                     } else if encryptBackup && passphrase != confirmPassphrase {
                         Text("Confirm the passphrase to continue.")
-                            .font(.footnote)
+                            .font(AppFont.sw(13, weight: .regular, category: .body))
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity)
                             .multilineTextAlignment(.center)
@@ -361,7 +361,7 @@ struct BackupSettingsView: View {
 
                 if let errorText {
                     Text(errorText)
-                        .font(.footnote)
+                        .font(AppFont.sw(13, weight: .regular, category: .body))
                         .foregroundStyle(.red)
                 }
             }
@@ -409,12 +409,12 @@ struct BackupSettingsView: View {
                                 Text(r.folderName)
                                 if let error = r.error {
                                     Text(error)
-                                        .font(.caption)
+                                        .font(AppFont.sw(12, weight: .regular, category: .ui))
                                         .foregroundStyle(.secondary)
                                 }
                             }
                         }
-                        .font(.footnote)
+                        .font(AppFont.sw(13, weight: .regular, category: .body))
                     }
                 } header: {
                     Text("Backup Ready")
@@ -613,10 +613,10 @@ struct BackupSettingsView: View {
                           : "arrow.up.circle")
                         .foregroundStyle(d.error != nil ? .orange
                                          : d.finishedAt != nil ? .green : .blue)
-                    Text(d.name).font(.callout)
+                    Text(d.name).font(AppFont.sw(16, weight: .regular, category: .body))
                     Spacer()
                     Text("\(Int(d.fraction * 100))%")
-                        .font(.caption.monospacedDigit())
+                        .font(AppFont.sw(12, weight: .regular, category: .code))
                         .foregroundStyle(.secondary)
                 }
                 if d.error == nil {
@@ -625,10 +625,10 @@ struct BackupSettingsView: View {
                 // Bytes / rate / elapsed / remaining — the four numbers that
                 // together answer "is this working, and how long more?".
                 if let error = d.error {
-                    Text(error).font(.caption).foregroundStyle(.orange)
+                    Text(error).font(AppFont.sw(12, weight: .regular, category: .ui)).foregroundStyle(.orange)
                 } else {
                     Text(transferDetail(d))
-                        .font(.caption.monospacedDigit())
+                        .font(AppFont.sw(12, weight: .regular, category: .code))
                         .foregroundStyle(.secondary)
                 }
             }
@@ -637,7 +637,7 @@ struct BackupSettingsView: View {
 
         if let note = transfer.cleanupNote {
             Label {
-                Text(note).font(.caption)
+                Text(note).font(AppFont.sw(12, weight: .regular, category: .ui))
             } icon: {
                 Image(systemName: "sparkles").foregroundStyle(.green)
             }
@@ -816,7 +816,7 @@ struct BackupSettingsView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(r.name)
                         Text("\(r.backend.uppercased()) · /\(r.path)")
-                            .font(.caption)
+                            .font(AppFont.sw(12, weight: .regular, category: .ui))
                             .foregroundStyle(.secondary)
                     }
                     // Claims the gap between the text and the switch, so the
@@ -874,7 +874,7 @@ struct BackupSettingsView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(folder.name)
                             Text(folder.sourceDisplayName)
-                                .font(.caption)
+                                .font(AppFont.sw(12, weight: .regular, category: .ui))
                                 .foregroundStyle(.secondary)
                         }
                         Spacer(minLength: 8)
@@ -919,7 +919,7 @@ struct BackupSettingsView: View {
 
             if let destinationWarning {
                 Text(destinationWarning)
-                    .font(.footnote)
+                    .font(AppFont.sw(13, weight: .regular, category: .body))
                     .foregroundStyle(.orange)
             }
         } header: {

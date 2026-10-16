@@ -382,7 +382,7 @@ struct MinisAudioPlayerView: View {
                     .font(.caption2)
                 Text(url.lastPathComponent)
                     .lineLimit(1)
-                    .font(.caption)
+                    .font(AppFont.sw(12, weight: .regular, category: .ui))
                 Spacer()
                 Button {
                     showPreview = true
@@ -420,7 +420,7 @@ struct MinisAudioPlayerView: View {
                     .tint(.accentColor)
 
                     Text(formatTime(player.duration))
-                        .font(.caption2)
+                        .font(AppFont.sw(11, weight: .regular, category: .ui))
                         .foregroundColor(ChatColors.secondaryText)
                         .monospacedDigit()
                 } else {
@@ -430,7 +430,7 @@ struct MinisAudioPlayerView: View {
                         .disabled(true)
 
                     Text(formatTime(0))
-                        .font(.caption2)
+                        .font(AppFont.sw(11, weight: .regular, category: .ui))
                         .foregroundColor(ChatColors.secondaryText)
                         .monospacedDigit()
                 }
@@ -452,7 +452,7 @@ struct MinisAudioPlayerView: View {
             ProgressView().controlSize(.small)
             Text(url.lastPathComponent).lineLimit(1)
         }
-        .font(.caption)
+        .font(AppFont.sw(12, weight: .regular, category: .ui))
         .foregroundColor(ChatColors.secondaryText)
         .padding(10)
         .frame(maxWidth: 320, minHeight: controlsHeight)

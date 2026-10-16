@@ -44,9 +44,9 @@ struct EnvironmentVariablesView: View {
                             .font(.largeTitle)
                             .foregroundStyle(.secondary)
                         Text("No Environment Variables")
-                            .font(.headline)
+                            .font(AppFont.sw(17, weight: .semibold, category: .body))
                         Text("Add variables like API keys or tokens that will be available in the shell environment.")
-                            .font(.caption)
+                            .font(AppFont.sw(12, weight: .regular, category: .ui))
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)
                     }
@@ -145,14 +145,14 @@ struct EnvironmentVariablesView: View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
                 Text(entry.key)
-                    .font(.system(.body, design: .monospaced))
+                    .font(AppFont.sw(17, weight: .regular, category: .code))
                     .fontWeight(.medium)
                 Text(isRevealed ? currentValue : String(repeating: "\u{2022}", count: min(currentValue.count, 20)))
-                    .font(.system(.caption, design: .monospaced))
+                    .font(AppFont.sw(12, weight: .regular, category: .code))
                     .foregroundStyle(.secondary)
                 if !entry.note.isEmpty {
                     Text(entry.note)
-                        .font(.caption)
+                        .font(AppFont.sw(12, weight: .regular, category: .ui))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -235,7 +235,7 @@ private struct EnvVarFormSheet: View {
                         get: { key },
                         set: { key = $0.uppercased() }
                     ))
-                    .font(.system(.body, design: .monospaced))
+                    .font(AppFont.sw(17, weight: .regular, category: .code))
                     .textInputAutocapitalization(.characters)
                     .autocorrectionDisabled()
                     .focused($focusedField, equals: .key)
@@ -252,7 +252,7 @@ private struct EnvVarFormSheet: View {
 
                 Section("Value") {
                     TextField("Value", text: $value)
-                        .font(.system(.body, design: .monospaced))
+                        .font(AppFont.sw(17, weight: .regular, category: .code))
                         .autocorrectionDisabled()
                         .focused($focusedField, equals: .value)
                         .submitLabel(.next)

@@ -20,7 +20,7 @@ struct AgentLoopModelsSection: View {
         Section {
             if currentGroups.isEmpty && currentEntries.isEmpty {
                 Text("No models or groups added")
-                    .font(.caption)
+                    .font(AppFont.sw(12, weight: .regular, category: .ui))
                     .foregroundStyle(.secondary)
             }
 
@@ -55,7 +55,7 @@ struct AgentLoopModelsSection: View {
                 }
             } label: {
                 Label("Add Models or Groups", systemImage: "plus.circle")
-                    .font(.subheadline)
+                    .font(AppFont.sw(15, weight: .regular, category: .body))
             }
         } header: {
             HStack {
@@ -63,7 +63,7 @@ struct AgentLoopModelsSection: View {
                 Spacer()
                 if !currentEntries.isEmpty || !currentGroups.isEmpty {
                     EditButton()
-                        .font(.caption)
+                        .font(AppFont.sw(12, weight: .regular, category: .ui))
                 }
             }
         } footer: {
@@ -82,17 +82,17 @@ struct AgentLoopModelsSection: View {
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(group.name)
-                    .font(.subheadline.weight(.medium))
+                    .font(AppFont.sw(15, weight: .medium, category: .body))
                 let count = group.memberEntryIds.count
                 Text(AppLocalized("\(count) models") + " · \(group.strategy == .fallback ? AppLocalized("Fallback") : AppLocalized("Load Balance"))")
-                    .font(.caption2)
+                    .font(AppFont.sw(11, weight: .regular, category: .ui))
                     .foregroundStyle(.tertiary)
             }
 
             Spacer()
 
             Text("Group")
-                .font(.caption2)
+                .font(AppFont.sw(11, weight: .regular, category: .ui))
                 .foregroundStyle(.secondary)
         }
     }
@@ -106,21 +106,21 @@ struct AgentLoopModelsSection: View {
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(entry.model.displayName)
-                    .font(.subheadline)
+                    .font(AppFont.sw(15, weight: .regular, category: .body))
                 HStack(spacing: 4) {
                     if let instance = store.instance(for: entry.providerInstanceId) {
                         Text(instance.label)
-                            .font(.caption2)
+                            .font(AppFont.sw(11, weight: .regular, category: .ui))
                             .foregroundStyle(.tertiary)
                     }
                     let badges = modalityBadges(entry.model)
                     if !badges.isEmpty {
                         Text("·")
-                            .font(.caption2)
+                            .font(AppFont.sw(11, weight: .regular, category: .ui))
                             .foregroundStyle(.quaternary)
                         ForEach(badges, id: \.self) { badge in
                             Text(badge)
-                                .font(.system(size: 9, weight: .medium))
+                                .font(AppFont.sw(9, weight: .medium, category: .ui))
                                 .foregroundStyle(.secondary)
                                 .padding(.horizontal, 4)
                                 .padding(.vertical, 1)
@@ -134,7 +134,7 @@ struct AgentLoopModelsSection: View {
             Spacer()
 
             Text(entry.model.provider)
-                .font(.caption2)
+                .font(AppFont.sw(11, weight: .regular, category: .ui))
                 .foregroundStyle(.secondary)
         }
     }
@@ -222,7 +222,7 @@ struct AddAgentLoopGroupsSheet: View {
             if availableGroups.isEmpty {
                 Section {
                     Text("All groups are already added.")
-                        .font(.subheadline)
+                        .font(AppFont.sw(15, weight: .regular, category: .body))
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 16)
@@ -240,13 +240,13 @@ struct AddAgentLoopGroupsSheet: View {
 
                         VStack(alignment: .leading, spacing: 2) {
                             Text(group.name)
-                                .font(.subheadline.weight(.medium))
+                                .font(AppFont.sw(15, weight: .medium, category: .body))
                                 .foregroundStyle(Color(UIColor.label))
                             let entries = group.memberEntryIds.compactMap { store.entry(for: $0) }
                             let names = entries.prefix(3).map(\.model.displayName)
                             let suffix = entries.count > 3 ? " +\(entries.count - 3)" : ""
                             Text(names.joined(separator: ", ") + suffix)
-                                .font(.caption2)
+                                .font(AppFont.sw(11, weight: .regular, category: .ui))
                                 .foregroundStyle(.tertiary)
                                 .lineLimit(1)
                         }
@@ -254,7 +254,7 @@ struct AddAgentLoopGroupsSheet: View {
                         Spacer()
 
                         Text("\(group.memberEntryIds.count) models")
-                            .font(.caption2)
+                            .font(AppFont.sw(11, weight: .regular, category: .ui))
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -270,7 +270,7 @@ struct AddAgentLoopGroupsSheet: View {
                 Button("Add (\(selectedGroupIds.count))") {
                     addSelected()
                 }
-                .font(.body.weight(.semibold))
+                .font(AppFont.sw(17, weight: .semibold, category: .body))
                 .disabled(selectedGroupIds.isEmpty)
             }
         }

@@ -160,10 +160,10 @@ struct BrowserHistoryView: View {
                 .font(.system(size: 40))
                 .foregroundStyle(.tertiary)
             Text("No History")
-                .font(.headline)
+                .font(AppFont.sw(17, weight: .semibold, category: .body))
                 .foregroundStyle(.secondary)
             Text("Pages you visit will appear here for 7 days.")
-                .font(.subheadline)
+                .font(AppFont.sw(15, weight: .regular, category: .body))
                 .foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center)
         }
@@ -199,12 +199,12 @@ struct BrowserHistoryView: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(entry.title.isEmpty ? entry.domain : entry.title)
-                    .font(.system(size: 14, weight: .medium))
+                    .font(AppFont.sw(14, weight: .medium, category: .body))
                     .foregroundStyle(Color(UIColor.label))
                     .lineLimit(1)
 
                 Text(entry.url)
-                    .font(.system(size: 11, design: .monospaced))
+                    .font(AppFont.sw(11, weight: .regular, category: .code))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
@@ -212,7 +212,7 @@ struct BrowserHistoryView: View {
             Spacer()
 
             Text(timeLabel(entry.timestamp))
-                .font(.system(size: 11))
+                .font(AppFont.sw(11, weight: .regular, category: .ui))
                 .foregroundStyle(.tertiary)
         }
         .contentShape(Rectangle())

@@ -96,7 +96,7 @@ struct RootfsResetButton: View {
         VStack(spacing: 12) {
             Button(action: { showResetAlert = true }) {
                 Label("Reset Rootfs", systemImage: "arrow.clockwise")
-                    .font(.headline)
+                    .font(AppFont.sw(17, weight: .semibold, category: .body))
                     .padding()
                     .frame(maxWidth: .infinity)
                     .background(Color.red)
@@ -107,7 +107,7 @@ struct RootfsResetButton: View {
             if showBackupOption {
                 Button(action: { showBackupAlert = true }) {
                     Label("Reset & Backup", systemImage: "archivebox")
-                        .font(.headline)
+                        .font(AppFont.sw(17, weight: .semibold, category: .body))
                         .padding()
                         .frame(maxWidth: .infinity)
                         .background(Color.orange)
@@ -120,7 +120,7 @@ struct RootfsResetButton: View {
                 HStack {
                     ProgressView()
                     Text(statusMessage ?? "Processing...")
-                        .font(.caption)
+                        .font(AppFont.sw(12, weight: .regular, category: .ui))
                         .foregroundColor(.secondary)
                 }
             }
@@ -197,7 +197,7 @@ struct RootfsResetToolbarItem: ToolbarContent {
  // Example 7: Custom layout
  VStack {
      Text("System Management")
-         .font(.headline)
+         .font(AppFont.sw(17, weight: .semibold, category: .body))
      RootfsResetButton(style: .prominent)
  }
 

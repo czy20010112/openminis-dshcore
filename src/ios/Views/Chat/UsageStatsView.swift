@@ -257,7 +257,7 @@ struct UsageStatsView: View {
                                         // let re-attributed totals pass as fact.
                                         if let caveat = model.attributionCaveat {
                                             Text(caveat)
-                                                .font(.caption2)
+                                                .font(AppFont.sw(11, weight: .regular, category: .ui))
                                                 .foregroundStyle(.secondary)
                                         }
                                     }
@@ -299,7 +299,7 @@ struct UsageStatsView: View {
             LabeledContent("Sessions", value: "\(model.distinctSessions.count)")
             LabeledContent("Active Days", value: "\(model.distinctDays.count)")
         }
-        .font(.subheadline)
+        .font(AppFont.sw(15, weight: .regular, category: .body))
     }
 
     private func formatCount(_ count: Int) -> String {

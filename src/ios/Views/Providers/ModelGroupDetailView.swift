@@ -117,7 +117,7 @@ struct ModelGroupDetailView: View {
                             updated.name = editingName.trimmingCharacters(in: .whitespaces)
                             store.updateGroup(updated)
                         }
-                        .font(.caption.weight(.semibold))
+                        .font(AppFont.sw(12, weight: .semibold, category: .ui))
                     }
                 }
             }
@@ -194,7 +194,7 @@ struct ModelGroupDetailView: View {
             Section {
                 if group.memberEntryIds.isEmpty {
                     Text("No models in this group")
-                        .font(.caption)
+                        .font(AppFont.sw(12, weight: .regular, category: .ui))
                         .foregroundStyle(.secondary)
                 } else {
                     ForEach(group.memberEntryIds, id: \.self) { entryId in
@@ -221,7 +221,7 @@ struct ModelGroupDetailView: View {
                     showAddModels = true
                 } label: {
                     Label("Add Models", systemImage: "plus.circle")
-                        .font(.subheadline)
+                        .font(AppFont.sw(15, weight: .regular, category: .body))
                 }
             } header: {
                 HStack {
@@ -232,7 +232,7 @@ struct ModelGroupDetailView: View {
                             editMode = editMode.isEditing ? .inactive : .active
                         }
                     }
-                    .font(.caption)
+                    .font(AppFont.sw(12, weight: .regular, category: .ui))
                 }
             } footer: {
                 if group.strategy == .fallback {
@@ -405,7 +405,7 @@ struct ModelGroupDetailView: View {
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(entry.model.displayName)
-                    .font(.subheadline)
+                    .font(AppFont.sw(15, weight: .regular, category: .body))
                     .foregroundStyle(providerDisabled ? Color.secondary : Color(UIColor.label))
                 if let instance = instance {
                     HStack(spacing: 4) {
@@ -416,7 +416,7 @@ struct ModelGroupDetailView: View {
                                 .foregroundStyle(.orange)
                         }
                     }
-                    .font(.caption2)
+                    .font(AppFont.sw(11, weight: .regular, category: .ui))
                     .foregroundStyle(.tertiary)
                 }
             }
@@ -435,7 +435,7 @@ struct ModelGroupDetailView: View {
                 }
                 return entry.model.provider
             }())
-                .font(.caption2)
+                .font(AppFont.sw(11, weight: .regular, category: .ui))
                 .foregroundStyle(.secondary)
                 .opacity(providerDisabled ? 0.5 : 1)
         }
@@ -456,17 +456,17 @@ struct ModelGroupDetailView: View {
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(entry.model.displayName)
-                    .font(.subheadline)
+                    .font(AppFont.sw(15, weight: .regular, category: .body))
                     .foregroundStyle(Color(UIColor.label))
                 Text("iOS built-in, works offline")
-                    .font(.caption2)
+                    .font(AppFont.sw(11, weight: .regular, category: .ui))
                     .foregroundStyle(.tertiary)
             }
 
             Spacer()
 
             Text("System")
-                .font(.caption2)
+                .font(AppFont.sw(11, weight: .regular, category: .ui))
                 .foregroundStyle(.secondary)
         }
     }
@@ -481,10 +481,10 @@ struct ModelGroupDetailView: View {
 
             VStack(alignment: .leading, spacing: 1) {
                 Text("Model no longer available")
-                    .font(.subheadline)
+                    .font(AppFont.sw(15, weight: .regular, category: .body))
                     .foregroundStyle(.secondary)
                 Text(entryId)
-                    .font(.caption2)
+                    .font(AppFont.sw(11, weight: .regular, category: .ui))
                     .foregroundStyle(.tertiary)
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -619,10 +619,10 @@ private struct ContextLimitSlider: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text("Max Context")
-                    .font(.subheadline)
+                    .font(AppFont.sw(15, weight: .regular, category: .body))
                 Spacer()
                 Text(currentLabel)
-                    .font(.subheadline.weight(.semibold))
+                    .font(AppFont.sw(15, weight: .semibold, category: .body))
                     .foregroundStyle(Color.accentColor)
                     .monospacedDigit()
             }
@@ -638,11 +638,11 @@ private struct ContextLimitSlider: View {
             )
             HStack {
                 Text(steps.first?.label ?? "32K")
-                    .font(.caption2)
+                    .font(AppFont.sw(11, weight: .regular, category: .ui))
                     .foregroundStyle(.tertiary)
                 Spacer()
                 Text("Unlimited")
-                    .font(.caption2)
+                    .font(AppFont.sw(11, weight: .regular, category: .ui))
                     .foregroundStyle(.tertiary)
             }
         }

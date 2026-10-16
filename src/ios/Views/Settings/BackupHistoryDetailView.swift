@@ -202,7 +202,7 @@ struct BackupHistoryDetailView: View {
                 }
             }
             if let e = record.errorMessage {
-                Text(e).font(.footnote).foregroundStyle(.red)
+                Text(e).font(AppFont.sw(13, weight: .regular, category: .body)).foregroundStyle(.red)
             }
         } header: {
             Text("Summary")
@@ -327,13 +327,13 @@ struct BackupHistoryDetailView: View {
                 // a months-old record can find the package by hand.
                 if let where_ = destinationSubtitle(d) {
                     Text(where_)
-                        .font(.caption)
+                        .font(AppFont.sw(12, weight: .regular, category: .ui))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
                 if let detail = d.detail {
-                    Text(detail).font(.caption).foregroundStyle(.orange)
+                    Text(detail).font(AppFont.sw(12, weight: .regular, category: .ui)).foregroundStyle(.orange)
                 }
             }
         }
@@ -356,10 +356,10 @@ struct BackupHistoryDetailView: View {
                 ForEach(record.log.reversed()) { e in
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text(e.at.formatted(date: .omitted, time: .standard))
-                            .font(.caption.monospacedDigit())
+                            .font(AppFont.sw(12, weight: .regular, category: .code))
                             .foregroundStyle(.tertiary)
                         Text(e.message)
-                            .font(.caption)
+                            .font(AppFont.sw(12, weight: .regular, category: .ui))
                             .foregroundStyle(e.isProblem ? .red : .secondary)
                     }
                 }
@@ -470,7 +470,7 @@ struct BackupHistoryRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(record.startedAt.formatted(date: .abbreviated, time: .shortened))
                 Text(subtitle)
-                    .font(.caption)
+                    .font(AppFont.sw(12, weight: .regular, category: .ui))
                     .foregroundStyle(record.status == .failed ? .red : .secondary)
                     .lineLimit(1)
             }

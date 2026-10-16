@@ -64,13 +64,13 @@ struct BackupSkippedFilesView: View {
                     ForEach(group.entries) { e in
                         HStack {
                             Text(e.fileName)
-                                .font(.callout)
+                                .font(AppFont.sw(16, weight: .regular, category: .body))
                                 .lineLimit(1)
                                 .truncationMode(.middle)
                             Spacer(minLength: 12)
                             Text(ByteCountFormatter.string(fromByteCount: e.size,
                                                            countStyle: .file))
-                                .font(.caption.monospacedDigit())
+                                .font(AppFont.sw(12, weight: .regular, category: .code))
                                 .foregroundStyle(.secondary)
                         }
                     }

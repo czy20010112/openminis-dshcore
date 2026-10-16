@@ -516,7 +516,7 @@ struct AIChatView: View {
                     // elision). Auto-dismisses after ~4s.
                     if let notice = vm.transientNotice {
                         Text(notice)
-                            .font(.system(size: 12))
+                            .font(AppFont.sw(12, weight: .regular, category: .ui))
                             .foregroundStyle(.white)
                             .padding(.horizontal, 12).padding(.vertical, 8)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -773,7 +773,7 @@ struct AIChatView: View {
         .overlay(alignment: .top) {
             if let msg = forcePullToast {
                 Text(msg)
-                    .font(.subheadline.weight(.medium))
+                    .font(AppFont.sw(15, weight: .medium, category: .body))
                     .foregroundStyle(.white)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 10)
@@ -2212,7 +2212,7 @@ struct AIChatView: View {
                     //                 naturally has breathing room above
                     //                 and below.
                     // iOS 26 path unchanged (16pt works inside liquid-glass).
-                    .font(.system(size: legacyLayout ? 13 : 16, weight: .semibold))
+                    .font(AppFont.sw(legacyLayout ? 13 : 16, weight: .semibold, category: .body))
                     .minimumScaleFactor(legacyLayout ? 0.85 : 1.0)
                     .foregroundStyle(ChatColors.primaryText)
                     .lineLimit(1)
@@ -2259,7 +2259,7 @@ struct AIChatView: View {
                                     .foregroundStyle(ChatColors.tertiaryText)
                             }
                             Text(modelName)
-                                .font(.caption2)
+                                .font(AppFont.sw(11, weight: .regular, category: .ui))
                                 .foregroundStyle(ChatColors.secondaryText)
                                 .lineLimit(1)
                                 .truncationMode(.tail)
@@ -2323,7 +2323,7 @@ struct AIChatView: View {
                             showModelPicker = true
                         } label: {
                             Text("\(detail.providerLabel) · \(detail.modelName)")
-                                .font(.system(size: 9))
+                                .font(AppFont.sw(9, weight: .regular, category: .ui))
                                 .foregroundStyle(ChatColors.secondaryText)
                                 .lineLimit(1)
                                 .truncationMode(.tail)
@@ -2448,7 +2448,7 @@ struct AIChatView: View {
             WhaleTailIcon(size: 6, animating: level.isEnabled)
                 .opacity(level.isEnabled ? 1.0 : 0.4)
             Text(level.displayName)
-                .font(.system(size: 8, weight: .medium))
+                .font(AppFont.sw(8, weight: .medium, category: .ui))
         }
         .foregroundStyle(ChatColors.secondaryText)
         .padding(.horizontal, 4)
@@ -2523,7 +2523,7 @@ struct AIChatView: View {
                     LoadingDotsView(dotSize: 9, color: ChatColors.secondaryText)
                         .frame(height: 20)
                     Text("Booting Kernel")
-                        .font(.subheadline)
+                        .font(AppFont.sw(15, weight: .regular, category: .body))
                         .foregroundStyle(ChatColors.secondaryText)
                 }
             }
@@ -2537,7 +2537,7 @@ struct AIChatView: View {
                         .font(.title2)
                         .foregroundStyle(.red)
                     Text(msg)
-                        .font(.subheadline)
+                        .font(AppFont.sw(15, weight: .regular, category: .body))
                         .foregroundStyle(.red)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 40)
@@ -2557,7 +2557,7 @@ struct AIChatView: View {
                 .font(.caption)
                 .foregroundStyle(.red)
             Text(error)
-                .font(.caption)
+                .font(AppFont.sw(12, weight: .regular, category: .ui))
                 .foregroundStyle(.red)
                 .lineLimit(2)
             Spacer()
@@ -2872,7 +2872,7 @@ struct AIChatView: View {
                 Image(systemName: "eye")
                     .foregroundStyle(.secondary)
                 Text("Read-only session from another device")
-                    .font(.subheadline)
+                    .font(AppFont.sw(15, weight: .regular, category: .body))
                     .foregroundStyle(.secondary)
                 Spacer()
                 Button {
@@ -2891,7 +2891,7 @@ struct AIChatView: View {
                     }
                 } label: {
                     Label("Fork to Continue", systemImage: "arrow.branch")
-                        .font(.subheadline.weight(.medium))
+                        .font(AppFont.sw(15, weight: .medium, category: .body))
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
@@ -3299,7 +3299,7 @@ struct AIChatView: View {
                     .frame(width: 16)
                     .accessibilityHidden(true)
                 Text("Read replies", comment: "Voice TTS toggle (compact)")
-                    .font(.subheadline)
+                    .font(AppFont.sw(15, weight: .regular, category: .body))
             }
             .foregroundStyle(on ? Color.accentColor : .secondary)
             .padding(.horizontal, 10)
@@ -3336,7 +3336,7 @@ struct AIChatView: View {
             }
         } label: {
             Text("/")
-                .font(.system(size: 18, weight: .semibold, design: .rounded))
+                .font(AppFont.sw(18, weight: .semibold, category: .body))
                 .italic()
                 .foregroundStyle(ChatColors.secondaryText)
                 .frame(width: 34, height: 34)
@@ -3352,7 +3352,7 @@ struct AIChatView: View {
             vm.cancelEdit()
         } label: {
             Text("Exit Edit Mode", comment: "Cancel message editing")
-                .font(.system(size: 13, weight: .medium))
+                .font(AppFont.sw(13, weight: .medium, category: .body))
                 .foregroundStyle(ChatColors.secondaryText)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
@@ -3368,7 +3368,7 @@ struct AIChatView: View {
             speechManager.showLanguagePicker = true
         } label: {
             Text(speechManager.languageLabel)
-                .font(.system(size: 12, weight: .semibold))
+                .font(AppFont.sw(12, weight: .semibold, category: .ui))
                 .foregroundStyle(ChatColors.secondaryText)
                 .frame(width: 34, height: 34)
                 .background(ChatColors.inputIconBg)
@@ -3475,7 +3475,7 @@ struct AIChatView: View {
                     ScrollViewReader { proxy in
                         ScrollView(.vertical, showsIndicators: true) {
                             Text(speechManager.recognizedText)
-                                .font(.subheadline)
+                                .font(AppFont.sw(15, weight: .regular, category: .body))
                                 .foregroundStyle(ChatColors.secondaryText)
                                 .multilineTextAlignment(.center)
                                 .frame(maxWidth: .infinity)
@@ -3662,7 +3662,7 @@ struct AIChatView: View {
                     ProgressView()
                         .tint(.yellow)
                     Text("Waiting for other tasks to complete...")
-                        .font(.system(size: 13))
+                        .font(AppFont.sw(13, weight: .regular, category: .body))
                         .foregroundStyle(.secondary)
                 }
                 .padding(.vertical, 8)
@@ -3712,7 +3712,7 @@ struct AIChatView: View {
                 if hasInjectedShareContent && hasMovableShareContent {
                     Button { showMoveToSheet = true } label: {
                         Label("Move to…", systemImage: "arrow.right.circle")
-                            .font(.system(size: 11, weight: .medium))
+                            .font(AppFont.sw(11, weight: .medium, category: .ui))
                             .foregroundStyle(ChatColors.secondaryText)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 4)
@@ -4242,7 +4242,7 @@ struct AIChatView: View {
                             Text(FileMentionIndex.shared.isScanning
                                  ? AppLocalized("Scanning files…")
                                  : AppLocalized("No matching files"))
-                                .font(.system(size: 13))
+                                .font(AppFont.sw(13, weight: .regular, category: .body))
                                 .foregroundStyle(ChatColors.secondaryText)
                             Spacer()
                         }
@@ -4296,7 +4296,7 @@ struct AIChatView: View {
                         HStack(spacing: 6) {
                             ProgressView().scaleEffect(0.6)
                             Text("Scanning more locations…")
-                                .font(.system(size: 11))
+                                .font(AppFont.sw(11, weight: .regular, category: .ui))
                                 .foregroundStyle(ChatColors.secondaryText)
                             Spacer()
                         }
@@ -4354,18 +4354,18 @@ struct AIChatView: View {
                     .frame(width: 20)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(entry.basename)
-                        .font(.system(size: 13, weight: .medium))
+                        .font(AppFont.sw(13, weight: .medium, category: .body))
                         .foregroundStyle(isSelected ? Color.white : ChatColors.primaryText)
                         .lineLimit(1)
                     Text(entry.displayPath)
-                        .font(.system(size: 11))
+                        .font(AppFont.sw(11, weight: .regular, category: .ui))
                         .foregroundStyle(isSelected ? Color.white.opacity(0.75) : ChatColors.secondaryText)
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
                 Spacer()
                 Text(entry.mountName ?? entry.scope.displayLabel)
-                    .font(.system(size: 10, weight: .medium))
+                    .font(AppFont.sw(10, weight: .medium, category: .ui))
                     .foregroundStyle(isSelected ? Color.white.opacity(0.9) : ChatColors.secondaryText)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
@@ -4461,12 +4461,12 @@ struct AIChatView: View {
                         // height past 60pt, which then snowballed into a
                         // multi-screen picker.
                         Text("/\(cmd.title.lowercased())")
-                            .font(.system(size: 13, weight: .medium))
+                            .font(AppFont.sw(13, weight: .medium, category: .body))
                             .foregroundStyle(titleColor)
                             .lineLimit(1)
                             .truncationMode(.tail)
                         Text(subtitleText)
-                            .font(.system(size: 11))
+                            .font(AppFont.sw(11, weight: .regular, category: .ui))
                             .foregroundStyle(subtitleColor)
                             .lineLimit(1)
                             .truncationMode(.tail)
@@ -4518,7 +4518,7 @@ struct AIChatView: View {
 
                     HStack(spacing: 1) {
                         Text(level.displayName)
-                            .font(.system(size: 11, weight: isHighlighted ? .bold : .regular))
+                            .font(AppFont.sw(11, weight: isHighlighted ? .bold : .regular, category: .ui))
                         if isClampedHighlight {
                             Image(systemName: "arrow.up")
                                 .font(.system(size: 8, weight: .bold))
@@ -4760,10 +4760,10 @@ private struct ProviderImportSheet: View {
                     .foregroundStyle(.tint)
                     .padding(.top, 8)
                 Text(AppLocalized("Provider Configuration Detected"))
-                    .font(.headline)
+                    .font(AppFont.sw(17, weight: .semibold, category: .body))
                     .multilineTextAlignment(.center)
                 Text(AppLocalized("This JSON file looks like an exported provider configuration. Import it as a new provider, or add it to the chat as a file attachment?"))
-                    .font(.subheadline)
+                    .font(AppFont.sw(15, weight: .regular, category: .body))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
@@ -5537,7 +5537,7 @@ private struct MoveToSessionSheet: View {
                                 }
                                 Spacer(minLength: 1)
                                 Text(relativeDate(session.updatedAt))
-                                    .font(.system(size: 13))
+                                    .font(AppFont.sw(13, weight: .regular, category: .body))
                                     .foregroundStyle(Color(UIColor.tertiaryLabel))
                             }
                         }
@@ -5736,12 +5736,12 @@ private struct SessionLockGateOverlay: View {
                     .foregroundStyle(.secondary)
 
                 Text("This session is locked")
-                    .font(.system(size: 18, weight: .semibold))
+                    .font(AppFont.sw(18, weight: .semibold, category: .body))
 
                 Text(attemptFailed
                      ? "Authentication failed. Tap to try again."
                      : "Tap to unlock with \(BiometricAuth.biometryDisplayName)")
-                    .font(.system(size: 14))
+                    .font(AppFont.sw(14, weight: .regular, category: .body))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
 
@@ -5752,7 +5752,7 @@ private struct SessionLockGateOverlay: View {
                           ? AppLocalized("Try again")
                           : AppLocalized("Unlock"),
                           systemImage: "faceid")
-                        .font(.system(size: 16, weight: .semibold))
+                        .font(AppFont.sw(16, weight: .semibold, category: .body))
                         .padding(.horizontal, 22).padding(.vertical, 10)
                         .background(.tint, in: Capsule())
                         .foregroundStyle(.white)
@@ -5954,7 +5954,7 @@ private struct SpeechLanguagePickerSheet: View {
                     Text(speechManager.displayName(for: loc))
                         .foregroundStyle(.primary)
                     Text(loc.identifier)
-                        .font(.caption)
+                        .font(AppFont.sw(12, weight: .regular, category: .ui))
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -5995,7 +5995,7 @@ struct CompactSummarySheet: View {
                             Image(systemName: "arrow.uturn.backward")
                             Text("Revert Compact")
                         }
-                        .font(.system(size: 15, weight: .medium))
+                        .font(AppFont.sw(15, weight: .medium, category: .body))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
                     }
@@ -6187,15 +6187,15 @@ private struct EmptyChatDirectoryTimeline: View {
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(ChatColors.secondaryText)
                 Text("Workspace layout")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(AppFont.sw(12, weight: .semibold, category: .ui))
                     .foregroundStyle(ChatColors.secondaryText)
             }
             Text("Each chat gets its own **workspace**, **attachments**, **offloads**, and **browser** folders — wiped when the session ends.")
-                .font(.system(size: 12))
+                .font(AppFont.sw(12, weight: .regular, category: .ui))
                 .foregroundStyle(ChatColors.primaryText)
                 .fixedSize(horizontal: false, vertical: true)
             Text("All chats share **shared**, **skills**, **memory**, and **mounts** — persistent across sessions.")
-                .font(.system(size: 12))
+                .font(AppFont.sw(12, weight: .regular, category: .ui))
                 .foregroundStyle(ChatColors.primaryText)
                 .fixedSize(horizontal: false, vertical: true)
             HStack {
@@ -6205,7 +6205,7 @@ private struct EmptyChatDirectoryTimeline: View {
                         Image(systemName: "folder")
                             .font(.system(size: 10, weight: .semibold))
                         Text("Browse Chat Files")
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(AppFont.sw(11, weight: .semibold, category: .ui))
                     }
                     .foregroundStyle(ChatColors.primaryText)
                     .padding(.horizontal, 10)

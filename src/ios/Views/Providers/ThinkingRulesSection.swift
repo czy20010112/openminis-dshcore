@@ -86,7 +86,7 @@ struct ThinkingRulesSection: View {
                 Image(systemName: "info.circle")
                     .foregroundStyle(.secondary)
                 Text("This provider uses an official protocol, so its thinking parameters are maintained by Minis. Custom rules apply to OpenAI-compatible providers on the Chat Completions API.")
-                    .font(.footnote)
+                    .font(AppFont.sw(13, weight: .regular, category: .body))
                     .foregroundStyle(.secondary)
             }
         } header: {
@@ -125,7 +125,7 @@ struct ThinkingRulesSection: View {
                         .foregroundStyle(.secondary)
                     Text("Default rules")
                     Text("\(builtInRules.count)")
-                        .font(.caption)
+                        .font(AppFont.sw(12, weight: .regular, category: .ui))
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                         .background(Color.secondary.opacity(0.15), in: Capsule())
@@ -159,7 +159,7 @@ struct ThinkingRulesSection: View {
                 Text("Default rules are built in and cannot be deleted. Add a rule above them to override one.")
                     .foregroundStyle(.secondary)
             }
-            .font(.caption)
+            .font(AppFont.sw(12, weight: .regular, category: .ui))
         }
         .task(id: instanceId) {
             guard !didLoad else { return }
@@ -183,7 +183,7 @@ struct ThinkingRulesSection: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(rule.label)
-                        .font(isBuiltIn ? .callout : .body)
+                        .font(AppFont.sw(16, weight: .regular, category: .body))
                         .foregroundStyle(.primary)
                     if isBuiltIn {
                         Image(systemName: "lock.fill")
@@ -192,7 +192,7 @@ struct ThinkingRulesSection: View {
                     }
                 }
                 Text(rule.scope.displayText)
-                    .font(.caption)
+                    .font(AppFont.sw(12, weight: .regular, category: .ui))
                     .foregroundStyle(.secondary)
                 if let fmt = rule.wireFormat {
                     Text(fmt.displaySummary)
