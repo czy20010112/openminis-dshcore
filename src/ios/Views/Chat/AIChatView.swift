@@ -2539,9 +2539,7 @@ struct AIChatView: View {
         // for enabling deep thinking. Dim the icon in that state — matches the
         // 0.4 Off-row convention in ThinkingLevelSheetView.
         HStack(spacing: 2) {
-            Image("ThinkingIcon")
-                .resizable()
-                .frame(width: 6, height: 6)
+            WhaleTailIcon(size: 6, animating: level.isEnabled)
                 .opacity(level.isEnabled ? 1.0 : 0.4)
             Text(level.displayName)
                 .font(.system(size: 8, weight: .medium))

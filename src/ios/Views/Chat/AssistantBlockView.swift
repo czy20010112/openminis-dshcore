@@ -805,9 +805,7 @@ struct ThinkingBlockView: View {
         VStack(alignment: .leading, spacing: 0) {
             // Header
             HStack(spacing: 6) {
-                Image("ThinkingIcon")
-                    .resizable()
-                    .frame(width: 14, height: 14)
+                WhaleTailIcon(size: 14, animating: isStreaming)
                     .foregroundStyle(.blue)
                 Text(AppLocalized("Deep Thinking"))
                     .font(.system(size: 13, weight: .semibold))
@@ -1181,5 +1179,38 @@ private struct ToolCopyButton: View {
                 .foregroundStyle(copied ? accentColor : accentColor.opacity(0.4))
         }
         .animation(.easeInOut(duration: 0.15), value: copied)
+    }
+}
+
+// MARK: - Whale tail
+
+/// The DSH whale-tail mark, with the slow flick it has while a reply is being
+/// generated.
+///
+/// The asset is template-rendered, so it takes whatever `foregroundStyle` the
+/// call site already set — this only adds the motion, it does not change the
+/// colour. The rotation is anchored at the bottom, the tip of the tail, so it
+/// reads as a flick rather than a spin, and it only runs while something is
+/// actually in flight: a settled reply holds still.
+struct WhaleTailIcon: View {
+    var size: CGFloat
+    var animating: Bool
+
+    @State private var flicked = false
+
+    var body: some View {
+        Image("ThinkingIcon")
+            .resizable()
+            .aspectRatio(contentMode: .fit)
+            .frame(width: size, height: size)
+            .rotationEffect(.degrees(flicked ? 9 : -9), anchor: .bottom)
+            .animation(
+                animating
+                    ? .easeInOut(duration: 1.2).repeatForever(autoreverses: true)
+                    : .easeOut(duration: 0.2),
+                value: flicked
+            )
+            .onAppear { flicked = animating }
+            .onChange(of: animating) { now in flicked = now }
     }
 }
