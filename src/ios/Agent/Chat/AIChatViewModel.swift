@@ -2657,9 +2657,6 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
     /// regardless of how the array was rebuilt meanwhile.
     var dshStreamingMsgIdx: Int = -1
 
-    /// Text awaiting a throttled flush onto the streaming block.
-    var dshPendingText = ""
-
     /// Reasoning text awaiting delivery to the thinking block.
     var dshPendingReasoning = ""
 
@@ -2670,13 +2667,16 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
     /// mid-segment, and "the last thinking block" would then be the wrong one.
     var dshThinkingBlockIdx: Int = -1
 
-    /// Position of the text block currently being streamed, or -1 when the next
-    /// delta starts a new one.
+    /// The one text presenter the DSH turn streams through.
     ///
-    /// The text flush replaces a block's content with the accumulated text of
-    /// that block, so the block being accumulated has to be identified — text
-    /// before and after a tool call are two different blocks.
-    var dshTextBlockIdx: Int = -1
+    /// [T-ios-streamtext-one-owner] This replaced seven loose fields
+    /// (`dshTextBlockIdx`, `dshAssistantText`, `dshPendingText`,
+    /// `dshLastTextFlush`, `dshSpokenTextOffset`, `dshPendingSpeakBuffer`,
+    /// `dshHasStoppedPreviousTTS`) that had to be kept consistent by hand. The
+    /// block index and the text accumulated for it are now bound together inside
+    /// `StreamTextPresenter`, and the identical state machine drives the legacy
+    /// loop — see that file for why the split was the bug.
+    var dshTextPresenter: StreamTextPresenter?
 
     /// This turn's tool calls, as (name, arguments).
     ///
@@ -2704,15 +2704,6 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
     /// Last time the reasoning buffer was flushed, for the adaptive throttle.
     var dshLastThinkingFlush = Date.distantPast
 
-    /// Text accumulated this turn, for the streaming read-aloud offset.
-    var dshAssistantText = ""
-    /// Characters already handed to TTS this turn.
-    var dshSpokenTextOffset = 0
-    /// Completed sentences waiting for the dynamic TTS window to fill.
-    var dshPendingSpeakBuffer = ""
-    /// Whether this turn has already cut off the previous reply's speech.
-    var dshHasStoppedPreviousTTS = false
-
     /// Tool results the driver settled, keyed by call id, waiting to be rendered
     /// onto their UI blocks.
     var dshPendingToolResults: [String: DSHToolExecutionResult] = [:]
@@ -2735,9 +2726,6 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
 
     /// The most recent compaction, for diagnostics and the UI divider.
     var dshLastCompaction: DSHCompactionOutcome?
-
-    /// Last time `dshPendingText` was flushed, for the tiered throttle.
-    var dshLastTextFlush = Date.distantPast
 
     #if DEBUG
     /// [T-ios-log-noise-reduction] High-water mark of how many agentHistory
@@ -7962,6 +7950,60 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
         }
     }
 
+    /// The one streaming-text commit point, shared by both agent loops.
+    ///
+    /// [T-ios-streamtext-one-owner] Thin wrapper over
+    /// `setStreamingTextBlockContent` that adds the monotonicity floor: within one
+    /// block's life the text only ever grows, so a commit that would make the
+    /// block SHORTER is refused and logged instead of applied.
+    ///
+    /// That refusal is what the "some words never appeared / a sentence showed
+    /// only its tail" report turned out to need. A shorter write means a flush
+    /// carried the wrong block's text — the row silently loses everything before
+    /// the fragment, and nothing in the log said so. Now it says so, with both
+    /// lengths, and the longer on-screen text survives.
+    ///
+    /// Returns false when the commit was refused; the caller should hand the text
+    /// back to the presenter (`requeue`) rather than drop it.
+    @MainActor
+    @discardableResult
+    func commitStreamText(
+        _ presenter: StreamTextPresenter,
+        plan: StreamTextFlushPlan,
+        finalFlush: Bool,
+        bypassSuspend: Bool = false
+    ) -> Bool {
+        let idx = presenter.msgIdx
+        let blockIdx = presenter.blockIdx
+        guard idx >= 0, idx < messages.count,
+              blockIdx >= 0, blockIdx < messages[idx].blocks.count else {
+            logger.warning("[StreamText] commit dropped — row/block gone msgIdx=\(idx) blockIdx=\(blockIdx) messages=\(messages.count)")
+            return false
+        }
+        guard messages[idx].role == .assistant else { return false }
+
+        let block = messages[idx].blocks[blockIdx]
+        if block.content.count > plan.text.count {
+            logger.error(
+                "[TextDrift] SHRINK BLOCKED blockIdx=\(blockIdx) onScreen=\(block.content.count) "
+                + "incoming=\(plan.text.count) onScreenHead=\"\(String(block.content.prefix(24)))\" "
+                + "incomingHead=\"\(String(plan.text.prefix(24)))\" uiSuspended=\(streamingUIUpdatesSuspended)"
+            )
+            return false
+        }
+
+        setStreamingTextBlockContent(
+            msgIdx: idx,
+            blockIdx: blockIdx,
+            text: plan.text,
+            parsedMarkdown: plan.parsedMarkdown,
+            cacheAttributedString: finalFlush,
+            requestScroll: true,
+            bypassSuspend: bypassSuspend
+        )
+        return true
+    }
+
     @MainActor
     func setStreamingTextBlockContent(
         msgIdx: Int,
@@ -7969,7 +8011,15 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
         text: String,
         parsedMarkdown: MarkdownContent?,
         cacheAttributedString shouldCacheAttributedString: Bool,
-        requestScroll: Bool
+        requestScroll: Bool,
+        /// Commit even while `streamingUIUpdatesSuspended` is true.
+        ///
+        /// The legacy loop's pre-tool flush uses this: it is the FINAL flush before
+        /// a tool block is appended, and deferring it is how "swallowed text"
+        /// happened when the user was scrolling during streaming. It must NOT also
+        /// bypass `transitionSuspended` — that one exists to keep publishes out of
+        /// a hosting-subgraph teardown.
+        bypassSuspend: Bool = false
     ) {
         guard msgIdx >= 0, msgIdx < messages.count,
               blockIdx >= 0, blockIdx < messages[msgIdx].blocks.count else { return }
@@ -7988,7 +8038,7 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
             finalFlush: shouldCacheAttributedString
         )
 
-        if streamingUIUpdatesSuspended {
+        if streamingUIUpdatesSuspended && !bypassSuspend {
             // [DIAG-SUSPEND] UI updates are suspended (e.g. tool detail sheet is presented).
             // If this is the FINAL flush (cacheAttributedString=true), the content will be
             // deferred until the sheet is dismissed. If the sheet never dismisses properly,

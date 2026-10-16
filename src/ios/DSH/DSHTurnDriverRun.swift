@@ -201,12 +201,14 @@ extension AIChatViewModel {
         dshToolBlockIndex.removeAll()
         dshPendingSnapshots.removeAll()
         dshThinkingBlockIdx = -1
-        dshTextBlockIdx = -1
+        // One presenter for the whole turn: the block index and the text
+        // accumulated for it live in the same object, so a tool call cannot pull
+        // them apart. See `StreamTextPresenter`.
+        dshTextPresenter = StreamTextPresenter(vm: self)
         dshTurnToolEntries.removeAll()
         dshLastUsageAt = Date()
         dshTurnTextTotal = 0
         dshPendingReasoning = ""
-        dshAssistantText = ""
 
         // The one-hour prompt-cache patch.
         //
@@ -628,74 +630,49 @@ extension AIChatViewModel {
         }
     }
 
-    // MARK: - Text Flush
+    // MARK: - Text Commit
 
-    /// Flush buffered text onto the streaming block, throttled.
+    /// Commit the presenter's streamed text through the app's own streaming flush.
     ///
-    /// The tiered throttle is the existing one: markdown re-parsing on every
-    /// delta is O(n²) on dense streams and tripped the main-thread watchdog.
-    /// Dense streams (≥5000 chars) drop the newline fast path because box-drawing
-    /// output emits one every couple of characters.
-    func dshMaybeFlushText(force: Bool = false) {
-        guard !dshPendingText.isEmpty else { return }
-        let len = dshPendingText.count
-        let throttle: TimeInterval = len < 500 ? 0.20
-                                    : len < 2000 ? 0.30
-                                    : len < 32_000 ? 0.50
-                                    : len < 64_000 ? 1.00
-                                    : len < 128_000 ? 1.50
-                                    : 2.00
-        let elapsed = Date().timeIntervalSince(dshLastTextFlush)
-        let newlineFlush = len < 5000 && dshPendingText.contains("\n")
-        guard force || elapsed >= throttle || newlineFlush else { return }
-
-        dshLastTextFlush = Date()
-        let snapshot = dshPendingText
-        dshPendingText = ""
-        dshFlushPendingText(snapshot)
+    /// [T-ios-streamtext-one-owner] This replaced the DSH loop's private copy of
+    /// "throttled flush onto the streaming block": its own tiered throttle (which
+    /// had lost the legacy newline gate's `unflushed >= 50` clause, so a
+    /// box-drawing stream committed on every two-character line), its own markdown
+    /// parse, and its own clearing of the pending buffer *before* it had proved the
+    /// target block still existed — on the miss the text was dropped, not kept.
+    ///
+    /// - Parameter force: skip the throttle. A brand-new block commits at once, so
+    ///   the row the empty → filled signal names is already in the data-source
+    ///   snapshot the signal is handled against.
+    /// - Parameter finalFlush: the turn's last commit. It must be marked as such:
+    ///   the flush defers while the list suspends live updates, and only the final
+    ///   flush's deferred record carries `cacheAttributedString`, which is what
+    ///   gets applied when the suspension clears.
+    func dshCommitText(force: Bool = false, finalFlush: Bool = false) {
+        guard let presenter = dshTextPresenter else { return }
+        // Bound before use: the row can be re-derived mid-turn, so the presenter is
+        // told which row it is writing into at every commit rather than once.
+        presenter.msgIdx = dshStreamingMsgIdx
+        guard let plan = presenter.takeFlushPayload(force: force) else { return }
+        if !commitStreamText(presenter, plan: plan, finalFlush: finalFlush) {
+            presenter.requeue(plan.text)
+        }
     }
 
-    /// Commit buffered text onto the streaming assistant block.
+    /// Commit everything streamed so far, ignoring the throttle AND the
+    /// suspend gate — the legacy loop's "Step 1" flush at a tool boundary.
     ///
-    /// - Parameter finalFlush: marks this as the turn's last update.
-    ///
-    ///   `setStreamingTextBlockContent` defers its work while the list suspends
-    ///   live updates (a tool sheet, a scroll) and — per its own comment — "if the
-    ///   sheet never dismisses properly, the cell stays empty". The legacy loop's
-    ///   stream-end flush passes `cacheAttributedString: true`, which is what the
-    ///   deferred-update record keeps so the content can be applied when the
-    ///   suspension clears. Flushing the last text with `false` — which is what
-    ///   this did — left the reply rendered only as far as it had got before the
-    ///   suspension, with the rest appearing only after reopening the session.
-    func dshFlushPendingText(_ snapshot: String? = nil, finalFlush: Bool = false) {
-        let text = snapshot ?? dshPendingText
-        guard !text.isEmpty else { return }
-        dshPendingText = ""
-        guard dshStreamingMsgIdx >= 0, dshStreamingMsgIdx < messages.count else { return }
-        let idx = dshStreamingMsgIdx
-        guard messages[idx].role == .assistant else { return }
-
-        // Resolve the trailing text block rather than assuming the last index:
-        // a tool block may have been appended after it.
-        guard let blockIdx = messages[idx].blocks.indices.last(where: { messages[idx].blocks[$0].kind == .text }) else {
-            return
+    /// It is the FINAL flush for the block being left behind, and deferring it is
+    /// how "swallowed text" happened when the user was scrolling while the reply
+    /// streamed. `bypassSuspend` skips only the scroll/background gate, never the
+    /// hosting-transition gate (`transitionSuspended`), which exists to keep
+    /// publishes out of a subgraph teardown.
+    func dshCommitTextForToolBoundary() {
+        guard let presenter = dshTextPresenter else { return }
+        presenter.msgIdx = dshStreamingMsgIdx
+        guard let plan = presenter.forcePayload() else { return }
+        if !commitStreamText(presenter, plan: plan, finalFlush: true, bypassSuspend: true) {
+            presenter.requeue(plan.text)
         }
-
-        // `dshAssistantText` is this turn's accumulated text and
-        // `setStreamingTextBlockContent` REPLACES the block with it. Flushing the
-        // pending chunk instead — which is what this did — left the transcript
-        // showing only the most recent fragment of every answer; an answer ending
-        // in a ``` fence rendered as a bare code marker and nothing else.
-        let full = dshAssistantText.isEmpty ? text : dshAssistantText
-        let prepared = prepareMarkdownForRender(full)
-        let parsed = MarkdownContent(prepared)
-        setStreamingTextBlockContent(
-            msgIdx: idx,
-            blockIdx: blockIdx,
-            text: full,
-            parsedMarkdown: parsed,
-            cacheAttributedString: finalFlush,
-            requestScroll: true
-        )
     }
 }
