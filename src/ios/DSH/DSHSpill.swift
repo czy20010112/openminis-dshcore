@@ -367,21 +367,29 @@ public enum DSHSpill {
 
     // MARK: - Notice
 
-    /// The retention notice, in DSH's exact spelling.
+    /// The retention notice, in DSH's shape and this app's tool names.
     ///
     /// `(Omitted {N} bytes.{ Omitted {M} images.} Full formatted result stored
-    /// at: {locator}. Use read with offset/limit, or grep this path to search
-    /// within it.)`
+    /// at: {locator}. Use file_read with offset/limit, or a shell_execute grep on
+    /// this path to search within it.)`
     ///
     /// - Parameters:
     ///   - omittedBytes: UTF-8 text bytes removed by the retention pass.
     ///   - images: whole images removed alongside the text.
     ///   - locator: path the full result was written to.
     /// - Returns: the notice sentence, without a leading separator.
+    ///
+    /// The two recovery tools are named as this app spells them: DSH says "read"
+    /// and "grep", and this app has neither — it has `file_read`, and its grep is a
+    /// `shell_execute`. An instruction naming a tool that does not exist is worse
+    /// than no instruction: the model is told how to recover and then finds the
+    /// tool missing. `hasNotice` matches this string literally, so the two move
+    /// together or the idempotence guard stops recognising its own notices.
     public static func noticeText(omittedBytes: Int, images: Int, locator: String) -> String {
         let imageNotice = images > 0 ? " Omitted \(images) images." : ""
         return "(Omitted \(omittedBytes) bytes.\(imageNotice) Full formatted result stored at: "
-            + "\(locator). Use read with offset/limit, or grep this path to search within it.)"
+            + "\(locator). Use file_read with offset/limit, or a shell_execute grep on this path"
+            + " to search within it.)"
     }
 
     /// The separator between a retained tail and the notice: the notice is its
@@ -406,7 +414,7 @@ public enum DSHSpill {
         let candidate = text[open.upperBound...]
         guard candidate.hasPrefix("Omitted ") else { return false }
         guard candidate.contains(" Full formatted result stored at: ") else { return false }
-        return candidate.contains(". Use read with offset/limit, or grep this path to search within it.)")
+        return candidate.contains(". Use file_read with offset/limit, or a shell_execute grep on this path to search within it.)")
     }
 }
 
@@ -563,11 +571,19 @@ extension DSHSpill {
 
     /// Tools whose results are never spilled.
     ///
-    /// `read` is DSH's own exclusion and it is the load-bearing one: the notice
-    /// tells the model to read the spill file back, so spilling a read would make
-    /// the recovery step lossy in exactly the case the feature exists for.
+    /// The read half is DSH's own exclusion and it is the load-bearing one: the
+    /// notice tells the model to read the spill file back, so spilling a read would
+    /// make the recovery step lossy in exactly the case the feature exists for.
     /// `read_image` is the iOS analogue — it is how a dropped image is recovered.
-    public static let exemptTools: Set<String> = ["read", "read_image"]
+    ///
+    /// DSH spells the read tool `read`; this app spells it `file_read` (its roster
+    /// is `shell_execute`, `file_read`, `file_write`, `file_edit`, `browser_use`,
+    /// `memory_write`, `memory_get`, `read_image`, `todo_write`, `exit_plan_mode`).
+    /// The name here has to be THIS app's spelling. Measured on a device
+    /// 2026-10-17: with `read` the exemption never fired, so a spilled result was
+    /// read back with `file_read`, that read was spilled too, and the model spent a
+    /// turn reading spill files instead of answering.
+    public static let exemptTools: Set<String> = ["file_read", "read_image"]
 
     /// Decide whether one tool result must be spilled, and if so what the model
     /// sees instead.
