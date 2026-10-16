@@ -588,6 +588,22 @@ struct AIChatView: View {
                         VStack(spacing: 0) {
                             floatingToolPreview
                                 .shadow(color: Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 0, alpha: 0.25) : UIColor(white: 0, alpha: 0) }), radius: 6, x: 0, y: 4)
+                            // [T-tools-todo-plan] The task list and plan state, as a
+                            // bar attached to the composer from OUTSIDE: top corners
+                            // rounded to the composer's own radius, bottom edge square,
+                            // and pulled down 8pt so it sits flush on the composer's
+                            // surface with no gap. Inside the composer it competed with
+                            // the input field for space; as a floating sibling it read
+                            // as a second card.
+                            DSHTodoPanelView()
+                                .frame(maxWidth: maxContentWidth)
+                                // 2pt narrower than the composer on each side, so it
+                                // reads as a bar on top of the input box rather than a
+                                // box of its own.
+                                .padding(.horizontal, 14)
+                                // The composer applies `.padding(.vertical, 8)` outside
+                                // its surface; without this the bar floats 8pt above it.
+                                .padding(.bottom, -8)
                             #if DEBUG
                             if isReadOnly {
                                 forkBanner
@@ -3176,10 +3192,7 @@ struct AIChatView: View {
         let row = HStack(spacing: 12) {
             attachmentMenuButton
             slashMenuButton
-            // [T-tools-todo-plan] Plan mode has no task list to show, so the mode
-            // itself is indicated here, in the control row, and tapping it leaves
-            // the mode. The task band above shows the list once there is one.
-            DSHPlanModeChip()
+
             if vm.editingMessageIndex != nil { editExitButton }
             Spacer()
             // Mutually exclusive with editExitButton: while editing a past
@@ -3606,14 +3619,6 @@ struct AIChatView: View {
             }
 
             VStack(spacing: 5) {
-                // [T-tools-todo-plan] The task list, as a band at the top of the
-                // composer's own box — DSH's `conversation.input.dock` slot. Inside
-                // the composer, not beside it: `ComposerSurface` clips this VStack to
-                // a 20pt rounded rect, so the band inherits the composer's top
-                // corners and is bounded by its edges. As a sibling above the
-                // composer it was a second floating card with a gap under it, and its
-                // width no longer matched the input box.
-                DSHTodoPanelView()
                 // Attachment preview chips — 3 per row
                 if !vm.attachments.isEmpty || vm.loadingVideoCount > 0 {
                     ScrollView(.vertical, showsIndicators: true) {
