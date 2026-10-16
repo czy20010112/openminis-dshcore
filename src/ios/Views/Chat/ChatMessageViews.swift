@@ -583,8 +583,17 @@ struct ChatMessageRow: View {
                 resumeBanner
             }
 
-            // Token usage — two-phase reveal: space expands first, then content fades in
-            if message.streamInterruptCount > 0 || showUsage {
+            // Token usage — two-phase reveal: space expands first, then content fades in.
+            //
+            // Built only when a child will actually be drawn in it: an HStack
+            // whose sole child is a `Spacer` reports an unbounded width, and the
+            // self-sizing cell then throws on DBL_MAX and falls back to a height
+            // that clips the text. The clock counts as a child on this branch.
+            //
+            // Kept in step with the same row in BridgedAssistantFooterV3, which
+            // is the copy an assistant reply actually renders.
+            let showsUsageCapsule = showUsage && (message.usage != nil || message.completedAt != nil)
+            if message.streamInterruptCount > 0 || showsUsageCapsule {
                 HStack(spacing: 6) {
                     if message.streamInterruptCount > 0 {
                         streamInterruptBadge(message.streamInterruptCount)
