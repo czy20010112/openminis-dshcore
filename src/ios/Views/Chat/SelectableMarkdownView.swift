@@ -317,7 +317,7 @@ struct SelectableMarkdownTheme {
         self.baseFontSize = baseFontSize ?? 16.5
     }
 
-    var baseFont: UIFont { AppFont.ui(baseFontSize) }
+    var baseFont: UIFont { AppFont.ui(baseFontSize, category: .body) }
     /// Table cell font: header row semibold, body rows regular.
     ///
     /// Same constructor as `baseFont` on purpose. These fonts are used to
@@ -326,7 +326,7 @@ struct SelectableMarkdownTheme {
     /// definition -- if the measurement and the painted text disagree, table
     /// columns and row heights drift.
     func tableFont(header: Bool) -> UIFont {
-        AppFont.ui(baseFontSize, weight: header ? .semibold : .regular)
+        AppFont.ui(baseFontSize, weight: header ? .semibold : .regular, category: .body)
     }
 
     var labelColor: UIColor { .label }
@@ -355,7 +355,10 @@ struct SelectableMarkdownTheme {
         case 6: size = baseFontSize * 0.85; weight = .semibold
         default: size = baseFontSize; weight = .semibold // H4 and fallback
         }
-        return AppFont.ui(size, weight: weight)
+        // Headings are the `title` category, so a face chosen for body text does
+        // not silently take over the headings — and Chinese headings get a real
+        // weight instead of staying Regular behind a bold Latin face.
+        return AppFont.ui(size, weight: weight, category: .title)
     }
 
     var inlineCodeFont: UIFont { inlineCodeFont(matching: nil) }
@@ -365,29 +368,26 @@ struct SelectableMarkdownTheme {
     /// always used (0.845 × baseFontSize), so paragraph rendering is
     /// unchanged while a code span inside an H1/H2 scales with the heading
     /// instead of rendering at body size and reading sunken/undersized.
+    ///
+    /// Code comes from the `code` category (`AppFont.code`), so the face is
+    /// whatever the user picked there — JetBrains Mono by default — with the
+    /// Chinese face behind it for the CJK inside a snippet.
+    ///
+    /// The CJK cascade is what keeps a code block's own table alignment intact,
+    /// and moving the monospace face does not disturb it: Menlo and JetBrains
+    /// Mono are both a ~0.6 em advance, and an ideograph is a full 1.0 em in
+    /// PingFang SC and in both Song faces — so the ratio a column of Chinese
+    /// sits on is the same one it sat on before (measured:
+    /// `_tools/verify-font-instances.py`, 中 = 1000/1000 em in Noto Serif SC and
+    /// 方正宋三简体, M = 600/1000 em in JetBrains Mono). (`AppFont.code` keeps PingFang SC as the
+    /// final hop for anything the Song faces cannot draw.)
     func inlineCodeFont(matching contextFont: UIFont?) -> UIFont {
         let size = (contextFont?.pointSize ?? baseFontSize) * 0.845
-        if let menlo = UIFont(name: "Menlo", size: size) {
-            let descriptor = menlo.fontDescriptor.addingAttributes([
-                .cascadeList: [UIFontDescriptor(fontAttributes: [.name: "PingFang SC"])]
-            ])
-            return UIFont(descriptor: descriptor, size: size)
-        }
-        return .monospacedSystemFont(ofSize: size, weight: .regular)
+        return AppFont.code(size)
     }
 
     var codeBlockFont: UIFont {
-        let size = baseFontSize * 0.85
-        // Use Menlo as the base monospaced font, with PingFang SC as CJK fallback.
-        // PingFang SC's CJK glyphs are exactly 2x the width of Menlo's ASCII glyphs
-        // at the same point size, enabling proper table alignment in code blocks.
-        if let menlo = UIFont(name: "Menlo", size: size) {
-            let descriptor = menlo.fontDescriptor.addingAttributes([
-                .cascadeList: [UIFontDescriptor(fontAttributes: [.name: "PingFang SC"])]
-            ])
-            return UIFont(descriptor: descriptor, size: size)
-        }
-        return .monospacedSystemFont(ofSize: size, weight: .regular)
+        AppFont.code(baseFontSize * 0.85)
     }
 }
 

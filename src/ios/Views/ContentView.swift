@@ -8269,6 +8269,19 @@ private struct SettingsSheet: View {
                                 .background(.orange, in: Circle())
                         }
                     }
+                    NavigationLink {
+                        AppFontSettingsView()
+                    } label: {
+                        Label {
+                            Text("Font Settings")
+                        } icon: {
+                            Image(systemName: "textformat")
+                                .font(.system(size: 9))
+                                .foregroundStyle(.white)
+                                .frame(width: 21, height: 21)
+                                .background(.brown, in: Circle())
+                        }
+                    }
                 }
 
                 Section("Storage") {

@@ -336,9 +336,9 @@ struct DSHContextPanel: View {
             )
             VStack(alignment: .leading, spacing: 2) {
                 Text("Context")
-                    .font(.system(size: 17, weight: .semibold))
+                    .font(Font(AppFont.ui(17, weight: .semibold, category: .body)))
                 Text(subtitle)
-                    .font(.system(size: 12))
+                    .font(Font(AppFont.ui(12, category: .ui)))
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 8)
@@ -349,7 +349,7 @@ struct DSHContextPanel: View {
                 .foregroundStyle(.primary)
 
             Button("Done") { dismiss() }
-                .font(.system(size: 15))
+                .font(Font(AppFont.ui(15, category: .body)))
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 14)
@@ -366,7 +366,7 @@ struct DSHContextPanel: View {
     private var components: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("THIS REQUEST, MEASURED AT ASSEMBLY")
-                .font(.system(size: 11, weight: .semibold))
+                .font(Font(AppFont.ui(11, weight: .semibold, category: .ui)))
                 .foregroundStyle(.secondary)
 
             if let b = breakdowns.latest {
@@ -397,7 +397,7 @@ struct DSHContextPanel: View {
                 // driven a turn since launch. Saying so beats three rows of
                 // zeroes that read as "the context is empty".
                 Text("No request has been assembled yet in this session. Send a message and the three components will be measured as it goes out.")
-                    .font(.system(size: 13))
+                    .font(Font(AppFont.ui(13, category: .body)))
                     .foregroundStyle(.secondary)
             }
         }
@@ -411,11 +411,11 @@ struct DSHContextPanel: View {
     private var provenance: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("WHO MEASURED WHAT")
-                .font(.system(size: 11, weight: .semibold))
+                .font(Font(AppFont.ui(11, weight: .semibold, category: .ui)))
                 .foregroundStyle(.secondary)
 
             Text("The top-right figure is the provider's own count for its last call — the only measured number here, and the one the next request starts from. The rows are this app's estimate of the request it assembled, at 3.6 characters per token; the provider's count additionally carries request framing, cache accounting and its own tokenizer. The rows are therefore shares of one request, not a decomposition of the header — their sum lands a few percent above or below it, and neither side is adjusted to make them match.")
-                .font(.system(size: 12))
+                .font(Font(AppFont.ui(12, category: .ui)))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -471,10 +471,10 @@ private struct ContextRow: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
             Text(label)
-                .font(.system(size: 14, weight: emphasised ? .semibold : .regular))
+                .font(Font(AppFont.ui(14, weight: emphasised ? .semibold : .regular, category: .body)))
             if let detail {
                 Text(detail)
-                    .font(.system(size: 12))
+                    .font(Font(AppFont.ui(12, category: .ui)))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
