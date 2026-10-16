@@ -369,6 +369,13 @@ struct MinisApp: App {
                     }
                     // Start logging if previously enabled
                     LoggingManager.shared.startIfEnabled()
+                    // [T-font-stack] Report the font stack a second time, now that
+                    // the log is being captured. The call in `init` runs before
+                    // `startIfEnabled()` installs its stdout/stderr redirect, so its
+                    // line is written to a sink nobody reads — which made "check the
+                    // [AppFont] launch line" unanswerable on a device. Idempotent:
+                    // it only reads back `UIFont(name:)` and the bundle manifest.
+                    AppFont.logRegistrationState()
                     // HangFix(2026-05-14) — always-on hang detector. Was
                     // previously gated to `isProcessing == true`, but the
                     // user can also hit hang while just browsing a session
