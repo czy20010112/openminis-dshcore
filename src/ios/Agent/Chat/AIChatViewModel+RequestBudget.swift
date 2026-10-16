@@ -268,19 +268,27 @@ extension AIChatViewModel {
     /// Everything under this path is exposed to iOS Files via the replicated
     /// FileProvider extension. Keep ONLY user-facing subdirs (shared, skills,
     /// memory) here — anything else leaks into "On My iPhone → Minis".
+    ///
+    /// Routed through `SharedContainerStore.persistentContainerRoot` rather than
+    /// force-unwrapping `containerURL` here. This getter is reached from
+    /// `MinisApp.init → SoulStore.refreshCache → SoulStore.load`, so a nil
+    /// container — no App Group provisioned on the device, which is the normal
+    /// case for a sideloaded or re-signed build — killed the app before its first
+    /// frame, with a stack pointing only at this property.
     nonisolated static var minisAppGroupRoot: URL {
-        FileManager.default.containerURL(
-            forSecurityApplicationGroupIdentifier: SharedContainerStore.appGroupID
-        )!.appendingPathComponent("MinisFileProvider", isDirectory: true)
+        SharedContainerStore.persistentContainerRoot
+            .appendingPathComponent("MinisFileProvider", isDirectory: true)
     }
 
     /// App Group subdirectory for private metadata that must NOT be exposed
     /// to iOS Files (mounted-folders.json, FileProvider extension logs, etc).
     /// Sibling of `minisAppGroupRoot` inside the same App Group container.
+    ///
+    /// Same fallback as `minisAppGroupRoot`: no provisioned App Group means the
+    /// app's own Library, not a trap.
     nonisolated static var minisConfigRoot: URL {
-        let url = FileManager.default.containerURL(
-            forSecurityApplicationGroupIdentifier: SharedContainerStore.appGroupID
-        )!.appendingPathComponent("MinisConfig", isDirectory: true)
+        let url = SharedContainerStore.persistentContainerRoot
+            .appendingPathComponent("MinisConfig", isDirectory: true)
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
     }

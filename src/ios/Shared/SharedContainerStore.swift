@@ -5,6 +5,33 @@ import Foundation
 enum SharedContainerStore {
     static let appGroupID = "group.com.openminis.minidsh"
 
+    /// Storage root used by the main app. Properly provisioned builds use the
+    /// App Group container; unsigned / sideloaded / re-signed builds may not get
+    /// one, so they fall back to the app's own Library container instead of
+    /// dying on a force unwrap during launch.
+    ///
+    /// This is the iOS 15 line's implementation, ported here because this branch
+    /// had none. Without it, `containerURL` returning nil — which is what happens
+    /// when the App Group has never been provisioned on the device, exactly the
+    /// case for a sideloaded build — crashed the app at launch inside
+    /// `MinisApp.init → SoulStore.refreshCache → minisAppGroupRoot`.
+    static var persistentContainerRoot: URL {
+        let fm = FileManager.default
+        let library = fm.urls(for: .libraryDirectory, in: .userDomainMask).first!
+        return resolvePersistentContainerRoot(
+            appGroupContainer: fm.containerURL(forSecurityApplicationGroupIdentifier: appGroupID),
+            libraryDirectory: library
+        )
+    }
+
+    static func resolvePersistentContainerRoot(
+        appGroupContainer: URL?,
+        libraryDirectory: URL
+    ) -> URL {
+        appGroupContainer
+            ?? libraryDirectory.appendingPathComponent("MinisChat", isDirectory: true)
+    }
+
     private static let pendingShareKey = "pendingShare"
 
     static var sharedDefaults: UserDefaults? {
