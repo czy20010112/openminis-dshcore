@@ -13,17 +13,21 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
 
     /// Root directory for all FileProvider-visible files in the App Group container.
     ///
-    /// Falls back to `SharedContainerStore.persistentContainerRoot` rather than
-    /// force-unwrapping: when the App Group is not provisioned — a sideloaded or
-    /// re-signed build — the unwrap trapped this extension. The fallback resolves
-    /// to this process's own Library, so the extension serves an empty directory
-    /// instead of dying, which is the honest outcome when there is no shared
-    /// container to expose.
+    /// Falls back to this process's own Library rather than force-unwrapping: an
+    /// App Group container only exists once iOS has provisioned it, which never
+    /// happens for an ad-hoc / re-signed / sideload build, and the unwrap trapped
+    /// this extension. The fallback serves an empty directory, which is the
+    /// honest outcome when there is no shared container to expose.
+    ///
+    /// The fallback is spelled out here rather than shared with the app's
+    /// `SharedContainerStore`: that file is not a member of this target on every
+    /// branch, so referencing it fails to compile.
     static var providerRoot: URL {
         let fm = FileManager.default
         let container = fm.containerURL(
             forSecurityApplicationGroupIdentifier: "group.com.openminis.minidsh"
-        ) ?? SharedContainerStore.persistentContainerRoot
+        ) ?? fm.urls(for: .libraryDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("MinisChat", isDirectory: true)
         let url = container.appendingPathComponent("MinisFileProvider", isDirectory: true)
         try? fm.createDirectory(at: url, withIntermediateDirectories: true)
         return url
