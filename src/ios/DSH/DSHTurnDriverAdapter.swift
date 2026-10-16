@@ -81,6 +81,13 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
             if !commitStreamText(presenter, plan: plan, finalFlush: false) {
                 presenter.requeue(plan.text)
             }
+        } else {
+            // [T-ios-stream-tail-flush] Nothing was due, so the throttle is holding
+            // this text. Arm the one-shot tail flush: if the stream goes quiet, the
+            // text is committed on its own instead of waiting for the next delta, the
+            // tool boundary, or the end of the turn — which is how a paragraph's tail
+            // ended up in the same frame as a batch of tool blocks.
+            dshScheduleTrailingTextFlush()
         }
 
         // Streaming read-aloud: the shared presenter path, so the sentence
@@ -372,6 +379,8 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
     /// The force-close matters because a stream interruption can leave a block
     /// in `.streaming`, which renders as a permanently running tool.
     func dshSealStreamingTurn() {
+        // Nothing may commit after this: the turn is over and the row is final.
+        dshCancelTrailingTextFlush()
         guard dshStreamingMsgIdx >= 0, dshStreamingMsgIdx < messages.count else { return }
         let idx = dshStreamingMsgIdx
         messages[idx].isAwaitingModelResponse = false

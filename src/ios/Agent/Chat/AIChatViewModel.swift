@@ -2678,6 +2678,14 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
     /// loop — see that file for why the split was the bug.
     var dshTextPresenter: StreamTextPresenter?
 
+    /// A scheduled trailing text flush, with the generation that identifies it.
+    ///
+    /// [T-ios-stream-tail-flush] The text throttle is only consulted when a delta
+    /// arrives, so without a timer the tail of a paragraph waits for the next event
+    /// — see `dshScheduleTrailingTextFlush`.
+    var dshTrailingFlushTask: Task<Void, Never>?
+    var dshTrailingFlushGeneration: UInt64 = 0
+
     /// This turn's tool calls, as (name, arguments).
     ///
     /// Handed to `generateSessionTitleIfNeeded` when the turn ends. The legacy
@@ -8025,6 +8033,17 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
               blockIdx >= 0, blockIdx < messages[msgIdx].blocks.count else { return }
         let message = messages[msgIdx]
         let block = message.blocks[blockIdx]
+
+        // [T-ios-stream-tail-flush] One line per commit, so "which frame did this
+        // text land in" is answerable from a device log. The app's own log lines
+        // carry only second resolution, so this is what gets correlated against
+        // `[DSH] tool start` in a millisecond syslog capture — and until now nothing
+        // logged a commit at all, which is why "the tail arrives with the tool
+        // blocks" could not be confirmed from the outside.
+        logger.info(
+            "[StreamText] commit blk=\(blockIdx) len=\(text.count) "
+            + "final=\(shouldCacheAttributedString) bypass=\(bypassSuspend) susp=\(streamingUIUpdatesSuspended)"
+        )
 
         // Record the streaming flush into the hang-logger's ring buffer so
         // any main-thread stall that occurs during streaming is logged

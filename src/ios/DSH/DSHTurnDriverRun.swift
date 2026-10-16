@@ -655,14 +655,61 @@ extension AIChatViewModel {
     ///   flush's deferred record carries `cacheAttributedString`, which is what
     ///   gets applied when the suspension clears.
     func dshCommitText(force: Bool = false, finalFlush: Bool = false) {
+        // Committing supersedes any scheduled tail: a late timer would re-commit
+        // text that is already on the block.
+        dshCancelTrailingTextFlush()
         guard let presenter = dshTextPresenter else { return }
-        // Bound before use: the row can be re-derived mid-turn, so the presenter is
-        // told which row it is writing into at every commit rather than once.
         presenter.msgIdx = dshStreamingMsgIdx
         guard let plan = presenter.takeFlushPayload(force: force) else { return }
         if !commitStreamText(presenter, plan: plan, finalFlush: finalFlush) {
             presenter.requeue(plan.text)
         }
+    }
+
+    // MARK: - Trailing text flush
+
+    /// How long the stream may stay quiet before the text tail is committed
+    /// anyway.
+    ///
+    /// Short enough that a paragraph ending before a batch of tool calls lands on
+    /// its own, long enough not to add a commit per delta: the throttle's own
+    /// first tier is 0.20s.
+    static let dshTrailingFlushDelay: TimeInterval = 0.25
+
+    /// Commit the text tail once the stream goes quiet.
+    ///
+    /// [T-ios-stream-tail-flush] The throttle is consulted only when a delta
+    /// arrives, so text that lands and then waits stays in the buffer until the
+    /// next delta, the tool boundary, or the end of the turn — and there is no
+    /// timer anywhere in that chain. The operator's report is exactly this shape:
+    /// a paragraph ends, the model streams a batch of tool calls (their input
+    /// deltas can run for seconds, and the driver announces nothing until the
+    /// stream ends), and the tail therefore lands in the same frame as every tool
+    /// block — "it prints a few characters, then the rest arrives together with all
+    /// the other tool calls".
+    ///
+    /// A one-shot timer closes the gap: if nothing commits within the window, the
+    /// tail is committed on its own. Generation-counted rather than merely
+    /// cancelled, so a timer that already woke up cannot commit into a block the
+    /// presenter has since left.
+    func dshScheduleTrailingTextFlush() {
+        dshTrailingFlushGeneration &+= 1
+        let generation = dshTrailingFlushGeneration
+        dshTrailingFlushTask?.cancel()
+        dshTrailingFlushTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(Self.dshTrailingFlushDelay * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            guard let self, self.dshTrailingFlushGeneration == generation else { return }
+            self.dshCommitText()
+        }
+    }
+
+    /// Cancel a scheduled tail flush. Called wherever the caller is about to
+    /// commit, switch blocks, or end the turn.
+    func dshCancelTrailingTextFlush() {
+        dshTrailingFlushGeneration &+= 1
+        dshTrailingFlushTask?.cancel()
+        dshTrailingFlushTask = nil
     }
 
     /// Commit everything streamed so far, ignoring the throttle AND the
@@ -674,6 +721,7 @@ extension AIChatViewModel {
     /// hosting-transition gate (`transitionSuspended`), which exists to keep
     /// publishes out of a subgraph teardown.
     func dshCommitTextForToolBoundary() {
+        dshCancelTrailingTextFlush()
         guard let presenter = dshTextPresenter else { return }
         presenter.msgIdx = dshStreamingMsgIdx
         guard let plan = presenter.forcePayload() else { return }
