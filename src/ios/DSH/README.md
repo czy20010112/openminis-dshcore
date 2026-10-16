@@ -108,10 +108,11 @@ line 3121: the quick brown fox …
 
 (Omitted 55279 bytes. Full formatted result stored at:
 /var/minis/offloads/dsh-spill/session-1a2b3c4d5e6f/9f3c1a2b-shell_execute.txt.
-Use read with offset/limit, or grep this path to search within it.)
+Use file_read with offset/limit, or a shell_execute grep on this path to search
+within it.)
 ```
 
-Ported semantics, unchanged from DSH: `read` results are never spilled (the
+Ported semantics, unchanged from DSH: read results are never spilled (the
 notice tells the model to read the file back, so spilling that read would make
 recovery lossy); only text and image content is handled; the unit is TOKENS, not
 characters; the budget splits evenly between head and tail; an image is
@@ -120,12 +121,21 @@ elision; and the notice wording is fixed.
 
 **Where the file goes.** The session's existing offload bucket:
 `/var/minis/offloads/dsh-spill/session-<sha256(sessionId)[0:12]>/<random>-<tool>.txt`.
-That path is what makes the notice's "use read with offset/limit, or grep this
-path" true — `/var/minis/offloads` is bind-mounted onto the session's persistent
-`offloads` directory, it is documented to the model in the app's own system
-prompt, `file_read` and `read_image` resolve it, and a `shell_execute` grep sees
-the same bytes. Nothing new is mounted and no new tool is added. (The notice
-wording is DSH's, unchanged, so "read" there is this app's `file_read`.)
+That path is what makes the notice's "use file_read with offset/limit, or a
+shell_execute grep on this path" true — `/var/minis/offloads` is bind-mounted onto
+the session's persistent `offloads` directory, it is documented to the model in
+the app's own system prompt, `file_read` and `read_image` resolve it, and a
+`shell_execute` grep sees the same bytes. Nothing new is mounted and no new tool
+is added.
+
+**The tool names in that sentence are this app's.** DSH spells them `read` and
+`grep`; this app has neither — its read tool is `file_read` and it has no grep
+tool at all. Both the notice and `exemptTools` therefore name `file_read`, because
+a notice that instructs the model to use a tool that does not exist is worse than
+one that says nothing, and an exemption keyed on a name no tool carries silently
+does nothing. Measured on a device 2026-10-17: with DSH's `read` in `exemptTools`,
+a spilled result was read back with `file_read`, that read was spilled in turn,
+and the model burned a turn reading spill files instead of answering.
 
 **Off by default.** The budget is `maxInlineTokens`, its absence is the off
 switch (DSH's own rule for this plugin), and the shipped DSH value is 12 500.
@@ -133,6 +143,21 @@ The value is read from `UserDefaults` key `minis.dshSpillMaxInlineTokens`; unset
 non-numeric, zero or negative all leave the feature inert, and the hook is then
 never installed, so the tool path takes no branch. Note the caveat above about
 injecting defaults from outside the app.
+
+**Two ways to turn it on.** `DSHSpillSettingsView` — Settings → Agent Runtime →
+"Tool Result Spill" — is the switch a person can reach: on/off, the budget in
+tokens, the cleanup window, and a readout of the budget actually in force. It
+writes through `DSHSpillConfig.setEnabled`, so the "absent or non-positive means
+off" rule stays in one place. The settings screen exists because the other way in
+is unreachable: an external write to the plist is discarded at launch, so before
+it there was no switch at all.
+
+The second way is the compile-time probe, `#if DSH_SPILL_PROBE`, in the same
+spirit as `dshCompactionProbeEnabled`. A probe build forces a 600-token budget,
+ignores whatever is stored, logs the fact when the hook is installed, and is
+renamed `-probe` and never published. CI exposes it as the `spill_probe`
+workflow_dispatch input. It is a compilation condition rather than a runtime key
+for the same reason the compaction probe is: the app rewrites its own plist.
 
 **The retention decision is pure** and lives in `DSHSpill.swift` free of UIKit
 and file I/O, so it can be exercised without a device:

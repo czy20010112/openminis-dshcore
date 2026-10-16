@@ -7,9 +7,10 @@
 //
 //  WHERE THE FILE GOES, AND WHY IT HAS TO GO THERE
 //  ----------------------------------------------
-//  The spill notice tells the model "Use read with offset/limit, or grep this
-//  path to search within it." That sentence is only true if the path is one the
-//  model's own tools can open. The session's existing offload bucket already is:
+//  The spill notice tells the model "Use file_read with offset/limit, or a
+//  shell_execute grep on this path to search within it." That sentence is only
+//  true if the path is one the model's own tools can open. The session's existing
+//  offload bucket already is:
 //
 //    * `AIChatViewModel.minisOffloadsLinuxDir` is `/var/minis/offloads`
 //      (AIChatViewModel+Misc.swift:137);
