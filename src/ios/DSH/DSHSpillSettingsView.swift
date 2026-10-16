@@ -104,8 +104,8 @@ struct DSHSpillSettingsView: View {
                 readout("State", storedState)
                 readout("Budget in force", budgetState)
                 readout("Images", "one retained image is charged \(DSHSpillConfig.defaultImageTokens) tokens")
-                readout("Folder", DSHSpillStore.offloadsDisplayPath)
-                readout("Never spilled", DSHSpill.exemptTools.sorted().joined(separator: ", "))
+                readout("Folder", LocalizedStringKey(DSHSpillStore.offloadsDisplayPath))
+                readout("Never spilled", LocalizedStringKey(DSHSpill.exemptTools.sorted().joined(separator: ", ")))
             } header: {
                 Text("Current Effect")
             } footer: {
