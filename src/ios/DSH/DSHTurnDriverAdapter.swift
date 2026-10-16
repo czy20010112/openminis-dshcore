@@ -47,19 +47,26 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
         // opens a new block rather than appending behind the answer.
         dshThinkingBlockIdx = -1
 
-        // A new text block starts a new accumulation. `setStreamingTextBlockContent`
-        // REPLACES the block's content with what it is given, so the flush has to
-        // be handed the whole text of *this* block — handing it the pending chunk
-        // left the transcript showing only the last fragment of every answer.
-        let startedBlock = dshTextBlockIdx < 0 || dshTextBlockIdx >= messages[idx].blocks.count
-            || messages[idx].blocks[dshTextBlockIdx].kind != .text
+        // The presenter is told which row it writes into before anything else: the
+        // row is re-derived per step, and a presenter still pointing at the last
+        // turn's row would write text nobody sees.
+        guard let presenter = dshTextPresenter else { return }
+        presenter.msgIdx = idx
+
+        // Text before and after a tool call are two different transcript blocks, so
+        // the presenter is re-pointed whenever the block it was filling is no longer
+        // the row's trailing text block.
+        //
+        // A new block starts a new accumulation: the flush REPLACES the block's
+        // content with what it is given, so it must be handed the whole text of
+        // *this* block — handing it the pending chunk left the transcript showing
+        // only the last fragment of every answer.
+        let startedBlock = presenter.blockIdx < 0 || presenter.blockIdx >= messages[idx].blocks.count
+            || messages[idx].blocks[presenter.blockIdx].kind != .text
         if startedBlock {
-            messages[idx].blocks.append(AssistantBlock(kind: .text, content: ""))
-            dshTextBlockIdx = messages[idx].blocks.count - 1
-            dshAssistantText = ""
+            _ = presenter.beginBlock()
         }
-        dshAssistantText += text
-        dshPendingText += text
+        presenter.accumulate(text)
         dshTurnTextTotal += text.count
 
         // A brand-new block is flushed at once, ignoring the throttle.
@@ -70,59 +77,19 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
         // the reported overlap with the row above. Flushing the block and its first
         // text in one publish makes the snapshot the signal is handled against
         // already contain it.
-        dshMaybeFlushText(force: startedBlock)
-
-        // Do NOT write the block's content here.
-        //
-        // The flush path goes through `applyStreamingTextBlockContent`, which
-        // signals the collection view only on the empty → non-empty transition:
-        //
-        //     if wasEmpty && !text.isEmpty { blockContentFilledSignal.send(...) }
-        //
-        // with the comment "UIHostingConfiguration doesn't always trigger
-        // preferredLayoutAttributesFitting when the SwiftUI body changes from
-        // emitting nothing to emitting content — the cell can stay at ~0 height
-        // indefinitely without this explicit nudge".
-        //
-        // Writing the content here consumed that transition before the flush could
-        // see it, so the signal never fired: the reply rendered only as far as the
-        // first flush and the rest appeared only after reopening the session, which
-        // rebuilds the cells. The legacy loop never writes content directly — it
-        // only ever goes through `setStreamingTextBlockContent` — and that is what
-        // this now does too.
-
-        // Streaming read-aloud, the same path the original loop uses: speak
-        // completed sentences as they arrive rather than the finished reply.
-        //
-        // `speakEnabled` is read live, not snapshotted at turn start, so turning
-        // read-replies on mid-reply takes effect on this turn. `feedDynamicTTS`
-        // re-checks whether speech is allowed at all, so when it is off this only
-        // advances the offset cheaply.
-        guard speakEnabled else { return }
-
-        if !dshHasStoppedPreviousTTS {
-            dshHasStoppedPreviousTTS = true
-            // Once per turn, not per iteration: this session's previous reply
-            // stops when new text actually arrives, and the flag is shared across
-            // the turn's steps so step N+1 appends behind step N instead of
-            // cutting it off.
-            if !hasClearedTTSForCurrentTurn {
-                hasClearedTTSForCurrentTurn = true
-                stopSpeechForThisSession()
+        if let plan = presenter.takeFlushPayload(force: startedBlock) {
+            if !commitStreamText(presenter, plan: plan, finalFlush: false) {
+                presenter.requeue(plan.text)
             }
         }
 
-        let (sentences, newOffset) = extractNewSentences(
-            from: dshAssistantText, spokenOffset: dshSpokenTextOffset
-        )
-        guard !sentences.isEmpty else { return }
-        dshSpokenTextOffset = newOffset
-        // A newline between sentence units lets the dynamic window cut on a
-        // whole-sentence boundary, which keeps the timbre consistent across one
-        // synthesized batch.
-        if !dshPendingSpeakBuffer.isEmpty { dshPendingSpeakBuffer += "\n" }
-        dshPendingSpeakBuffer += sentences.joined(separator: "\n")
-        dshPendingSpeakBuffer = feedDynamicTTS(dshPendingSpeakBuffer, force: false)
+        // Streaming read-aloud: the shared presenter path, so the sentence
+        // splitting, the once-per-turn queue clear and the dynamic window are the
+        // same code the legacy loop runs. `speakEnabled` is read live, so turning
+        // read-replies on mid-reply takes effect on this turn.
+        if speakEnabled {
+            Task { await presenter.speakStreamedText() }
+        }
     }
 
     public func driver(_ driver: DSHTurnDriver, didEmitReasoning text: String) {
@@ -178,8 +145,15 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
         // A tool call ends the current reasoning segment and the current text
         // block: text that follows a tool result is its own block, as it is after
         // a reload.
+        //
+        // The flush comes first and is forced: this is the last chance to push the
+        // text belonging to the block being left behind, and the legacy loop makes
+        // the same flush before it appends a tool block (its "Step 1"). Without it
+        // the tail of that block sat in the throttle and only appeared later — the
+        // "swallowed text" report.
+        dshCommitTextForToolBoundary()
         dshThinkingBlockIdx = -1
-        dshTextBlockIdx = -1
+        dshTextPresenter?.endBlock()
 
         // Create the block now so the user sees the call while it runs, and so
         // the executor has a row to stream into. The status is `.running` until
@@ -333,7 +307,7 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
         // Final flush before sealing: this is the last chance to push the reply's
         // text, and it has to be marked as such so the list applies it even if it
         // was suspended while the text was arriving.
-        dshFlushPendingText(finalFlush: true)
+        dshCommitText(force: true, finalFlush: true)
         dshSealStreamingTurn()
         switch reason {
         case .completed, .concluded:
@@ -347,7 +321,7 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
 
     public func driver(_ driver: DSHTurnDriver, didFail failure: DSHFailure) {
         AppLogger(category: "DSHLoop").error("[DSH] failure code=\(failure.code) \(failure.message)")
-        dshFlushPendingText()
+        dshCommitText(force: true)
         dshSealStreamingTurn()
 
         // Stop is a cancellation, not a failure.
@@ -408,18 +382,18 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
             messages[idx].blocks[dshThinkingBlockIdx].flushThinkingBuffer()
         }
         dshThinkingBlockIdx = -1
-        dshTextBlockIdx = -1
         dshPendingReasoning = ""
 
         // Same for speech: the dynamic window holds a tail, and a turn that ends
-        // on one short sentence would otherwise never speak it.
-        if !dshPendingSpeakBuffer.isEmpty {
-            dshPendingSpeakBuffer = feedDynamicTTS(dshPendingSpeakBuffer, force: true)
+        // on one short sentence would otherwise never speak it. Speech crosses to
+        // the main actor, so it is handed off rather than awaited here.
+        //
+        // Then drop the text presenter's streaming state: the turn is over, and a
+        // stale accumulator must not be able to write into this row again.
+        if let presenter = dshTextPresenter {
+            Task { await presenter.sealSpeech() }
+            presenter.reset()
         }
-        dshPendingSpeakBuffer = ""
-        dshAssistantText = ""
-        dshSpokenTextOffset = 0
-        dshHasStoppedPreviousTTS = false
 
         for i in messages[idx].blocks.indices {
             switch messages[idx].blocks[i].toolStatus {
