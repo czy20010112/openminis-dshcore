@@ -224,6 +224,29 @@ extension AIChatViewModel {
         let prompt = DSHSystemPrompt()
         var disposers: [() -> Void] = []
         disposers.append(contentsOf: DSHMinisPrompt.registerBase(into: prompt))
+
+        // The app's own system prompt, verbatim.
+        //
+        // The port started by re-authoring this as a short DSH-flavoured base and
+        // dropping the rest — roughly 180 lines of Minis-specific guidance the
+        // model had always been given: the tool-usage rules, the memory and skill
+        // rules, the permission notes, and the Settings deep-link list.
+        //
+        // The operator found the hole by asking the assistant how to change its
+        // own provider: it had no idea. That answer is one paragraph of exactly
+        // this text (`minis://settings/providers`, `model-groups`, `usage`, …).
+        //
+        // Registered as-is rather than paraphrased: it is the app describing its
+        // own features, in its own words, and the harness sections above and below
+        // add framing around it rather than replacing it.
+        let appPrompt = baseSystemPrompt
+        if !appPrompt.isEmpty {
+            disposers.append(prompt.section(DSHPromptSection(
+                name: "minis:app-system-prompt",
+                order: DSHSectionOrder.personaPrefix.rawValue,
+                text: appPrompt
+            )))
+        }
         disposers.append(prompt.section(DSHMinisPrompt.runtimeContextSection(
             sandboxRoot: Self.dshSandboxRoot,
             sessionId: sessionId,
