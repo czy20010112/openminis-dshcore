@@ -458,7 +458,10 @@ public struct DSHSpillConfig: Sendable, Equatable {
     /// are never touched.
     public var cleanupPeriodDays: Int
 
-    public init(maxInlineTokens: Int? = nil, imageTokens: Int = 1_200, cleanupPeriodDays: Int = 30) {
+    /// What one retained image is charged when the caller does not say.
+    public static let defaultImageTokens = 1_200
+
+    public init(maxInlineTokens: Int? = nil, imageTokens: Int = DSHSpillConfig.defaultImageTokens, cleanupPeriodDays: Int = 30) {
         self.maxInlineTokens = maxInlineTokens
         self.imageTokens = imageTokens
         self.cleanupPeriodDays = cleanupPeriodDays
@@ -475,6 +478,50 @@ public struct DSHSpillConfig: Sendable, Equatable {
     /// feature is on; absent means 30.
     public static let cleanupPeriodDaysKey = "minis.dshSpillCleanupDays"
 
+    /// Compile-time probe, in the same spirit as `dshCompactionProbeEnabled`.
+    ///
+    /// A probe build spills every result over `probeMaxInlineTokens`, so a device
+    /// log carries a real `[DSHSpill]` line without anyone having to find the
+    /// switch first — which matters because the feature has never been exercised
+    /// on a device. It is a compilation condition and not a runtime key for the
+    /// same reason the compaction probe is: the app registers its own defaults at
+    /// launch and rewrites the plist, so a key written from outside is discarded.
+    /// Off unless the build asks for it (CI: the `spill_probe` input).
+    public static var probeEnabled: Bool {
+        #if DSH_SPILL_PROBE
+        return true
+        #else
+        return false
+        #endif
+    }
+
+    /// The budget a probe build runs on. Low enough that an ordinary `shell`,
+    /// `web_fetch` or `browser_use` result crosses it, high enough that the
+    /// retained head and tail still have something to keep.
+    public static let probeMaxInlineTokens = 600
+
+    /// Turn the feature on or off, and set the budget that applies while it is on.
+    ///
+    /// Writes `0` rather than removing the key when the switch goes off:
+    /// `resolvedFromDefaults` treats an absent key and a non-positive one alike, and
+    /// an explicit zero records that the choice was made on purpose — which an
+    /// absent key cannot distinguish from "never asked".
+    ///
+    /// - Parameter maxInlineTokens: the budget to store while enabled. A
+    ///   non-positive value is raised to 1 rather than stored as-is, because a
+    ///   stored 0 would mean "off" and make the switch disagree with itself.
+    public static func setEnabled(
+        _ enabled: Bool,
+        maxInlineTokens: Int,
+        cleanupPeriodDays: Int? = nil,
+        defaults: UserDefaults = .standard
+    ) {
+        defaults.set(enabled ? max(1, maxInlineTokens) : 0, forKey: maxInlineTokensKey)
+        if let days = cleanupPeriodDays {
+            defaults.set(max(0, days), forKey: cleanupPeriodDaysKey)
+        }
+    }
+
     /// Resolve the configuration from user defaults.
     ///
     /// Deliberately built on `object(forKey:)` rather than `integer(forKey:)`:
@@ -483,6 +530,17 @@ public struct DSHSpillConfig: Sendable, Equatable {
     ///
     /// - Returns: the resolved configuration, or nil while spill is disabled.
     public static func resolvedFromDefaults(_ defaults: UserDefaults = .standard) -> DSHSpillConfig? {
+        // The probe is checked first and it wins: a probe build exists to produce a
+        // spill, and a stored setting that quietly suppressed it would make the
+        // build lie about what it is. The cleanup window is still honoured, since
+        // it cannot stop a spill from happening.
+        if probeEnabled {
+            let days = (defaults.object(forKey: cleanupPeriodDaysKey) as? Int) ?? 30
+            return DSHSpillConfig(
+                maxInlineTokens: probeMaxInlineTokens,
+                cleanupPeriodDays: max(0, days)
+            )
+        }
         guard let stored = defaults.object(forKey: maxInlineTokensKey) as? Int else { return nil }
         guard stored > 0 else { return nil }
         let days = (defaults.object(forKey: cleanupPeriodDaysKey) as? Int) ?? 30

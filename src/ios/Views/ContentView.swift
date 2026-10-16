@@ -8256,6 +8256,19 @@ private struct SettingsSheet: View {
                                 .background(.green, in: Circle())
                         }
                     }
+                    NavigationLink {
+                        DSHSpillSettingsView()
+                    } label: {
+                        Label {
+                            Text("Tool Result Spill")
+                        } icon: {
+                            Image(systemName: "tray.and.arrow.down")
+                                .font(.system(size: 9))
+                                .foregroundStyle(.white)
+                                .frame(width: 21, height: 21)
+                                .background(.orange, in: Circle())
+                        }
+                    }
                 }
 
                 Section("Storage") {
