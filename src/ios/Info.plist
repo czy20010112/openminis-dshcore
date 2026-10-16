@@ -238,6 +238,13 @@
 	<true/>
 	<key>NSSupportsLiveActivitiesFrequentUpdates</key>
 	<true/>
+	<key>UIAppFonts</key>
+	<array>
+		<string>Fonts/FZSongSanJianTi.ttf</string>
+		<string>Fonts/Inter-Regular.ttf</string>
+		<string>Fonts/Inter-Medium.ttf</string>
+		<string>Fonts/Inter-SemiBold.ttf</string>
+	</array>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>

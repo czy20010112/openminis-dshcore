@@ -3902,7 +3902,13 @@ extension CollectionViewMessageListV3 {
             // real "…→expand" jitter is NOT primarily this residual (proven: every
             // measurement engine still left the symptom); the actual cause is
             // being investigated separately. Keep the measurement cheap.
-            let font = UIFont.systemFont(ofSize: fontSize)
+            // [T-font-stack] Same constructor AND same size as the view that
+            // renders this text (ChatMessageViews.userRow ->
+            // `Font(AppFont.ui(scaledMessage(16.5)))`). Point size alone is not
+            // enough: FZSongSanJianTi's advance widths and line box differ from
+            // SF's, so an estimator left on `systemFont` would under- or
+            // over-shoot and the bubble would truncate then expand again.
+            let font = AppFont.ui(fontSize)
             let attr = NSAttributedString(string: text, attributes: [.font: font])
             let bounds = attr.boundingRect(
                 with: CGSize(width: usableTextWidth, height: .greatestFiniteMagnitude),
