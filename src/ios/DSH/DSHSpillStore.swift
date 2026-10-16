@@ -22,15 +22,17 @@
 //      (AIChatViewModel.swift:2367);
 //    * `AIChatViewModel.resolvePathForDirectRead` resolves any `/var/minis/…`
 //      path through the live bind-mount table (AIChatViewModel+FileTools.swift:145),
-//      which is what `file_read` and `grep`/`shell_execute` go through;
+//      which is what `file_read` goes through — and the shell reaches the same
+//      bytes, so the notice's "or grep this path" is a `shell_execute` grep on
+//      that path rather than a tool of its own;
 //    * the same bucket is already used for offloaded tool output
 //      (`offloadContextContent` → `<...>/offloads/tools/<tool>_<id>.txt`,
 //      AIChatViewModel+Offloading.swift:86–100) and for request-budget image
 //      spillover (AIChatViewModel+RequestBudget.swift:119).
 //
-//  So a spill file is addressable by `file_read`, `shell_execute`, and `grep`
-//  with no new mount, no new tool, and no prompt change. The subtree is
-//  `offloads/dsh-spill/session-<hash>/…`, which keeps DSH spill
+//  So a spill file is addressable by `file_read`, `read_image`, and
+//  `shell_execute` with no new mount, no new tool, and no prompt change. The
+//  subtree is `offloads/dsh-spill/session-<hash>/…`, which keeps DSH spill
 //  files distinguishable from the offloader's own `offloads/tools/…` files so
 //  the cleanup sweep can never delete the user's offloaded content.
 //
