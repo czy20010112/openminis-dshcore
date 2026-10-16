@@ -57,11 +57,17 @@ struct DSHSpillSettingsView: View {
                 HStack {
                     Text("Inline budget")
                     Spacer(minLength: 12)
-                    TextField("tokens", text: $tokensText)
+                    // Persisted when the field is LEFT, not on every keystroke:
+                    // typing "300" passes through "3" and "30", and a stored budget
+                    // of 3 tokens would spill every tool result in the gap between
+                    // two keystrokes. The readout below doubles as the confirmation
+                    // that what is typed is what is in force.
+                    TextField("tokens", text: $tokensText, onEditingChanged: { editing in
+                        if !editing { write() }
+                    })
                         .keyboardType(.numberPad)
                         .multilineTextAlignment(.trailing)
                         .frame(maxWidth: 110)
-                        .onChange(of: tokensText) { _ in write() }
                     Text("tokens")
                         .foregroundStyle(.secondary)
                 }
@@ -70,11 +76,12 @@ struct DSHSpillSettingsView: View {
                 HStack {
                     Text("Delete spill files after")
                     Spacer(minLength: 12)
-                    TextField("days", text: $daysText)
+                    TextField("days", text: $daysText, onEditingChanged: { editing in
+                        if !editing { write() }
+                    })
                         .keyboardType(.numberPad)
                         .multilineTextAlignment(.trailing)
                         .frame(maxWidth: 110)
-                        .onChange(of: daysText) { _ in write() }
                     Text("days")
                         .foregroundStyle(.secondary)
                 }
@@ -152,13 +159,16 @@ struct DSHSpillSettingsView: View {
     ///
     /// A field that does not parse is ignored rather than clamped to something
     /// surprising: the text stays as typed so the mistake is visible, and the
-    /// last good value keeps applying.
+    /// value already stored keeps applying. Only when nothing is stored yet — the
+    /// switch turned on with the field empty — does the shipped budget step in, so
+    /// that turning the feature on always leaves a usable budget behind.
     private func write() {
         let tokens = Int(tokensText.trimmingCharacters(in: .whitespaces))
         let days = Int(daysText.trimmingCharacters(in: .whitespaces))
+        let stored = DSHSpillConfig.resolvedFromDefaults()?.maxInlineTokens
         DSHSpillConfig.setEnabled(
             enabled,
-            maxInlineTokens: tokens ?? DSHSpillConfig.shippedMaxInlineTokens,
+            maxInlineTokens: tokens ?? stored ?? DSHSpillConfig.shippedMaxInlineTokens,
             cleanupPeriodDays: days
         )
     }
