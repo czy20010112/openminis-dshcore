@@ -232,7 +232,11 @@ extension AIChatViewModel {
         // The call itself is refused outside plan mode.
         tools.append(AgentToolDefinition(
             name: "exit_plan_mode",
-            description: "Use only in plan mode. Present your plan and, on approval, leave plan mode. Send the COMPLETE plan as markdown, starting with a # heading that names it. The user may approve — carry out the plan from your next step — or disagree; their reply comes back as a message, so fold it in and present the plan again.",
+            // DSH's own wording (`plan-mode/src/index.ts`). It was paraphrased
+            // here while the mode exited on the call itself; now that approving is
+            // a real user decision, the review's outcome comes back in the tool
+            // result, which is what this says.
+            description: "Use only in plan mode. Present your plan for the user's review and, on approval, leave plan mode. Send the COMPLETE plan as markdown, starting with a # heading that names it. The user may approve (carry out the plan from your next step) or keep planning — their feedback comes back in the tool result; revise and present again.",
             parameters: [
                 "plan": AgentToolParam(type: .string, description: "The complete plan, as markdown, starting with a # heading that names it."),
             ],
