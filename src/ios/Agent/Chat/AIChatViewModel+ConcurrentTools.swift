@@ -979,7 +979,13 @@ extension AIChatViewModel {
             }
 
         case "exit_plan_mode":
-            let planResult = DSHPlanMode.exit(plan: toolArgs["plan"])
+            // [T-tools-todo-plan] Suspends until the user answers the review
+            // (see `DSHPlanApproval`): the call does not return until Approve,
+            // Keep planning, a dismissed review, a cancelled turn, or the
+            // review's deadline. Everything except Approve leaves plan mode on
+            // and comes back as an error, so the model revises instead of
+            // implementing.
+            let planResult = await DSHPlanMode.exit(plan: toolArgs["plan"])
             toolOutput = planResult.success ? planResult.output : "Error: \(planResult.output)"
             toolSuccess = planResult.success
             if msgIdx < messages.count, blockIdx < messages[msgIdx].blocks.count {

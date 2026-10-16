@@ -390,6 +390,17 @@ struct AIChatView: View {
     @State private var showSessionMemory = false
     @State private var showEnhancedCacheAlert = false
     @State private var showTokenUsage = false
+    /// [T-ctx-ring] The context breakdown sheet, opened from the ring in the
+    /// composer's control row.
+    @State private var showContextPanel = false
+    /// [T-tools-todo-plan] The plan review that `exit_plan_mode` is suspended
+    /// on. Held here only as the sheet's presentation item: the decision itself
+    /// lives in `DSHPlanApproval`, which the sheet resolves.
+    @State private var planReviewRequest: DSHPlanApproval.Request?
+    /// The review channel, observed so a review opened by a tool call presents
+    /// itself, and so it disappears if the review is answered anywhere else
+    /// (a turn cancellation, or the deadline).
+    @ObservedObject private var planApproval = DSHPlanApproval.shared
     // [T-ios-json-open-provider-import-prompt] A shared/opened JSON file that
     // looks like a Provider export (providerType + credentialType + models)
     // prompts the user to choose: import as a provider, or add as a chat
@@ -1084,6 +1095,28 @@ struct AIChatView: View {
         .sheet(isPresented: $showTokenUsage) {
             TokenUsageSheet(vm: cached.vm)
                 .presentationDetents([.fraction(0.8), .large])
+        }
+        // [T-ctx-ring] The breakdown behind the composer's ring. Same detents as
+        // the token-usage sheet: both are "look at the numbers" sheets opened
+        // from the same row.
+        .sheet(isPresented: $showContextPanel) {
+            DSHContextPanel(reading: DSHContextReading.latest(
+                messages: cached.vm.messages,
+                window: cached.vm.currentModelContextWindow
+            ))
+            .presentationDetents([.fraction(0.8), .large])
+        }
+        // [T-tools-todo-plan] The plan review `exit_plan_mode` is suspended on.
+        // Presented from the coordinator's published request, not from a flag
+        // the tool sets: the tool call and the sheet are two ends of one
+        // handoff, and the request IS the handoff. A turn cancellation or the
+        // review's deadline clears it, and the sheet goes with it.
+        .sheet(item: $planReviewRequest) { request in
+            DSHPlanReviewSheet(request: request)
+                .presentationDetents([.fraction(0.75), .large])
+        }
+        .onReceive(planApproval.$pending) { request in
+            planReviewRequest = request
         }
         .sheet(item: $screenshotPreview) { preview in
             ChatScreenshotPreviewSheet(image: preview.image)
@@ -3346,16 +3379,41 @@ struct AIChatView: View {
                 Spacer()
             }
             micButtonContainer
+            // [T-ctx-ring] Between the mic and send: the ring reports how full
+            // the context window is, and opens the breakdown. It is always
+            // drawn (an empty ring means nothing measured yet), which keeps this
+            // row's fixed width a constant — see `readAloudRowFixedWidth`.
+            contextRingButton
             sendButton
         }
         return AnyView(row)
     }
 
+    /// [T-ctx-ring] The composer's context ring. Defined out of line and as one
+    /// call into the DSH folder on purpose: this row's `AnyView` return exists
+    /// because SwiftUI's runtime demangler choked on its type, so new controls
+    /// are added as a single opaque subview rather than as more inline
+    /// modifiers.
+    private var contextRingButton: some View {
+        DSHContextRingButton(
+            reading: DSHContextReading.latest(
+                messages: vm.messages,
+                window: vm.currentModelContextWindow
+            )
+        ) { showContextPanel = true }
+    }
+
     /// [T-ios-de-voice-toolbar] Fixed controls in `inputBottomRow`: two 34pt
-    /// leading buttons, the 34pt mic and the 34pt send button, plus the four
-    /// 12pt HStack gaps between them. Everything left over is what the
-    /// read-aloud capsule may use.
-    private static let readAloudRowFixedWidth: CGFloat = 34 * 4 + 12 * 4
+    /// leading buttons, the 34pt mic, the 34pt context ring and the 34pt send
+    /// button, plus the five 12pt HStack gaps around them. Everything left over
+    /// is what the read-aloud capsule may use.
+    ///
+    /// [T-ctx-ring] The count went from four to five when the context ring was
+    /// added between the mic and send: 34pt buttons ×4 + 12pt gaps ×4 became
+    /// ×5 + ×5. Leaving it at four would under-count the row by 46pt, i.e. the
+    /// toggle would keep its text label in a row that no longer has room for it
+    /// (the reported German-label case lands first).
+    private static let readAloudRowFixedWidth: CGFloat = 34 * 5 + 12 * 5
 
     /// Free width below which the toggle drops its text and becomes icon-only.
     ///
@@ -3371,9 +3429,16 @@ struct AIChatView: View {
     /// drops under 130pt, where even a short label would be cramped against
     /// the mic and send buttons, does the text go entirely.
     ///
-    /// Effect per device (usable = width − 24 side padding − 184 fixed):
-    /// 320pt SE → 112pt → icon-only (the reported German case);
-    /// 375pt mini → 167pt, 393pt → 185pt, 430pt → 222pt → label kept.
+    /// Effect per device (usable = width − 24 side padding − 230 fixed):
+    /// 320pt SE → 66pt → icon-only (the reported German case);
+    /// 375pt mini → 121pt → icon-only; 393pt → 139pt, 430pt → 176pt → label kept.
+    ///
+    /// [T-ctx-ring] Re-derived when the fixed width went 184 → 230 for the
+    /// context ring. The consequence is deliberate and worth stating: on a
+    /// 375pt mini the label now goes entirely rather than shrinking, because
+    /// 121pt is under the 130pt floor. Five 34pt controls plus their gaps is
+    /// 230pt of a 351pt row, so there is no longer room for a text capsule at
+    /// that width — the alternative was an icon-only mic row, which is worse.
     private static let readAloudLabelMinWidth: CGFloat = 130
 
     /// Whether the read-aloud toggle shows its text label.
