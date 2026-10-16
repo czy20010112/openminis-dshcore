@@ -345,18 +345,18 @@ enum AppFont {
                                         bucket: bucket,
                                         lendWeight: lendWeight)
             if let borrowed {
-                cascade.append(named(borrowed, size))
+                cascade.append(named(borrowed, size: size))
                 // Directly behind the lender, so a character it cannot draw
                 // still comes from the face the user actually chose.
-                cascade.append(named(name, size))
+                cascade.append(named(name, size: size))
             } else {
-                cascade.append(named(name, size))
+                cascade.append(named(name, size: size))
             }
         }
         // Last resort so that a face which failed to register still leaves
         // Chinese on a Chinese face rather than on the Latin face's fallback.
         if UIFont(name: "PingFang SC", size: size) != nil {
-            cascade.append(named("PingFang SC", size))
+            cascade.append(named("PingFang SC", size: size))
         }
         return cascade
     }
