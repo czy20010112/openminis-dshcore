@@ -1902,8 +1902,8 @@ final class BackgroundBoost: ObservableObject {
     /// interruption banner's one-tap action. Safe to call mid-task: nothing here
     /// tears down a running session.
     func applyRecommended(reason: String) {
-        if mode != Self.recommended {
-            mode = Self.recommended      // didSet applies + logs
+        if mode != BackgroundBoostMode.recommended {
+            mode = BackgroundBoostMode.recommended      // didSet applies + logs
         } else {
             apply(reason: "recommendedAgain/\(reason)")
         }

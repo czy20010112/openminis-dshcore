@@ -68,7 +68,11 @@ public enum DSHSpillFeature {
         // One sweep per process, kicked off the first time a spill is actually
         // possible — never at launch, where the subtree usually does not exist.
         DSHSpillStore.sweepExpiredOnce(offloadsRoot: offloadsRoot, cleanupPeriodDays: config.cleanupPeriodDays)
-        FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        // Best-effort: `DSHSpillStore.write` creates the directory itself and
+        // reports failure by returning nil, which the hook below already treats as
+        // "storage unavailable". Swallowing the error here keeps a full disk or a
+        // missing mount from turning a tool result into a thrown turn.
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 
         return { block, result in
             let text = result.content

@@ -49,7 +49,13 @@ struct DSHTodoPanelView: View {
                 .padding(.top, 7)
                 .padding(.bottom, 6)
                 .background(TopRoundedRectangle(radius: 20).fill(.ultraThinMaterial))
-                .overlay(TopRoundedRectangle(radius: 20).strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5))
+                // `stroke` and not `strokeBorder`: `strokeBorder` is declared on
+                // `InsettableShape`, and `TopRoundedRectangle` is a plain `Shape`
+                // (see its own note below on why it is hand-rolled). `stroke`
+                // centres the 0.5pt line on the path, so the visible edge sits
+                // 0.25pt outside where `strokeBorder` would have put it — not
+                // something the eye can find on a 0.5pt hairline.
+                .overlay(TopRoundedRectangle(radius: 20).stroke(Color.primary.opacity(0.08), lineWidth: 0.5))
                 // The bar's top corners match the composer's own radius (20, see
                 // `ComposerSurface`), so the two surfaces line up when stacked.
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
