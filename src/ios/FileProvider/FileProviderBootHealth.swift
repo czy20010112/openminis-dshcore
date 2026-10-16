@@ -61,7 +61,7 @@ enum FileProviderBootHealth {
     /// costs nothing, while a genuine loop is caught within three app launches.
     static let tripThreshold = 3
 
-    private static let appGroupId = "group.com.openminis.app"
+    private static let appGroupId = "group.com.openminis.minidsh"
     private static let fileName = "fp-boot-health.plist"
 
     private struct State: Codable {
