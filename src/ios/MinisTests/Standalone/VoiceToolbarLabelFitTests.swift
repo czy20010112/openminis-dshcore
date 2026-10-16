@@ -17,7 +17,7 @@ func check(_ label: String, _ actual: Bool, _ expected: Bool = true) {
 }
 
 // Mirrors the shipped constants in AIChatView.
-let rowFixedWidth: CGFloat = 34 * 4 + 12 * 4   // 2 leading + mic + send, 4 gaps
+let rowFixedWidth: CGFloat = 34 * 5 + 12 * 5   // 2 leading + mic + send, 4 gaps
 let labelMinWidth: CGFloat = 130
 let sidePadding: CGFloat = 12 * 2
 let scaleFactor: CGFloat = 0.75
