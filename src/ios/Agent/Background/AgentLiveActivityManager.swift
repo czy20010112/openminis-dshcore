@@ -18,6 +18,12 @@ final class AgentLiveActivityManager {
     /// ("1 task completed · 2m 15s") without introducing separate time tracking.
     /// nil when no Live Activity run is in flight.
     var taskStartTime: Date? { startTime }
+
+    /// [T-background-boost-status] Whether a Live Activity is currently registered
+    /// with the system, as opposed to merely being supported on this device. The
+    /// Boost status panel shows both so "the switch is on" cannot be mistaken for
+    /// "the card is up".
+    var isRunning: Bool { currentActivity != nil }
     private var carouselIndex: Int = 0
     private var updateCount: Int = 0
     /// Toggled on every Live Activity refresh to alternate the Dynamic Island

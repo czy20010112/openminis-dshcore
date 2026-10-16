@@ -187,6 +187,14 @@ final class BackgroundKeepAliveManager: NSObject, ObservableObject, CLLocationMa
     private var locationTimer: Timer?
     private var appIsInBackground = false
 
+    /// [T-background-boost-status] Real stamps for the Boost status panel, so it can
+    /// report how long the process has actually been running in the background
+    /// instead of inferring it from when a task started. `backgroundEnteredAt` is
+    /// set on didEnterBackground and cleared on the foreground return.
+    private(set) var backgroundEnteredAt: Date?
+    private(set) var lastBackgroundSuspendAt: Date?
+    private(set) var lastForegroundResumeAt: Date?
+
     // MARK: - CLBackgroundActivitySession (iOS 17+)
     private var bgActivitySession: Any?
     private var liveUpdatesTask: Task<Void, Never>?
@@ -198,7 +206,7 @@ final class BackgroundKeepAliveManager: NSObject, ObservableObject, CLLocationMa
     /// is true, which happens `backgroundLocationArmDelay` seconds AFTER the app
     /// enters the background — so a brief background blip (or normal foreground
     /// use) never spins up location at all. Reset to false on foreground return.
-    private var backgroundLocationArmed = false
+    private(set) var backgroundLocationArmed = false
     private var backgroundLocationArmTimer: Timer?
     /// How long to wait after backgrounding before arming location keep-alive.
     private static let backgroundLocationArmDelay: TimeInterval = 15.0
@@ -407,6 +415,9 @@ final class BackgroundKeepAliveManager: NSObject, ObservableObject, CLLocationMa
                 // deferred willEnterForeground handler flip appIsInBackground.
                 self.pendingForegroundTransition = false
                 self.appIsInBackground = true
+                self.backgroundEnteredAt = Date()
+                self.lastBackgroundSuspendAt = Date()
+                BackgroundBoost.shared.logStatus(reason: "didEnterBackground")
                 // [T-ish-bg-cpu-governor] Closed-loop governor replaces the
                 // old fixed 80% duty cycle (which sat exactly on the iOS
                 // background kill line and still measured 91% — see
@@ -445,6 +456,9 @@ final class BackgroundKeepAliveManager: NSObject, ObservableObject, CLLocationMa
                     guard self.pendingForegroundTransition else { return }
                     self.pendingForegroundTransition = false
                     self.appIsInBackground = false
+                    self.backgroundEnteredAt = nil
+                    self.lastForegroundResumeAt = Date()
+                    BackgroundBoost.shared.logStatus(reason: "willEnterForeground")
                     ISHKernel.shared.endBackgroundCPUGovernor()
                     logger.info("[BKA] iSH background CPU governor STOPPED (foreground)")
                     self.logLifecycleSnapshot("Foreground")
@@ -1636,6 +1650,393 @@ final class BackgroundKeepAliveManager: NSObject, ObservableObject, CLLocationMa
     }
 }
 
+// MARK: - Background Boost
+
+/// [T-background-boost] Diagnostics for the Background Boost presets. Its own
+/// category so `[BackgroundBoost] mode=...` can be grepped out of a device log
+/// without dragging the very chatty [BKA] lifecycle lines along.
+private let boostLogger = AppLogger(category: "BackgroundBoost")
+
+/// [T-background-boost] The presets offered by Settings -> Background -> Background
+/// Boost, so the whole background configuration can be chosen ONCE and in advance
+/// instead of being assembled row by row only after the interruption banner has
+/// already fired.
+///
+/// There is no "background permission" to request. `UIBackgroundModes: audio` is a
+/// build-time declaration and iOS never prompts for it; Live Activities raise no
+/// prompt either; the only real system prompt any leg here can raise is the
+/// location one. So every mode is expressed as a combination of the legs that
+/// genuinely exist in this build:
+///
+///   * audio        - a looping silent AVAudioEngine running under the `audio`
+///                    background mode. This is the leg that actually keeps the
+///                    process out of suspension, and it is gated on
+///                    `backgroundSpeakEnabled` today.
+///   * location     - the coarse-location heartbeat, which also refreshes the Live
+///                    Activity while backgrounded. Needs the location grant.
+///   * liveActivity - the Lock Screen / Dynamic Island card. On its own it does
+///                    NOT keep the process alive; it reports that it is alive.
+enum BackgroundBoostMode: String, CaseIterable, Identifiable {
+    case off
+    case audioOnly
+    case audioAndLiveActivity
+    case full
+    /// No preset matches the switches as they stand (or the user picked this on
+    /// purpose). `apply` writes NOTHING for this case: a hand-tuned combination is
+    /// never "corrected" behind the user's back.
+    case custom
+
+    var id: String { rawValue }
+
+    /// The smallest mode that actually stops the interruption the banner reports:
+    /// the audio leg is what holds the process open.
+    static var recommended: BackgroundBoostMode { .audioAndLiveActivity }
+
+    var title: String {
+        switch self {
+        case .off:
+            return AppLocalized("Off", comment: "Background boost mode name")
+        case .audioOnly:
+            return AppLocalized("Audio keep-alive", comment: "Background boost mode name")
+        case .audioAndLiveActivity:
+            return AppLocalized("Audio + Live Activity", comment: "Background boost mode name")
+        case .full:
+            return AppLocalized("Audio + Location + Live Activity", comment: "Background boost mode name")
+        case .custom:
+            return AppLocalized("Custom (leave my switches alone)", comment: "Background boost mode name")
+        }
+    }
+
+    var summary: String {
+        switch self {
+        case .off:
+            return AppLocalized("No keep-alive. iOS suspends the app roughly 30 seconds after you leave it, and the running task is interrupted.",
+                                comment: "Background boost mode summary")
+        case .audioOnly:
+            return AppLocalized("Keeps the process alive with background audio. No task card, no location use.",
+                                comment: "Background boost mode summary")
+        case .audioAndLiveActivity:
+            return AppLocalized("Keeps the process alive with background audio and shows the task on the Lock Screen / Dynamic Island.",
+                                comment: "Background boost mode summary")
+        case .full:
+            return AppLocalized("Adds a coarse location heartbeat, which also keeps the task card refreshing in real time.",
+                                comment: "Background boost mode summary")
+        case .custom:
+            return AppLocalized("The switches on this page do not match any preset, so this preset writes nothing and they stay exactly as you set them.",
+                                comment: "Background boost mode summary")
+        }
+    }
+
+    var risk: String {
+        switch self {
+        case .off:
+            return AppLocalized("Tasks will keep being interrupted in the background.",
+                                comment: "Background boost risk note")
+        case .audioOnly:
+            return AppLocalized("Costs battery: the audio session stays active while a task runs. iOS may still suspend the app if it decides the audio is inaudible.",
+                                comment: "Background boost risk note")
+        case .audioAndLiveActivity:
+            return AppLocalized("Costs battery: the audio session stays active while a task runs. iOS may still suspend the app if it decides the audio is inaudible.",
+                                comment: "Background boost risk note")
+        case .full:
+            return AppLocalized("Highest battery cost. Uses coarse location only as a background heartbeat, and iOS shows the location indicator while it is armed.",
+                                comment: "Background boost risk note")
+        case .custom:
+            return AppLocalized("Whether tasks survive the background depends entirely on the switches below.",
+                                comment: "Background boost risk note")
+        }
+    }
+
+    var usesLiveActivity: Bool { self == .audioAndLiveActivity || self == .full }
+    var usesLocation: Bool { self == .full }
+}
+
+/// [T-background-boost-status] Everything the "Current Effect" panel shows, read
+/// live from the running process. The three groups are deliberately separate so a
+/// user can tell the kinds of fact apart: what they configured, what is happening
+/// now, and what the INSTALLED signed bundle actually declares. Fields iOS does not
+/// expose stay nil and are rendered as unavailable rather than estimated.
+struct BackgroundBoostSnapshot {
+    // Configured.
+    var mode: BackgroundBoostMode
+    var armOnLaunch: Bool
+    var appliedAt: Date?
+
+    // Declared by the signed bundle that is installed on this device.
+    var backgroundModes: [String]
+    var liveActivitiesKey: Bool
+    var frequentUpdatesKey: Bool
+    var liveActivityExtensionEmbedded: Bool
+
+    // Runtime.
+    var keepAliveActive: Bool
+    var effective: Bool
+    var silentAudioPlaying: Bool
+    var audioSessionActive: Bool
+    var locationLegOn: Bool
+    var locationAuth: CLAuthorizationStatus
+    var backgroundLocationArmed: Bool
+    var liveActivitySwitchOn: Bool
+    var liveActivitySupported: Bool
+    var liveActivityRunning: Bool
+    var activeSessions: Int
+    var liveBackgroundGrants: Int
+    var backgroundTimeRemaining: TimeInterval
+    var appIsInBackground: Bool
+    var backgroundEnteredAt: Date?
+    var lastBackgroundSuspendAt: Date?
+    var lastForegroundResumeAt: Date?
+    var lastInterruptionAt: Date?
+    var audioInterruption: String
+}
+
+/// [T-background-boost] Applies a named preset to `BackgroundKeepAliveManager` and
+/// reports what the result actually is. The preset is persisted and re-applied on
+/// every launch, which is the whole point: a configuration made once in Settings
+/// must be in force BEFORE the first interruption, not after it.
+@MainActor
+final class BackgroundBoost: ObservableObject {
+    static let shared = BackgroundBoost()
+
+    private static let modeKey = "backgroundBoostMode"
+    private static let armKey = "backgroundBoostArmOnLaunch"
+    private static let appliedKey = "backgroundBoostAppliedAt"
+
+    /// The chosen preset. Persisted the moment it changes and pushed into the
+    /// keep-alive manager immediately, so switching a mode takes effect without a
+    /// relaunch.
+    @Published var mode: BackgroundBoostMode {
+        didSet {
+            guard mode != oldValue else { return }
+            UserDefaults.standard.set(mode.rawValue, forKey: Self.modeKey)
+            apply(reason: "modeChange")
+        }
+    }
+
+    /// Re-apply `mode` on every cold start. Default ON: a one-time configuration
+    /// has to survive a relaunch, which is exactly what moving the setup out of the
+    /// post-interruption banner is for.
+    @Published var armOnLaunch: Bool {
+        didSet { UserDefaults.standard.set(armOnLaunch, forKey: Self.armKey) }
+    }
+
+    @Published private(set) var appliedAt: Date?
+
+    /// True once a preset has ever been stored, i.e. the persisted key exists.
+    /// Until then the first launch seeds the preset from the switches the user may
+    /// already have set by hand (seedOnly, never a write-back).
+    private var hasStoredMode: Bool {
+        UserDefaults.standard.string(forKey: Self.modeKey) != nil
+    }
+
+    // Deliberately free of cross-singleton work: `BackgroundBoost.shared` is first
+    // touched from the launch path (after BackgroundKeepAliveManager.setup()) and
+    // from Settings, so reaching for the keep-alive manager HERE would drag its init
+    // onto whatever thread touches us first. Same rule as
+    // BackgroundInterruptionTracker's init (see T-ios-scene-create-watchdog).
+    private init() {
+        let stored = UserDefaults.standard.string(forKey: Self.modeKey)
+        self.mode = stored.flatMap(BackgroundBoostMode.init(rawValue:)) ?? .off
+        self.armOnLaunch = UserDefaults.standard.object(forKey: Self.armKey) as? Bool ?? true
+    }
+
+    /// Push the preset into the keep-alive manager. The master switch's own didSet
+    /// also opts into Background Speak; it is set explicitly here anyway so the
+    /// intent is visible at the call site instead of implied two files away.
+    func apply(reason: String) {
+        let bka = BackgroundKeepAliveManager.shared
+        switch mode {
+        case .custom:
+            // Hands off. Writing anything here would "correct" a combination the
+            // user assembled by hand - including one that deliberately leaves Live
+            // Activity off or location on.
+            break
+        case .off:
+            // Mirrors the master switch's documented asymmetry: turning the master
+            // OFF deliberately leaves Background Speak alone, because that toggle
+            // also governs TTS narration, which is a feature rather than a
+            // keep-alive leg. `enhancedBackgroundEffective` is false either way, so
+            // no keep-alive is left armed behind the user's back.
+            bka.enhancedBackgroundEnabled = false
+            bka.locationTrackingEnabled = false
+            bka.liveActivityEnabled = false
+        case .audioOnly:
+            bka.enhancedBackgroundEnabled = true
+            bka.backgroundSpeakEnabled = true
+            bka.locationTrackingEnabled = false
+            bka.liveActivityEnabled = false
+        case .audioAndLiveActivity:
+            bka.enhancedBackgroundEnabled = true
+            bka.backgroundSpeakEnabled = true
+            bka.locationTrackingEnabled = false
+            bka.liveActivityEnabled = true
+        case .full:
+            bka.enhancedBackgroundEnabled = true
+            bka.backgroundSpeakEnabled = true
+            bka.locationTrackingEnabled = true
+            bka.liveActivityEnabled = true
+        }
+
+        // The one leg that has a real system prompt. Asked for here so choosing a
+        // mode is enough and the user does not have to find the Location row too.
+        if mode.usesLocation && bka.locationAuthStatus == .notDetermined {
+            bka.requestLocationPermission()
+        }
+
+        appliedAt = Date()
+        UserDefaults.standard.set(appliedAt, forKey: Self.appliedKey)
+        logStatus(reason: "apply/\(reason)")
+    }
+
+    /// Called once from the launch path, so a configuration made once in Settings is
+    /// in force BEFORE the first interruption. On the very first run it seeds the
+    /// preset from the switches already in place; because the preset is inferred
+    /// FROM those switches, the resulting `apply` is a no-op and cannot turn
+    /// anything back on.
+    func armIfConfigured(reason: String) {
+        if !hasStoredMode {
+            mode = inferFromCurrentConfiguration()   // didSet persists (+ no-op apply)
+            if !hasStoredMode {                      // equal-value assignment: didSet did not fire
+                UserDefaults.standard.set(mode.rawValue, forKey: Self.modeKey)
+            }
+            logStatus(reason: "\(reason)/seeded")
+            return
+        }
+        guard armOnLaunch else {
+            logStatus(reason: "\(reason)/armDisabled")
+            return
+        }
+        apply(reason: reason)
+    }
+
+    /// Turn on the recommended preset without navigating anywhere. Used by the
+    /// interruption banner's one-tap action. Safe to call mid-task: nothing here
+    /// tears down a running session.
+    func applyRecommended(reason: String) {
+        if mode != Self.recommended {
+            mode = Self.recommended      // didSet applies + logs
+        } else {
+            apply(reason: "recommendedAgain/\(reason)")
+        }
+    }
+
+    /// Re-derive the preset from the switches as they now stand. Called when the
+    /// user changes an individual switch by hand so the Mode row keeps telling the
+    /// truth, and so the saved preset is never re-imposed over that change on the
+    /// next launch. Safe by construction: inference only ever returns a preset whose
+    /// legs match the switches exactly, so any apply it triggers is a no-op.
+    func syncModeFromCurrentConfiguration() {
+        let inferred = inferFromCurrentConfiguration()
+        guard inferred != mode else { return }
+        mode = inferred
+    }
+
+    /// Maps the current switch combination onto a preset. Anything that no preset
+    /// describes returns `.custom`, which writes nothing.
+    private func inferFromCurrentConfiguration() -> BackgroundBoostMode {
+        let bka = BackgroundKeepAliveManager.shared
+        let audio = bka.enhancedBackgroundEnabled && bka.backgroundSpeakEnabled
+        let location = bka.locationTrackingEnabled
+        let live = bka.liveActivityEnabled
+        switch (audio, location, live) {
+        case (false, false, false): return .off
+        case (true, false, false): return .audioOnly
+        case (true, false, true): return .audioAndLiveActivity
+        case (true, true, true): return .full
+        default: return .custom
+        }
+    }
+
+    // MARK: - Status
+
+    /// Whether the app bundle carries a widget extension that can render a Live
+    /// Activity. Read once: it is a property of the installed build, and unpacking
+    /// an appex Info.plist on every status refresh would be silly. This is the field
+    /// that answers "is my build missing the extension the other one ships?" from
+    /// inside the app, without anyone having to open an IPA.
+    private static let liveActivityExtensionEmbeddedOnce: Bool = {
+        guard let dir = Bundle.main.builtInPlugInsURL,
+              let items = try? FileManager.default.contentsOfDirectory(at: dir,
+                                                                      includingPropertiesForKeys: nil)
+        else { return false }
+        for item in items where item.pathExtension == "appex" {
+            guard let data = try? Data(contentsOf: item.appendingPathComponent("Info.plist")),
+                  let root = try? PropertyListSerialization.propertyList(from: data,
+                                                                         options: [],
+                                                                         format: nil),
+                  let dict = root as? [String: Any],
+                  let ext = dict["NSExtension"] as? [String: Any],
+                  let point = ext["NSExtensionPointIdentifier"] as? String
+            else { continue }
+            if point == "com.apple.widgetkit-extension" { return true }
+        }
+        return false
+    }()
+
+    func snapshot() -> BackgroundBoostSnapshot {
+        let bka = BackgroundKeepAliveManager.shared
+        let info = Bundle.main.infoDictionary ?? [:]
+        return BackgroundBoostSnapshot(
+            mode: mode,
+            armOnLaunch: armOnLaunch,
+            appliedAt: appliedAt,
+            backgroundModes: (info["UIBackgroundModes"] as? [String]) ?? [],
+            liveActivitiesKey: (info["NSSupportsLiveActivities"] as? Bool) ?? false,
+            frequentUpdatesKey: (info["NSSupportsLiveActivitiesFrequentUpdates"] as? Bool) ?? false,
+            liveActivityExtensionEmbedded: Self.liveActivityExtensionEmbeddedOnce,
+            keepAliveActive: bka.isActive,
+            effective: bka.enhancedBackgroundEffective,
+            silentAudioPlaying: bka.silentAudioIsPlaying,
+            audioSessionActive: bka.audioSessionIsActive,
+            locationLegOn: bka.locationTrackingEnabled,
+            locationAuth: bka.locationAuthStatus,
+            backgroundLocationArmed: bka.backgroundLocationArmed,
+            liveActivitySwitchOn: bka.liveActivityEnabled,
+            liveActivitySupported: AgentLiveActivityManager.isLiveActivitySupported,
+            liveActivityRunning: AgentLiveActivityManager.shared.isRunning,
+            activeSessions: SessionActivityTracker.shared.activeSessions.count,
+            liveBackgroundGrants: AIChatViewModel.liveBackgroundTaskCount,
+            backgroundTimeRemaining: UIApplication.shared.backgroundTimeRemaining,
+            appIsInBackground: UIApplication.shared.applicationState == .background,
+            backgroundEnteredAt: bka.backgroundEnteredAt,
+            lastBackgroundSuspendAt: bka.lastBackgroundSuspendAt,
+            lastForegroundResumeAt: bka.lastForegroundResumeAt,
+            lastInterruptionAt: BackgroundInterruptionTracker.shared.lastInterruptionAt,
+            audioInterruption: bka.lastAudioInterruption
+        )
+    }
+
+    /// One greppable line per interesting moment. Formatted so a captured log alone
+    /// answers "did the configuration I made actually take effect": mode + armed +
+    /// the background modes the signed bundle really declares + the readable
+    /// remaining clock + whether a Live Activity is running.
+    func logStatus(reason: String) {
+        let s = snapshot()
+        let laState = s.liveActivityRunning ? "running" : (s.liveActivitySupported ? "idle" : "unsupported")
+        let remaining = s.backgroundTimeRemaining > 100_000
+            ? "unlimited"
+            : String(format: "%.0f", s.backgroundTimeRemaining)
+        let backgroundFor = s.backgroundEnteredAt
+            .map { String(Int(Date().timeIntervalSince($0))) } ?? "fg"
+        let elapsed = { (d: Date?) -> String in
+            guard let d = d else { return "never" }
+            return String(Int(Date().timeIntervalSince(d)))
+        }
+        boostLogger.info("[BackgroundBoost] mode=\(mode.rawValue) armed=\(armOnLaunch) bgMode=[\(s.backgroundModes.joined(separator: ","))] remaining=\(remaining) liveActivity=\(laState) reason=\(reason) effective=\(s.effective) keepAlive=\(s.keepAliveActive) laKey=\(s.liveActivitiesKey) laFrequent=\(s.frequentUpdatesKey) laExtension=\(s.liveActivityExtensionEmbedded ? "embedded" : "absent") laSwitch=\(s.liveActivitySwitchOn) sessions=\(s.activeSessions) grants=\(s.liveBackgroundGrants) silentAudio=\(s.silentAudioPlaying) audioSession=\(s.audioSessionActive) locationLeg=\(s.locationLegOn) locationAuth=\(Self.authName(s.locationAuth)) locationArmed=\(s.backgroundLocationArmed) bg=\(s.appIsInBackground) bgFor=\(backgroundFor)s lastSuspendAgo=\(elapsed(s.lastBackgroundSuspendAt))s lastResumeAgo=\(elapsed(s.lastForegroundResumeAt))s lastInterruptAgo=\(elapsed(s.lastInterruptionAt))s audioInterruption=\(s.audioInterruption)")
+    }
+
+    private static func authName(_ status: CLAuthorizationStatus) -> String {
+        switch status {
+        case .notDetermined: return "notDetermined"
+        case .restricted: return "restricted"
+        case .denied: return "denied"
+        case .authorizedWhenInUse: return "whenInUse"
+        case .authorizedAlways: return "always"
+        @unknown default: return "unknown"
+        }
+    }
+}
+
 // MARK: - Background Interruption Tracker
 
 @MainActor
@@ -1643,6 +2044,11 @@ final class BackgroundInterruptionTracker: ObservableObject {
     static let shared = BackgroundInterruptionTracker()
 
     @Published var showBanner = false
+
+    /// [T-background-boost-status] When the last interruption was recorded, so the
+    /// Boost status panel can show it. In memory only: a stamp from a previous
+    /// process would be indistinguishable from a live one.
+    @Published private(set) var lastInterruptionAt: Date?
 
     /// How many interruptions must accumulate before the banner is shown again.
     /// Starts at 1 (remind on every interruption). Each "Remind me later" tap
@@ -1702,6 +2108,7 @@ final class BackgroundInterruptionTracker: ObservableObject {
 
     func recordInterruption() {
         wasInterrupted = true
+        lastInterruptionAt = Date()
     }
 
     /// Called when app returns to foreground. Counts the interruption and only
@@ -1740,7 +2147,6 @@ final class BackgroundInterruptionTracker: ObservableObject {
 struct BackgroundInterruptionBanner: View {
     @ObservedObject private var tracker = BackgroundInterruptionTracker.shared
     @State private var dragOffset: CGFloat = 0
-    @State private var showSettings = false
 
     private let dismissThreshold: CGFloat = 40
 
@@ -1751,9 +2157,6 @@ struct BackgroundInterruptionBanner: View {
                 .offset(y: min(dragOffset, 0))
                 .gesture(swipeToDismiss)
                 .animation(.spring(response: 0.35), value: tracker.showBanner)
-                .sheet(isPresented: $showSettings) {
-                    NavigationStack { EnhancedBackgroundSettingsView() }
-                }
                 // [T-ios-scene-create-watchdog-corelocation] Subscribe only once
                 // the banner is actually on screen — the subscription exists to
                 // auto-dismiss a VISIBLE banner, so there is nothing to observe
@@ -1774,7 +2177,7 @@ struct BackgroundInterruptionBanner: View {
                 Text("Background Task Interrupted")
                     .font(.subheadline.bold())
                     .foregroundColor(.white)
-                Text("Enable enhanced background to keep tasks running")
+                Text("Turn on Background Boost to keep tasks running")
                     .font(.caption)
                     .foregroundColor(.white.opacity(0.85))
             }
@@ -1783,9 +2186,16 @@ struct BackgroundInterruptionBanner: View {
 
             VStack(spacing: 6) {
                 Button {
-                    DeepLinkCoordinator.shared.setFocus(
-                        rawQueryValue: "enhancedBackgroundExecution:true,backgroundSpeakEnabled:true,locationTrackingEnabled:true")
-                    showSettings = true
+                    // [T-background-boost] One tap now does BOTH things the banner
+                    // was missing. It applies the recommended preset IMMEDIATELY, so
+                    // a user who closes the sheet is still configured - previously
+                    // the button only ever navigated, so dismissing it left the app
+                    // exactly as likely to be interrupted again. Then it opens the
+                    // Boost row with a highlight, for the user who wants to see what
+                    // changed.
+                    BackgroundBoost.shared.applyRecommended(reason: "interruptionBanner")
+                    DeepLinkCoordinator.shared.setFocus(rawQueryValue: "backgroundBoostRecommended")
+                    DeepLinkCoordinator.shared.pendingSettingsTarget = .background
                     withAnimation { tracker.dismiss() }
                 } label: {
                     Text("Enable")
@@ -1795,6 +2205,19 @@ struct BackgroundInterruptionBanner: View {
                         .background(Color.white)
                         .foregroundColor(.orange)
                         .cornerRadius(14)
+                }
+
+                Button {
+                    // The other half of "do not wait for an interruption": reach the
+                    // same configuration screen without changing anything, so a
+                    // preset can be picked deliberately instead of accepting one.
+                    DeepLinkCoordinator.shared.pendingSettingsTarget = .background
+                    withAnimation { tracker.dismiss() }
+                } label: {
+                    Text("Choose a mode")
+                        .font(.caption2)
+                        .foregroundColor(.white.opacity(0.85))
+                        .underline()
                 }
 
                 Button {
