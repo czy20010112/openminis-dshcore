@@ -3,6 +3,10 @@ import SwiftUI
 
 struct EnhancedBackgroundSettingsView: View {
     @ObservedObject private var keepAlive = BackgroundKeepAliveManager.shared
+    // [T-background-boost] The preset store. A preset writes the individual switches
+    // below it, so this view has to observe it to stay in sync when the interruption
+    // banner's one-tap action changes the preset from outside the screen.
+    @ObservedObject private var boost = BackgroundBoost.shared
     @ObservedObject private var deepLink = DeepLinkCoordinator.shared
     // Owns the preview synthesizer and routes its audio-session intent through
     // AudioSessionCoordinator (a SwiftUI struct can't be an AVSpeechSynthesizer
@@ -22,6 +26,52 @@ struct EnhancedBackgroundSettingsView: View {
 
     var body: some View {
         List {
+            // [T-background-boost] The whole keep-alive configuration, chosen in
+            // advance. Sits at the top of the page because it is the only group that
+            // can make every row below it moot: a preset sets those switches for you.
+            // Reachable proactively (Settings -> Permissions -> Background, and
+            // minis://settings/background) and from the interruption banner's
+            // one-tap action, which is what stopped this screen being reachable only
+            // AFTER a task had already been killed.
+            Section {
+                Picker("Mode", selection: $boost.mode) {
+                    ForEach(BackgroundBoostMode.allCases) { mode in
+                        Text(mode.title).tag(mode)
+                    }
+                }
+                .focusHighlight(shouldFocus("backgroundBoostRecommended",
+                                            current: boost.mode == BackgroundBoostMode.recommended))
+
+                if boost.mode != .off {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(boost.mode.summary)
+                            .font(.footnote)
+                            .foregroundColor(.secondary)
+                        Text(boost.mode.risk)
+                            .font(.caption)
+                            .foregroundColor(.orange)
+                    }
+                }
+
+                Toggle("Re-apply on Launch", isOn: $boost.armOnLaunch)
+
+                if boost.mode != BackgroundBoostMode.recommended {
+                    Button("Use Recommended (\(BackgroundBoostMode.recommended.title))") {
+                        boost.applyRecommended(reason: "settingsButton")
+                    }
+                }
+
+                NavigationLink {
+                    BackgroundBoostStatusView()
+                } label: {
+                    Label("Check Current Effect", systemImage: "waveform.path.ecg")
+                }
+            } header: {
+                Text("Background Boost")
+            } footer: {
+                Text("Sets every background switch on this page in one step and re-applies the preset at every launch, so the configuration is in force before a task is ever interrupted. iOS shows no permission prompt for background audio or for Live Activities; location is the only leg that asks, and picking a preset that uses it asks for you. \"Custom\" writes nothing and leaves the switches exactly as they are. Open \"Check Current Effect\" to see what is configured, what is running right now, and what the installed build actually declares.")
+            }
+
             Section {
                 Toggle("Enhanced Background Execution", isOn: $keepAlive.enhancedBackgroundEnabled)
                     .focusHighlight(shouldFocus("enhancedBackgroundExecution", current: keepAlive.enhancedBackgroundEnabled))
@@ -184,6 +234,23 @@ struct EnhancedBackgroundSettingsView: View {
         }
         .navigationTitle("Background")
         .navigationBarTitleDisplayMode(.inline)
+        // [T-background-boost] If the user changes a switch by hand, re-derive the
+        // preset from the switches: the Mode row keeps telling the truth, and the
+        // saved preset cannot re-impose itself over that change on the next launch.
+        // Inference only ever returns a preset whose legs match the switches exactly,
+        // so the apply this triggers is a no-op.
+        .onChange(of: keepAlive.enhancedBackgroundEnabled) { _ in
+            boost.syncModeFromCurrentConfiguration()
+        }
+        .onChange(of: keepAlive.backgroundSpeakEnabled) { _ in
+            boost.syncModeFromCurrentConfiguration()
+        }
+        .onChange(of: keepAlive.locationTrackingEnabled) { _ in
+            boost.syncModeFromCurrentConfiguration()
+        }
+        .onChange(of: keepAlive.liveActivityEnabled) { _ in
+            boost.syncModeFromCurrentConfiguration()
+        }
         .onAppear {
             // [T-settings-focus-highlight] One-shot consume of the parsed focus
             // directives (parsing + decision live in DeepLinkCoordinator). Held
@@ -360,5 +427,243 @@ final class SpeechPreviewPlayer: NSObject, ObservableObject, AVSpeechSynthesizer
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer,
                                        didCancel utterance: AVSpeechUtterance) {
         MainActor.assumeIsolated { releaseIntent() }
+    }
+}
+
+// MARK: - Background Boost Status
+
+/// [T-background-boost-status] "Current Effect" — what the Background Boost
+/// configuration is doing RIGHT NOW, read live from the running process.
+///
+/// Three groups, deliberately separated so the kinds of fact cannot be confused:
+///   1. Configuration   — what the user asked for.
+///   2. Now             — what is actually happening (audio engine, timers, grants).
+///   3. Installed Build — what the signed bundle on this device declares
+///                        (Info.plist + embedded PlugIns). This is the group that
+///                        answers "is my build missing something the official one
+///                        ships?" without anyone having to unpack an IPA.
+struct BackgroundBoostStatusView: View {
+    @ObservedObject private var boost = BackgroundBoost.shared
+    /// Observed only so the panel re-renders when a leg is toggled elsewhere (and so
+    /// the survival-tier row below reads a live value).
+    @ObservedObject private var keepAlive = BackgroundKeepAliveManager.shared
+
+    var body: some View {
+        TimelineView(.periodic(from: Date(), by: 1)) { context in
+            content(boost.snapshot(), now: context.date)
+        }
+        .navigationTitle("Current Effect")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    @ViewBuilder
+    private func content(_ s: BackgroundBoostSnapshot, now: Date) -> some View {
+        List {
+            Section {
+                statusRow(AppLocalized("Mode", comment: "Boost status row"), value: s.mode.title)
+                statusRow(AppLocalized("In effect", comment: "Boost status row"),
+                          value: s.effective
+                              ? AppLocalized("Yes", comment: "Boost status value")
+                              : AppLocalized("No", comment: "Boost status value"),
+                          tint: s.effective ? .green : .red)
+                statusRow(AppLocalized("Survival tier", comment: "Boost status row"),
+                          value: survivalTierText,
+                          tint: s.effective ? .green : .secondary)
+                statusRow(AppLocalized("Applied at", comment: "Boost status row"),
+                          value: s.appliedAt.map { Self.clock($0) } ?? AppLocalized("not yet", comment: "Boost status value"))
+                statusRow(AppLocalized("Re-apply on launch", comment: "Boost status row"),
+                          value: yesNo(s.armOnLaunch))
+            } header: {
+                Text("Configuration")
+            } footer: {
+                Text("An effective configuration is one that can actually hold the process open. The master switch alone is not enough: the audio leg is what does the keeping-alive, and its live state is in the next group.")
+            }
+
+            Section {
+                statusRow(AppLocalized("Keep-alive needed now", comment: "Boost status row"),
+                          value: s.keepAliveActive
+                              ? AppLocalized("Yes - a task is running", comment: "Boost status value")
+                              : AppLocalized("No - idle", comment: "Boost status value"),
+                          tint: s.keepAliveActive ? .orange : .secondary)
+                statusRow(AppLocalized("Background audio", comment: "Boost status row"),
+                          value: s.silentAudioPlaying
+                              ? AppLocalized("Playing (silent)", comment: "Boost status value")
+                              : AppLocalized("Stopped", comment: "Boost status value"),
+                          tint: s.silentAudioPlaying ? .green : .secondary)
+                statusRow(AppLocalized("Audio session", comment: "Boost status row"),
+                          value: s.audioSessionActive
+                              ? AppLocalized("Active", comment: "Boost status value")
+                              : AppLocalized("Inactive", comment: "Boost status value"),
+                          tint: s.audioSessionActive ? .green : .secondary)
+                statusRow(AppLocalized("Location heartbeat", comment: "Boost status row"),
+                          value: locationValue(s),
+                          tint: s.backgroundLocationArmed ? .green : .secondary)
+                statusRow(AppLocalized("Live Activity switch", comment: "Boost status row"),
+                          value: yesNo(s.liveActivitySwitchOn))
+                statusRow(AppLocalized("Live Activity", comment: "Boost status row"),
+                          value: liveActivityValue(s),
+                          tint: s.liveActivityRunning ? .green : .secondary)
+                statusRow(AppLocalized("Running tasks", comment: "Boost status row"),
+                          value: "\(s.activeSessions)")
+                statusRow(AppLocalized("Background task grants", comment: "Boost status row"),
+                          value: "\(s.liveBackgroundGrants)")
+            } header: {
+                Text("Now")
+            } footer: {
+                Text("Keep-alive is only needed while a task runs; an idle app is allowed to suspend. Silent audio is the mechanism that holds the process open, so \"Playing (silent)\" while a task runs is the healthy state.")
+            }
+
+            Section {
+                statusRow(AppLocalized("App state", comment: "Boost status row"),
+                          value: s.appIsInBackground
+                              ? AppLocalized("Background", comment: "Boost status value")
+                              : AppLocalized("Foreground", comment: "Boost status value"))
+                statusRow(AppLocalized("In background for", comment: "Boost status row"),
+                          value: s.backgroundEnteredAt.map { Self.duration(now.timeIntervalSince($0)) }
+                              ?? AppLocalized("not in background", comment: "Boost status value"))
+                statusRow(AppLocalized("Last background entry", comment: "Boost status row"),
+                          value: Self.stamp(s.lastBackgroundSuspendAt))
+                statusRow(AppLocalized("Last foreground return", comment: "Boost status row"),
+                          value: Self.stamp(s.lastForegroundResumeAt))
+                statusRow(AppLocalized("Last interruption recorded", comment: "Boost status row"),
+                          value: Self.stamp(s.lastInterruptionAt))
+                statusRow(AppLocalized("Readable remaining", comment: "Boost status row"),
+                          value: remainingValue(s))
+            } header: {
+                Text("Timeline")
+            } footer: {
+                Text("Measured: the background duration, the suspend/resume stamps and the task counts all come from real notifications. \"Readable remaining\" is iOS's own finite background-task clock (UIApplication.backgroundTimeRemaining); it reads as unlimited once a keep-alive leg is holding the process open, or while the app is in the foreground. iOS does not publish how long a keep-alive leg will survive, so no such figure exists here and none is invented. The timestamp rows stay at \"not yet\" until this process has backgrounded and returned once.")
+            }
+
+            Section {
+                statusRow(AppLocalized("UIBackgroundModes", comment: "Boost status row"),
+                          value: s.backgroundModes.isEmpty
+                              ? AppLocalized("(none declared)", comment: "Boost status value")
+                              : s.backgroundModes.joined(separator: ", "))
+                statusRow(AppLocalized("NSSupportsLiveActivities", comment: "Boost status row"),
+                          value: yesNo(s.liveActivitiesKey))
+                statusRow(AppLocalized("Live Activity frequent updates", comment: "Boost status row"),
+                          value: yesNo(s.frequentUpdatesKey))
+                statusRow(AppLocalized("Live Activity extension", comment: "Boost status row"),
+                          value: s.liveActivityExtensionEmbedded
+                              ? AppLocalized("embedded", comment: "Boost status value")
+                              : AppLocalized("not embedded", comment: "Boost status value"),
+                          tint: s.liveActivityExtensionEmbedded ? .green : .red)
+                statusRow(AppLocalized("Live Activity support", comment: "Boost status row"),
+                          value: liveActivitySupportValue(s),
+                          tint: s.liveActivitySupported && s.liveActivityExtensionEmbedded ? .green : .secondary)
+            } header: {
+                Text("Installed Build")
+            } footer: {
+                Text("Read from the Info.plist and the embedded PlugIns of the app bundle installed on this device, not from the source tree. UIBackgroundModes is a declaration rather than a permission: iOS never asks for audio, and Live Activities never ask for anything, so there is no prompt that a differently-signed build could have skipped. \"not embedded\" means this build ships no widget extension, so Live Activities cannot appear in it at all; and on an iOS 15 device the feature does not exist regardless, because ActivityKit arrived in iOS 16.1.")
+            }
+        }
+    }
+
+    // MARK: - Row helpers
+
+    private func statusRow(_ label: String, value: String, tint: Color = .primary) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(label)
+            Spacer(minLength: 12)
+            Text(value)
+                .foregroundColor(tint)
+                .multilineTextAlignment(.trailing)
+        }
+    }
+
+    private func yesNo(_ value: Bool) -> String {
+        value
+            ? AppLocalized("Yes", comment: "Boost status value")
+            : AppLocalized("No", comment: "Boost status value")
+    }
+
+    private var survivalTierText: String {
+        switch keepAlive.survivalTier {
+        case .short:
+            return AppLocalized("Short-lived (about 30 seconds)", comment: "Boost status value")
+        case .extended(let location, let audio):
+            if location && audio {
+                return AppLocalized("Extended (location + audio)", comment: "Boost status value")
+            }
+            if location {
+                return AppLocalized("Extended (location)", comment: "Boost status value")
+            }
+            return AppLocalized("Extended (audio)", comment: "Boost status value")
+        }
+    }
+
+    private func locationValue(_ s: BackgroundBoostSnapshot) -> String {
+        guard s.locationLegOn else { return AppLocalized("Off", comment: "Boost status value") }
+        var parts = [AppLocalized("On", comment: "Boost status value"), locationAuthText(s.locationAuth)]
+        if s.backgroundLocationArmed {
+            parts.append(AppLocalized("armed", comment: "Boost status value"))
+        } else {
+            parts.append(AppLocalized("not armed yet", comment: "Boost status value"))
+        }
+        return parts.joined(separator: " / ")
+    }
+
+    private func locationAuthText(_ status: CLAuthorizationStatus) -> String {
+        switch status {
+        case .notDetermined: return AppLocalized("Not Requested", comment: "Location permission status")
+        case .restricted: return AppLocalized("Restricted", comment: "Location permission status")
+        case .denied: return AppLocalized("Denied", comment: "Location permission status")
+        case .authorizedWhenInUse: return AppLocalized("When In Use", comment: "Location permission status")
+        case .authorizedAlways: return AppLocalized("Always", comment: "Location permission status")
+        @unknown default: return AppLocalized("Unknown", comment: "Location permission status")
+        }
+    }
+
+    private func liveActivityValue(_ s: BackgroundBoostSnapshot) -> String {
+        if s.liveActivityRunning { return AppLocalized("Running", comment: "Boost status value") }
+        if !s.liveActivitySupported { return AppLocalized("Not supported on this device", comment: "Boost status value") }
+        if !s.liveActivitiesKey { return AppLocalized("Unavailable - this build does not declare Live Activities", comment: "Boost status value") }
+        if !s.liveActivitySwitchOn { return AppLocalized("Switched off", comment: "Boost status value") }
+        return AppLocalized("Idle - nothing on screen", comment: "Boost status value")
+    }
+
+    private func liveActivitySupportValue(_ s: BackgroundBoostSnapshot) -> String {
+        if !s.liveActivitySupported {
+            return AppLocalized("No - this OS or device does not support it", comment: "Boost status value")
+        }
+        if !s.liveActivityExtensionEmbedded {
+            return AppLocalized("No - this build ships no widget extension", comment: "Boost status value")
+        }
+        return AppLocalized("Yes", comment: "Boost status value")
+    }
+
+    private func remainingValue(_ s: BackgroundBoostSnapshot) -> String {
+        if s.backgroundTimeRemaining > 100_000 {
+            return AppLocalized("Unlimited (a keep-alive leg is active, or the app is in the foreground)",
+                                comment: "Boost status value")
+        }
+        return String(format: "%.0f s", s.backgroundTimeRemaining)
+    }
+
+    // MARK: - Formatting
+
+    private static let clockFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss"
+        return formatter
+    }()
+
+    private static func clock(_ date: Date) -> String {
+        clockFormatter.string(from: date)
+    }
+
+    private static func stamp(_ date: Date?) -> String {
+        guard let date = date else { return AppLocalized("not yet", comment: "Boost status value") }
+        return clockFormatter.string(from: date)
+    }
+
+    private static func duration(_ seconds: TimeInterval) -> String {
+        let total = max(0, Int(seconds))
+        if total < 60 { return "\(total)s" }
+        let minutes = total / 60
+        let hours = minutes / 60
+        if hours == 0 { return "\(minutes)m \(total % 60)s" }
+        return "\(hours)h \(minutes % 60)m"
     }
 }

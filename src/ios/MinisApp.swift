@@ -398,6 +398,11 @@ struct MinisApp: App {
                     shareCoordinator.checkForPendingShare()
                     // Set up background keep-alive manager
                     BackgroundKeepAliveManager.shared.setup()
+                    // [T-background-boost] Apply the saved preset here, on the launch
+                    // path, so a configuration made once in Settings is in force
+                    // BEFORE the first interruption instead of only after one. On the
+                    // very first run this seeds the preset from the existing switches.
+                    BackgroundBoost.shared.armIfConfigured(reason: "appLaunch")
                     // Monitor network changes to keep iSH DNS up to date
                     NetworkMonitor.shared.start()
                     // Register FileProvider domain for shared files
@@ -535,6 +540,9 @@ struct MinisApp: App {
                     UIApplication.shared.applicationIconBadgeNumber = 0
                 }
                 BackgroundInterruptionTracker.shared.checkOnForeground()
+                // [T-background-boost] One line per foreground return, so a captured
+                // log always contains the boost state that session ran with.
+                BackgroundBoost.shared.logStatus(reason: "scenePhase.active")
                 // [T-shortcuts-diag-and-pending] Scan for AppIntent runs that
                 // were marked pending but never cleared (i.e. the process was
                 // suspended before the completion path ran). Records where the
