@@ -469,15 +469,20 @@ jobs:
           if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
             echo "tag=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
             echo "title=Minis DSH ${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
-            echo "make_latest=true" >> $GITHUB_OUTPUT
           else
-            # Rolling release for the tip of main. Kept off the "Latest" badge so
-            # a real tag release wins it, while the asset URL stays stable:
-            #   .../releases/download/latest-main/MinisDSH-ios15-unsigned.ipa
-            echo "tag=latest-main" >> $GITHUB_OUTPUT
-            echo "title=Minis DSH — rolling main build" >> $GITHUB_OUTPUT
-            echo "make_latest=false" >> $GITHUB_OUTPUT
+            # One release per build, tagged with the run number.
+            #
+            # This used to be a single rolling `latest-main` release. That
+            # accumulated every IPA it had ever been handed: two assets per build,
+            # and after the artifact rename both the old and new names were still
+            # attached, so the download list grew without bound and the newest
+            # build was impossible to identify by eye. A new tag per run makes
+            # each build a fixed, self-contained download.
+            STAMP="$(date -u +%Y%m%d-%H%M)"
+            echo "tag=build-${GITHUB_RUN_NUMBER}" >> $GITHUB_OUTPUT
+            echo "title=Minis DSH build ${GITHUB_RUN_NUMBER} (${STAMP}Z)" >> $GITHUB_OUTPUT
           fi
+          echo "make_latest=true" >> $GITHUB_OUTPUT
 
       - name: Collect commit ids
         id: ids
