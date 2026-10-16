@@ -632,7 +632,18 @@ extension AIChatViewModel {
     }
 
     /// Commit buffered text onto the streaming assistant block.
-    func dshFlushPendingText(_ snapshot: String? = nil) {
+    ///
+    /// - Parameter finalFlush: marks this as the turn's last update.
+    ///
+    ///   `setStreamingTextBlockContent` defers its work while the list suspends
+    ///   live updates (a tool sheet, a scroll) and — per its own comment — "if the
+    ///   sheet never dismisses properly, the cell stays empty". The legacy loop's
+    ///   stream-end flush passes `cacheAttributedString: true`, which is what the
+    ///   deferred-update record keeps so the content can be applied when the
+    ///   suspension clears. Flushing the last text with `false` — which is what
+    ///   this did — left the reply rendered only as far as it had got before the
+    ///   suspension, with the rest appearing only after reopening the session.
+    func dshFlushPendingText(_ snapshot: String? = nil, finalFlush: Bool = false) {
         let text = snapshot ?? dshPendingText
         guard !text.isEmpty else { return }
         dshPendingText = ""
@@ -659,7 +670,7 @@ extension AIChatViewModel {
             blockIdx: blockIdx,
             text: full,
             parsedMarkdown: parsed,
-            cacheAttributedString: false,
+            cacheAttributedString: finalFlush,
             requestScroll: true
         )
     }

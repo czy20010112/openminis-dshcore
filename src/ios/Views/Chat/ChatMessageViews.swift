@@ -537,13 +537,22 @@ struct ChatMessageRow: View {
                 resumeBanner
             }
 
-            // Token usage — two-phase reveal: space expands first, then content fades in
-            if message.streamInterruptCount > 0 || showUsage {
+            // Token usage — two-phase reveal: space expands first, then content fades in.
+            //
+            // Built only when something will actually be drawn in it. An HStack
+            // whose sole child is a `Spacer` reports an unbounded width, and the
+            // self-sizing cell then gets DBL_MAX back from
+            // systemLayoutSizeFittingSize, throws NSInternalInconsistencyException,
+            // and falls back to a height that clips or overlaps the text. That is
+            // reachable whenever `showUsage` is on and the row has no usage
+            // stamped — which is every DSH turn that predates the usage stamping.
+            let showsUsageCapsule = showUsage && message.usage != nil
+            if message.streamInterruptCount > 0 || showsUsageCapsule {
                 HStack(spacing: 6) {
                     if message.streamInterruptCount > 0 {
                         streamInterruptBadge(message.streamInterruptCount)
                     }
-                    if showUsage, let usage = message.usage {
+                    if showsUsageCapsule, let usage = message.usage {
                         usageCapsule(usage)
                             .opacity(usageContentVisible ? 1 : 0)
                     }

@@ -472,7 +472,16 @@ private struct BridgedAssistantFooterV3: View {
             }
 
             // Token usage
-            if message.streamInterruptCount > 0 || bridge.showUsage {
+            // Built only when a child will actually be drawn in it.
+            //
+            // An HStack whose sole child is a `Spacer` reports an unbounded
+            // width, so the self-sizing cell gets DBL_MAX back from
+            // systemLayoutSizeFittingSize, UIKit throws
+            // NSInternalInconsistencyException, and the cell falls back to a
+            // height that clips or overlaps the text. Reachable whenever
+            // `showUsage` is on and the row carries no usage — which is every
+            // DSH turn before the usage stamping was added to the adapter.
+            if message.streamInterruptCount > 0 || (bridge.showUsage && message.usage != nil) {
                 HStack(spacing: 6) {
                     if message.streamInterruptCount > 0 {
                         streamInterruptBadge(message.streamInterruptCount)

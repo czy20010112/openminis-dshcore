@@ -302,7 +302,10 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
 
     public func driver(_ driver: DSHTurnDriver, didEndTurn reason: DSHTurnEndReason) {
         AppLogger(category: "DSHLoop").info("[DSH] turn end reason=\(String(describing: reason))")
-        dshFlushPendingText()
+        // Final flush before sealing: this is the last chance to push the reply's
+        // text, and it has to be marked as such so the list applies it even if it
+        // was suspended while the text was arriving.
+        dshFlushPendingText(finalFlush: true)
         dshSealStreamingTurn()
         switch reason {
         case .completed, .concluded:
