@@ -51,13 +51,25 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
         // REPLACES the block's content with what it is given, so the flush has to
         // be handed the whole text of *this* block — handing it the pending chunk
         // left the transcript showing only the last fragment of every answer.
-        if dshTextBlockIdx < 0 || dshTextBlockIdx >= messages[idx].blocks.count
-            || messages[idx].blocks[dshTextBlockIdx].kind != .text {
+        let startedBlock = dshTextBlockIdx < 0 || dshTextBlockIdx >= messages[idx].blocks.count
+            || messages[idx].blocks[dshTextBlockIdx].kind != .text
+        if startedBlock {
             messages[idx].blocks.append(AssistantBlock(kind: .text, content: ""))
             dshTextBlockIdx = messages[idx].blocks.count - 1
             dshAssistantText = ""
         }
         dshAssistantText += text
+        dshPendingText += text
+
+        // A brand-new block is flushed at once, ignoring the throttle.
+        //
+        // The list's height invalidator runs off the empty → filled signal, and it
+        // gives up silently if the block it names is not yet in the data source
+        // snapshot — leaving the cell at its ~0pt empty-content height, which is
+        // the reported overlap with the row above. Flushing the block and its first
+        // text in one publish makes the snapshot the signal is handled against
+        // already contain it.
+        dshMaybeFlushText(force: startedBlock)
 
         // Do NOT write the block's content here.
         //
@@ -77,8 +89,6 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
         // rebuilds the cells. The legacy loop never writes content directly — it
         // only ever goes through `setStreamingTextBlockContent` — and that is what
         // this now does too.
-        dshPendingText += text
-        dshMaybeFlushText()
 
         // Streaming read-aloud, the same path the original loop uses: speak
         // completed sentences as they arrive rather than the finished reply.

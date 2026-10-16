@@ -2289,7 +2289,20 @@ extension CollectionViewMessageListV3 {
                     let item = MessageListItem.assistantBlock(messageId, blockId)
                     var snapshot = ds.snapshot()
                     let items = snapshot.itemIdentifiers
-                    guard let idx = items.firstIndex(of: item) else { return }
+                    guard let idx = items.firstIndex(of: item) else {
+                        // This used to return silently, and that silence is the
+                        // whole diagnosis problem: the invalidation below is what
+                        // stops the cell keeping its ~0pt empty-content height
+                        // ("causing overlap with the tool block above"), so when
+                        // the item is not in the snapshot yet the guard turns the
+                        // fix off without a trace.
+                        AppLogger(category: "TextDrift").warning(
+                            "[TextDrift] fill signal MISSED — block not in snapshot yet "
+                            + "msg=\(messageId.uuidString.prefix(8)) block=\(blockId.uuidString.prefix(8)) "
+                            + "items=\(items.count) — cell keeps its ~0pt height, may overlap"
+                        )
+                        return
+                    }
 
                     // Invalidate the height cache BEFORE reconfiguring so the
                     // layout doesn't reuse the stale empty-content height.
