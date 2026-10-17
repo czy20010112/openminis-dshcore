@@ -368,15 +368,15 @@ struct StoredTokenUsage: Codable, Hashable {
     var cacheCreationTokens: Int
     var cacheReadTokens: Int
     var latestContextTokens: Int?
-    /// Optional so rows written before this field decode as nil; `nil` means the
-    /// provider did not report cache buckets for that turn.
-    var cacheReported: Bool? = nil
     /// [T-ctx-measure-outbound] See TokenUsage.estimatedRequestTokens. Optional
     /// so rows written before this field decode as nil, and so older builds and
     /// Android's backup reader (ignoreUnknownKeys) skip it.
     var estimatedRequestTokens: Int? = nil
     var estimatedFixedTokens: Int? = nil
     var calibrationModelId: String? = nil
+    /// Optional so rows written before this field decode as nil; `nil` means the
+    /// provider did not report cache buckets for that turn.
+    var cacheReported: Bool? = nil
 }
 
 /// A single message in the conversation (one "turn").
