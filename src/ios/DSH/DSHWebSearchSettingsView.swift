@@ -324,8 +324,27 @@ struct DSHWebSearchSettingsView: View {
     /// The probe's output, in the sheet the verdict opens: the source line first,
     /// then the raw text the model would have read, with a copy button per line so
     /// a rejected key can be reported without retyping it.
+    ///
+    /// No `CompatNavigationStack` and no detents here on purpose. This file is
+    /// byte-identical in both trees and the ios26 tree has no `Shared/iOS15Compat.swift`
+    /// (it targets iOS 16+), so the compat helpers are not available to it — the sheet
+    /// carries its own header row instead, which also keeps the two lines compiling
+    /// from one source.
     private var testResultSheet: some View {
-        CompatNavigationStack {
+        VStack(spacing: 0) {
+            HStack {
+                Text("Results")
+                    .font(AppFont.sw(17, weight: .semibold, category: .ui))
+                Spacer(minLength: 12)
+                Button("Done") {
+                    showTestResult = false
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+
+            Divider()
+
             List {
                 ForEach(Array(testLines.enumerated()), id: \.offset) { item in
                     HStack(alignment: .top, spacing: 8) {
@@ -344,17 +363,8 @@ struct DSHWebSearchSettingsView: View {
                     }
                 }
             }
-            .navigationTitle("Results")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") {
-                        showTestResult = false
-                    }
-                }
-            }
+            .listStyle(.insetGrouped)
         }
-        .compatDetents([.medium, .large])
     }
 
     // MARK: - Clear
