@@ -115,17 +115,26 @@ struct AppFontFace: Identifiable, Equatable {
     /// Weight bucket → PostScript name (nameID 6), dumped from the binary.
     let names: [AppFontWeight: String]
     /// A face with exactly ONE instance in the bundle (方正宋三简体). Weight
-    /// requests cannot be honoured by it, and the UI says so instead of
-    /// pretending: this is the honest description of a single-face font.
+    /// requests cannot be honoured by it. The font screen used to spell that out
+    /// in a note under the row; the note is gone (2026-10-17, no explanation copy
+    /// under a control), so the fact is carried by the weight pickers instead —
+    /// `cjkWeightOptions` offers the lending face's weights rather than leaving a
+    /// row that could not be changed back.
     let singleFaceName: String?
-    /// Where it came from and under which licence — shown under the picker.
+    /// Where it came from and under which licence.
+    ///
+    /// RECORDED, NOT DISPLAYED. The font screen used to print this sentence under
+    /// every library row, which was one line of explanation copy per face on top
+    /// of the face's own name; the operator removed that class of text from the
+    /// settings screens on 2026-10-17. The value is kept because it is the only
+    /// in-app record of a face's origin and licence, and `AppFontSettingsView`
+    /// still holds the row it would go back into.
     ///
     /// This string is a CATALOG KEY, not display text: its English value is the
-    /// key itself, and `AppFontSettingsView` renders it through a
-    /// `LocalizedStringKey`, so the sentence translates with the rest of the
-    /// screen. The FACE NAME inside it stays verbatim in every language (a proper
-    /// noun), which is why the name is written into each translation separately
-    /// rather than interpolated.
+    /// key itself, and a `LocalizedStringKey` around it resolves against
+    /// `Localizable.xcstrings` if it is ever shown again. The FACE NAME inside it
+    /// stays verbatim in every language (a proper noun), which is why the name is
+    /// written into each translation separately rather than interpolated.
     ///
     /// `displayName` above is NOT a key: a proper noun has one spelling in every
     /// language and is rendered with `Text(verbatim:)`.

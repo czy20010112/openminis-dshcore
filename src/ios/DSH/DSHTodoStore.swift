@@ -181,6 +181,21 @@ final class DSHTodoStore: ObservableObject {
         var items: [DSHTodoItem] = []
         var seen = Set<String>()
         for (index, entry) in parsed.enumerated() {
+            // DSH rejects a key beyond `content`/`status` instead of dropping
+            // it ("model-visible must equal logged", upstream `2d95a60ac9`).
+            // The `todos` argument here is a JSON string, so the schema cannot
+            // reject the extra key for us, so the check lives in this loop; a
+            // rejection happens before the list is assigned.
+            let unknown = entry.keys
+                .filter { $0 != "content" && $0 != "status" }
+                .sorted()
+            if !unknown.isEmpty {
+                return .failed(
+                    "todo_write: item \(index) has unknown key(s) "
+                    + unknown.map { "`\($0)`" }.joined(separator: ", ")
+                    + " — each item is exactly `content` and `status`."
+                )
+            }
             guard let rawContent = entry["content"] as? String else {
                 return .failed("todo_write: item \(index) has no `content`.")
             }

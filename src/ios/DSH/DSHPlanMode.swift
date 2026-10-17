@@ -44,8 +44,8 @@
 //  only planned after I told it in prose" — is what a section that forbids
 //  *mutation* but never says "do not carry out the request at all" produces on a
 //  read-only task: `yes … | head -3` edits nothing, so the policy as trimmed did
-//  not cover it, while upstream's "Stay in plan mode until exit_plan_mode
-//  succeeds" and "do not proceed with implementation" do.
+//  not cover it, while upstream's "Stay in plan mode until the user approves your
+//  plan through exit_plan_mode" and "do not proceed with implementation" do.
 //
 
 import Foundation
@@ -80,7 +80,7 @@ public enum DSHPlanMode {
     ///
     /// Source: the deployment that owns the section,
     /// `packages/bundle/base/cordis.patch.yml` — the `plan-mode` entry's
-    /// `section` (upstream `dsh-checkout`, 0.1.7-rc.1, lines 321-335). That file
+    /// `section` (upstream `dsh-checkout`, 0.2.1-rc.2, lines 332-346). That file
     /// is the authority for the wording, not this port: the model was tuned
     /// against it.
     ///
@@ -148,7 +148,7 @@ public enum DSHPlanMode {
     }
 
     static let policyText = """
-    You are in plan mode. Stay in plan mode until exit_plan_mode succeeds or the user switches the session mode. Imperative language to implement changes means plan the implementation, not execute it. A user's conversational agreement — including an answer confirming something you asked — approves nothing and does not end plan mode; fold the confirmed decision into the plan and submit it through exit_plan_mode.
+    You are in plan mode. Stay in plan mode until the user approves your plan through exit_plan_mode or switches the session mode. Imperative language to implement changes means plan the implementation, not execute it. A user's conversational agreement — including an answer confirming something you asked — approves nothing and does not end plan mode; fold the confirmed decision into the plan and submit it through exit_plan_mode.
 
     Explore first. Use non-mutating reads, searches, static analysis, and checks to ground the plan in the actual repository. Do not edit or write files, change configuration, run formatters or code generation that rewrites tracked files, commit, or otherwise carry out the plan. Prefer existing functions and patterns over new machinery.
 

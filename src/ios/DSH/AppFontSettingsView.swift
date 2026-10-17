@@ -29,10 +29,19 @@
 //  LOCALISATION
 //  ---------------------------------------------------------------------------
 //  Every string in this screen is an English literal inside `Text("…")`, which
-//  is the key form `Localizable.xcstrings` extracts. The category copy is
+//  is the key form `Localizable.xcstrings` extracts. A category's title is
 //  written as a literal `switch` rather than built from a stored string for the
 //  same reason: a computed string is not a catalog key. Font names (Lora,
 //  方正宋三简体) are proper nouns and are rendered `verbatim`, deliberately.
+//
+//  NO EXPLANATION COPY
+//  ---------------------------------------------------------------------------
+//  This screen carried a footer under every section and two more lines under
+//  every library row, all of it explaining what the control does or why the
+//  stack is shaped this way. The operator removed that class of text from the
+//  settings screens on 2026-10-17 ("很影响观看"): what is left is the control,
+//  its label, and the state it is currently in. Do not add per-option prose
+//  back here — put the reason in a comment, where this file already keeps it.
 //
 
 import SwiftUI
@@ -87,31 +96,22 @@ struct AppFontSettingsView: View {
             }
         } header: {
             Text("Font Library")
-        } footer: {
-            Text("Faces the app ships with. Latin faces carry the weight; a Chinese face is used for every character a Latin face cannot draw, which is the whole of Chinese.")
         }
     }
 
+    /// One library row: the face's own name, and the scripts it can draw.
+    ///
+    /// Only the two facts a picker needs. The provenance sentence and the
+    /// single-weight note that used to sit here were explanation copy under a row
+    /// that already says what it is, and the operator asked for that class of text
+    /// to go (2026-10-17). `AppFontFace.provenance` is still recorded.
     private func faceRow(_ face: AppFontFace) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 8) {
-                Text(verbatim: face.displayName)
-                Spacer(minLength: 8)
-                Text(scriptLabel(face))
-                    .font(AppFont.sw(12, category: .ui))
-                    .foregroundStyle(.secondary)
-            }
-            // Through the catalog, not `Text(verbatim:)`: `provenance` is a key
-            // (see `AppFontFace.provenance`), and rendered verbatim it stayed
-            // English on a Chinese device while the rest of this row translated.
-            Text(LocalizedStringKey(face.provenance))
-                .font(AppFont.sw(11, category: .ui))
+        HStack(spacing: 8) {
+            Text(verbatim: face.displayName)
+            Spacer(minLength: 8)
+            Text(scriptLabel(face))
+                .font(AppFont.sw(12, category: .ui))
                 .foregroundStyle(.secondary)
-            if !face.hasWeightVariants && !face.isSystem {
-                Text("One weight only — see the note under each category.")
-                    .font(AppFont.sw(11, category: .ui))
-                    .foregroundStyle(.secondary)
-            }
         }
         .padding(.vertical, 2)
     }
@@ -154,8 +154,6 @@ struct AppFontSettingsView: View {
             }
         } header: {
             Text("Imported")
-        } footer: {
-            Text("Pick a .ttf, .otf or .ttc from the Files app. The file is copied into the app's own storage and registered for this process at every launch, so it stays available until you delete it here. Redistribution of an imported face is your responsibility — check its licence before sharing a build.")
         }
     }
 
@@ -231,8 +229,6 @@ struct AppFontSettingsView: View {
             }
         } header: {
             Text("Global")
-        } footer: {
-            Text("The first switch is what makes this the app's default: with it on, text that never asked for a font inherits the Body face above. The second switch is about Chinese weight — 方正宋三简体 has one face and iOS does not synthesise bold for a custom font, so with it on a heavier Chinese request is served by 思源宋体 with 方正宋三简体 kept directly behind it for coverage.")
         }
     }
 
@@ -276,8 +272,6 @@ struct AppFontSettingsView: View {
             }
         } header: {
             categoryHeader(category)
-        } footer: {
-            categoryFooter(category)
         }
     }
 
@@ -307,20 +301,6 @@ struct AppFontSettingsView: View {
         case .body: Text("Body Text")
         case .code: Text("Code")
         case .ui: Text("UI Chrome")
-        }
-    }
-
-    @ViewBuilder
-    private func categoryFooter(_ category: AppFontCategory) -> some View {
-        switch category {
-        case .title:
-            Text("Markdown headings and the app's own large titles.")
-        case .body:
-            Text("Chat messages, the composer and every settings row that does not ask for another category.")
-        case .code:
-            Text("Fenced code blocks and inline code spans. Chinese inside code is drawn by the Chinese face too, which is what keeps a code block's own alignment intact.")
-        case .ui:
-            Text("Navigation bars, bar buttons, tab bar items, segmented controls and plain UIKit labels. UIKit reads some of these when it builds a view, so a change may need a restart to reach chrome that was already on screen.")
         }
     }
 

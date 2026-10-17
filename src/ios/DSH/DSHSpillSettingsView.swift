@@ -28,6 +28,14 @@
 //  change here takes effect on the very next tool call, with no relaunch — which
 //  is the point of a switch that exists to be tried on a device.
 //
+//  NO EXPLANATION COPY
+//  ---------------------------------------------------------------------------
+//  The two section footers this screen started with explained what a spill is and
+//  where the readout comes from. The operator removed that class of text from the
+//  settings screens on 2026-10-17 ("很影响观看"), so the screen now shows the
+//  controls and the live readout only. Rows may say what they are and what the
+//  value currently is; a paragraph saying why is a comment, not a footer.
+//
 
 import SwiftUI
 
@@ -95,9 +103,6 @@ struct DSHSpillSettingsView: View {
                 .disabled(!enabled)
             } header: {
                 Text("Tool Result Spill")
-            } footer: {
-                Text("A tool result larger than the inline budget is written to disk in full and replaced, in the conversation, by a short notice naming the file. The model then reads it back with `file_read`. This is DSH's own behaviour on the host; the budget here is the same one it ships with.")
-                    .font(AppFont.sw(12))
             }
 
             Section {
@@ -108,9 +113,6 @@ struct DSHSpillSettingsView: View {
                 readout("Never spilled", LocalizedStringKey(DSHSpill.exemptTools.sorted().joined(separator: ", ")))
             } header: {
                 Text("Current Effect")
-            } footer: {
-                Text("Read from the settings the app will actually use, not from the switch above — the two differ whenever a probe build is in force.")
-                    .font(AppFont.sw(12))
             }
 
             if DSHSpillConfig.probeEnabled {
