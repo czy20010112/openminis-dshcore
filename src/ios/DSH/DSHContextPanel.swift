@@ -20,11 +20,12 @@
 //  ON SCREEN, that difference is carried by ONE short line under the rows
 //  ("Estimated from character count at 3.6 characters per token. The top figure
 //  is the provider's own count, so these rows may sum a few percent above or
-//  below it.") plus the "measured by the provider" caption under the header
-//  figure. It used to carry a "WHO MEASURED WHAT" section with a full paragraph
-//  of argument; the operator asked for that to go, so the panel now says the
-//  least that still keeps the two figures from reading as one number. Do not
-//  restore the essay: the long form of it is this comment.
+//  below it.") and by nothing else. The panel used to say it three more times —
+//  a "WHO MEASURED WHAT" paragraph, a "measured by the provider" caption under
+//  the header figure, and a "Measured / Provider" pair at the bottom — and the
+//  operator had each of them removed, one round at a time. Do not restore them:
+//  the long form of the attribution is this comment, and the one line under the
+//  rows is what keeps the two figures from reading as one number.
 //
 //  The denominator is the model's WINDOW (`AIChatViewModel
 //  .currentModelContextWindow`), not the compaction pressure threshold. The
@@ -324,11 +325,14 @@ struct DSHContextPanel: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     components
-                    provenance
                 }
                 .padding(20)
             }
         }
+        // Ends the sheet near the content's bottom edge instead of leaving the
+        // full page sheet (iOS 15) or the 0.8-fraction detent (iOS 16) standing
+        // open under it. See `DSHContextSheetHeightProbe`.
+        .background(DSHContextSheetHeightProbe())
     }
 
     // MARK: Header
@@ -359,16 +363,13 @@ struct DSHContextPanel: View {
             Spacer(minLength: 8)
             // The provider's figure, and the window it is measured against. This
             // is the measured number; everything below it is our estimate, and
-            // the subtitle says so — a "via <provider>" caption under it was
-            // dropped as the third statement of the same fact.
-            VStack(alignment: .trailing, spacing: 2) {
-                Text(ratioText)
-                    .font(AppFont.sw(15, weight: .semibold, category: .code))
-                    .foregroundStyle(.primary)
-                Text("measured by the provider")
-                    .font(Font(AppFont.ui(11, category: .ui)))
-                    .foregroundStyle(.secondary)
-            }
+            // the note under the rows says so. Two captions used to sit under
+            // this figure — a "via <provider>" line and then "measured by the
+            // provider" — and the operator called the second one unnecessary:
+            // the note says the same thing in the sentence that needs it.
+            Text(ratioText)
+                .font(AppFont.sw(15, weight: .semibold, category: .code))
+                .foregroundStyle(.primary)
 
             Button("Done") { dismiss() }
                 .font(Font(AppFont.ui(15, category: .body)))
@@ -377,10 +378,9 @@ struct DSHContextPanel: View {
         .padding(.vertical, 14)
     }
 
-    /// The one line under "Context": how full the window is, and whose number
-    /// the figure on the right is. The provider's attribution lives HERE, in
-    /// place of the old "WHO MEASURED WHAT" paragraph — a reader who needs the
-    /// long version has the comment at the top of this file.
+    /// The one line under "Context": how full the window is. It does not carry
+    /// the attribution of the two figures — the note under the rows does, and a
+    /// reader who needs the long version has the comment at the top of this file.
     ///
     /// Built as a `String` through `AppLocalized`/`String(format:)` rather than as
     /// a `LocalizedStringKey`: the sentence is assembled from a format and a name,
@@ -442,54 +442,129 @@ struct DSHContextPanel: View {
         }
     }
 
-    // MARK: Provenance
-
-    /// When the request was measured, and where it went. The attribution of the
-    /// two figures used to sit here as a paragraph; it is now the one-line note
-    /// under the rows and the subtitle under the ring.
-    private var provenance: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if let b = breakdowns.latest {
-                ContextRow(
-                    label: "Measured",
-                    value: relativeTime(b.capturedAt),
-                    detail: nil
-                )
-                ContextRow(
-                    label: "Provider",
-                    value: b.provider,
-                    detail: b.model.isEmpty ? nil : b.model
-                )
-                if !b.sectionNames.isEmpty {
-                    // The evidence for "which sections reached the request", shown
-                    // rather than only logged: this is the same list the
-                    // `[DSH] prompt sections=[…]` line carries.
-                    // One catalog lookup for the label (the entry already exists
-                    // on both lines: "Prompt sections:") plus the section names,
-                    // which are identifiers and stay verbatim in every language.
-                    Text(AppLocalized("Prompt sections:") + " " + b.sectionNames.joined(separator: " · "))
-                        .font(AppFont.sw(11, category: .code))
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-        }
-    }
-
     /// "1 char" · "812 chars" — through `AppLocalized`, because a key built from
     /// a variable cannot go through `Text`'s `LocalizedStringKey` initialiser and
     /// would render English on every device.
     private func count(_ n: Int, _ noun: CountUnit) -> String {
         String(format: AppLocalized(noun.key(for: n)), n)
     }
+}
 
-    private func relativeTime(_ date: Date) -> String {
-        let seconds = Int(max(Date().timeIntervalSince(date), 0))
-        if seconds < 5 { return AppLocalized("just now") }
-        if seconds < 60 { return String(format: AppLocalized("%llds ago"), seconds) }
-        let minutes = seconds / 60
-        if minutes < 60 { return String(format: AppLocalized("%lldm ago"), minutes) }
-        return String(format: AppLocalized("%lldh ago"), minutes / 60)
+// MARK: - Sheet height
+
+/// Pins this panel's sheet to the medium detent — the closest thing to "the
+/// height this content needs" that iOS 15 offers — so the sheet stops near the
+/// panel's bottom edge instead of standing open far below it.
+///
+/// Why this is not a `.presentationDetents` call in this file: the sheet belongs
+/// to `AIChatView`, which asks for `[.fraction(0.8), .large]` through
+/// `compatDetents` — and `compatDetents` is a NO-OP below iOS 16, which is the
+/// line installed on the device. Measured on the iPhone 13 / iOS 15.3.1 target
+/// (screenshot plus the accessibility tree): the sheet is the full page sheet
+/// (top edge y≈52, bottom 844) while the panel's content ends at y≈495 — 349pt
+/// of empty sheet under it, which is the operator's "too much blank space at the
+/// bottom". Below iOS 16 `PresentationDetent` has no custom height at all, so the
+/// content-proportionate value UIKit does offer is the medium detent (about half
+/// the screen ≈ 420pt, against ≈310pt of content once the provenance rows are
+/// gone). `.large` stays in the set so a taller panel can still be pulled up.
+/// `UISheetPresentationController`, `Detent.medium()` / `.large()`,
+/// `selectedDetentIdentifier` and `animateChanges` are all iOS 15.0, so nothing
+/// here is an iOS 16 API.
+///
+/// The one-detent guard below is the "do not fight" rule: it pins only while the
+/// sheet is still at UIKit's own default, i.e. while nothing else has expressed a
+/// height preference. On iOS 16+, where `compatDetents` does reach SwiftUI and
+/// `AIChatView` has already set `[.fraction(0.8), .large]`, this leaves those
+/// alone rather than overwriting them from underneath. That line is where the
+/// iOS 26 line's own blank space has to be fixed — out of this file's scope.
+///
+/// Fail-soft by construction: if the enclosing sheet controller cannot be
+/// reached, no detent is written and the log line says so. And once it has acted
+/// — or decided not to — it never runs again, so a detent the user dragged to is
+/// not snapped back.
+private struct DSHContextSheetHeightProbe: UIViewRepresentable {
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.backgroundColor = .clear
+        view.isUserInteractionEnabled = false
+        context.coordinator.pin(from: view)
+        return view
+    }
+
+    func updateUIView(_ view: UIView, context: Context) {
+        // Also the retry path: the first attempt can run before the sheet's
+        // presentation controller exists.
+        context.coordinator.pin(from: view)
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    /// Same shape as `TranscriptScrollProbe`'s: a plain zero-size `UIView` that
+    /// walks the UIKit tree it was dropped into. Purely an observer — no gesture,
+    /// no hit-testing change.
+    final class Coordinator: NSObject {
+
+        /// There is nothing left to do: either the sheet was given detents here,
+        /// or its detents belong to someone else.
+        private var settled = false
+        private var reportedMiss = false
+
+        func pin(from view: UIView) {
+            guard !settled else { return }
+            // Defer one runloop turn: at `makeUIView` time the probe is not in
+            // the window yet, and the presentation controller is attached while
+            // the sheet is being presented, which can be later still.
+            DispatchQueue.main.async { [weak self, weak view] in
+                guard let self, let view, !self.settled else { return }
+                // Not in the hierarchy yet: say nothing, a later update retries.
+                guard view.window != nil else { return }
+                guard let sheet = Self.enclosingSheet(of: view) else {
+                    if !self.reportedMiss {
+                        self.reportedMiss = true
+                        AppLogger(category: "DSHContext").warning(
+                            "[DSH][Context] panel has no reachable UISheetPresentationController — sheet height left as it is")
+                    }
+                    return
+                }
+                // More than one detent means somebody else has already chosen a
+                // height for this sheet: SwiftUI's `.presentationDetents`, which
+                // `compatDetents` only reaches on iOS 16 and later. Leave it be.
+                guard sheet.detents.count <= 1 else {
+                    self.settled = true
+                    return
+                }
+                self.settled = true
+                sheet.animateChanges {
+                    sheet.detents = [.medium(), .large()]
+                    sheet.selectedDetentIdentifier = .medium
+                }
+                AppLogger(category: "DSHContext").info(
+                    "[DSH][Context] panel sheet detents → medium + large, showing medium")
+            }
+        }
+
+        /// The sheet this view is inside: walk the responder chain for a view
+        /// controller, then that controller's ancestors — a sheet's presentation
+        /// controller hangs off the controller that was presented.
+        private static func enclosingSheet(of view: UIView) -> UISheetPresentationController? {
+            var responder: UIResponder? = view
+            var hops = 0
+            while let current = responder, hops < 64 {
+                if let controller = current as? UIViewController {
+                    var candidate: UIViewController? = controller
+                    while let node = candidate {
+                        if let sheet = node.presentationController as? UISheetPresentationController {
+                            return sheet
+                        }
+                        candidate = node.parent
+                    }
+                }
+                responder = current.next
+                hops += 1
+            }
+            return nil
+        }
     }
 }
 

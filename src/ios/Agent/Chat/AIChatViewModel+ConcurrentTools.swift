@@ -799,6 +799,22 @@ extension AIChatViewModel {
             toolOutput = memResult.output
             toolSuccess = memResult.success
 
+        case "web_search":
+            // [T-tools-web-search] The whole feature lives in
+            // `DSHWebSearch.swift` — provider dispatch, settings, result
+            // formatting — so this branch only has to route the outcome. The
+            // provider is resolved inside the tool from `UserDefaults` at call
+            // time, which is what makes a settings change take effect on the next
+            // search instead of after a relaunch.
+            let searchResult = await DSHWebSearchTool.run(args: toolArgs)
+            toolOutput = searchResult.success
+                ? searchResult.output
+                : "Error: \(searchResult.output)"
+            toolSuccess = searchResult.success
+            if msgIdx < messages.count, blockIdx < messages[msgIdx].blocks.count {
+                messages[msgIdx].blocks[blockIdx].content = toolOutput
+            }
+
         case "todo_write":
             // [T-tools-todo-plan] Whole-list replacement, DSH's contract: the
             // panel above the composer renders from the store, and this tool call

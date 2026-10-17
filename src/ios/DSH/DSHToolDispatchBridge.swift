@@ -41,6 +41,11 @@ enum DSHToolDispatch {
             return .exclusive
         case "file_read", "read_image", "memory_get":
             return .parallel
+        case "web_search":
+            // [T-tools-web-search] A network read of a third party's index: it
+            // touches no local state, so two of them overlap safely, and a model
+            // comparing several sources should not have them serialised.
+            return .parallel
         case "todo_write", "exit_plan_mode":
             // [T-tools-todo-plan] Session state that the prompt and the composer
             // panel both read. Both also default to exclusive, but state it: the

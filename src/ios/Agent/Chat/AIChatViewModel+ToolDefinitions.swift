@@ -202,6 +202,31 @@ extension AIChatViewModel {
             ))
         }
 
+        // [T-tools-web-search] A real search API, because there was none.
+        //
+        // The roster had no way to look something up. A model asked for a fact
+        // only on the web reached for `browser_use`, opened a search-engine home
+        // page (Baidu, on a Chinese-locale device), and scraped whatever the
+        // results page rendered — which is slow, gives a handful of hits, and
+        // fails outright on a page that needs JS. `shell_execute` + curl was the
+        // other route, and it is not reachable on a fresh install.
+        //
+        // Untitled in the required list on purpose: `tool_title` drives the live
+        // pill header, and `preflightNonBlockingFields` already refuses to block
+        // a call over it, so requiring it would only mean an extra field every
+        // search has to get right.
+        tools.append(AgentToolDefinition(
+            name: "web_search",
+            description: "Search the web and get back titled results with URLs and excerpts. Use this for any fact you do not already have: a work by name, a person, a place, a current event, a documentation page, an error message you have not seen before. Do NOT open a search engine's home page with `browser_use` to search — that scrapes a rendered results page, is far slower, and fails when the page needs JavaScript. Prefer this tool, then use `browser_use` only to open a URL this returned when you need the full page. The query is forwarded to a search provider, so write it as a search query (keywords, not a sentence or a question) in the language the sources are likely to be written in. Quote a name if it must match exactly. Return up to `limit` results, each a title, a URL and a short excerpt; the excerpt is truncated, so open the URL if you need the whole page.",
+            parameters: [
+                "tool_title": AgentToolParam(type: .string, description: "A concise 5-10 word summary shown to the user, e.g. 'Search for the novel’s author'. Use the same language as the user."),
+                "query": AgentToolParam(type: .string, description: "The search query: keywords, not a sentence. Include the distinctive terms (a title, an author, a version) and the language the sources use. Use quotes for an exact phrase."),
+                "limit": AgentToolParam(type: .integer, description: "How many results to return (default: 5, maximum: 10). Use more only when you need to compare several sources; each result costs context."),
+            ],
+            required: ["query"],
+            propertyOrdering: ["tool_title", "query", "limit"]
+        ))
+
         // [T-tools-todo-plan] The session task list, and the only way out of plan
         // mode.
         //
