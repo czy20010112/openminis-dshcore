@@ -223,7 +223,7 @@ struct ProviderInstancesView: View {
         .overlay(alignment: .top) {
             if let msg = forceSyncToast {
                 Text(msg)
-                    .font(.subheadline.weight(.medium))
+                    .font(AppFont.sw(15, weight: .medium, category: .ui))
                     .foregroundStyle(.white)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 10)
@@ -495,7 +495,7 @@ private struct ShadowVoiceRow: View {
                 let asr = shadow.inputModels.count
                 let tts = shadow.outputModels.count
                 Text(voiceSummary(asr: asr, tts: tts))
-                    .font(.caption2)
+                    .font(AppFont.sw(11, weight: .regular, category: .ui))
                     .foregroundStyle(.tertiary)
             }
             Spacer()

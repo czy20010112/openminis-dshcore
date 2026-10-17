@@ -34,6 +34,19 @@
 //  new behaviour rather than a port, and it would break the one legitimate use of
 //  a read-only phase that still needs a shell command to inspect something.
 //
+//  The operator reported that plan mode did nothing: the model "made no plan at
+//  all and just started". The section WAS reaching the request — measured, not
+//  inferred: `[DSH] prompt sections=[…] chars=… planMode=true` reports 29292
+//  characters against 27243 with the mode off, a 2049-character delta that is
+//  exactly this section (2047) plus `renderPrompt`'s two-character join. What was
+//  weak was the text, which the first port had shortened; `policyText` below now
+//  carries the upstream section verbatim. The other half of that report — "it
+//  only planned after I told it in prose" — is what a section that forbids
+//  *mutation* but never says "do not carry out the request at all" produces on a
+//  read-only task: `yes … | head -3` edits nothing, so the policy as trimmed did
+//  not cover it, while upstream's "Stay in plan mode until exit_plan_mode
+//  succeeds" and "do not proceed with implementation" do.
+//
 
 import Foundation
 
@@ -63,26 +76,55 @@ public enum DSHPlanMode {
         )
     }
 
-    /// DSH's policy text, with the deployment-specific sentences adapted.
+    /// DSH's policy text, verbatim.
     ///
-    /// Trimmed of the two paragraphs that describe machinery this app does not
-    /// have (a review channel, a session mode switch owned by the UI); everything
-    /// that constrains the model's behaviour is kept verbatim, including the
-    /// `todo_write` exclusion.
+    /// Source: the deployment that owns the section,
+    /// `packages/bundle/base/cordis.patch.yml` — the `plan-mode` entry's
+    /// `section` (upstream `dsh-checkout`, 0.1.7-rc.1, lines 321-335). That file
+    /// is the authority for the wording, not this port: the model was tuned
+    /// against it.
+    ///
+    /// The first port shortened it. Two of the dropped sentences are what made
+    /// the mode bind, and both are back:
+    ///
+    ///   * "it presents the plan **for approval**, and implementation begins only
+    ///     in a later step **after approval**" — the port had written "after it is
+    ///     called", which told the model its own `exit_plan_mode` call was what
+    ///     starts implementation. That was true while the call approved itself;
+    ///     `exit` now waits on `DSHPlanApproval`, so the stale sentence was both
+    ///     weaker and false.
+    ///   * "If review rejects it, incorporate the feedback and present again. If
+    ///     the review channel is unavailable or aborted, stay in plan mode and ask
+    ///     the user to switch modes manually; **do not proceed with
+    ///     implementation**." — the port dropped this because it then had no
+    ///     review channel. It has one now, and every non-approving path in `exit`
+    ///     returns one of these situations to the model, so the model needs to be
+    ///     told what to do in them.
+    ///
+    /// Two clauses name `ask_user_question`, which is not a tool in this app
+    /// (the roster is `makeAgentTools()`; the plan review is not a general
+    /// question channel). Both are reworded, and those two rewrites are the only
+    /// deviations from the upstream text:
+    ///
+    ///   * "Use ask_user_question only for user-owned choices…" becomes "Ask the
+    ///     user only for user-owned choices…";
+    ///   * "…through prose or ask_user_question." becomes "…through prose."
+    ///
+    /// Everything else — including the `todo_write` exclusion, which is how the
+    /// implementation checklist stays separate from the plan — is upstream's
+    /// exact sentence.
     static let policyText = """
-    You are in plan mode. Stay in plan mode until exit_plan_mode succeeds or the user turns it off.
-
-    Imperative language to implement changes means plan the implementation, not execute it. A user's conversational agreement — including an answer confirming something you asked — approves nothing and does not end plan mode; fold the confirmed decision into the plan and submit it through exit_plan_mode.
+    You are in plan mode. Stay in plan mode until exit_plan_mode succeeds or the user switches the session mode. Imperative language to implement changes means plan the implementation, not execute it. A user's conversational agreement — including an answer confirming something you asked — approves nothing and does not end plan mode; fold the confirmed decision into the plan and submit it through exit_plan_mode.
 
     Explore first. Use non-mutating reads, searches, static analysis, and checks to ground the plan in the actual repository. Do not edit or write files, change configuration, run formatters or code generation that rewrites tracked files, commit, or otherwise carry out the plan. Prefer existing functions and patterns over new machinery.
 
-    The tool catalog stays the same across modes so the request shape stays stable. These plan-mode rules override any later tool description or guidance that suggests using mutation tools; those tools remain listed only for that reason. Do not use todo_write to track this planning phase: it tracks implementation after an approved plan, while the plan itself belongs in exit_plan_mode.
+    The tool catalog stays the same across modes for request-cache stability. These plan-mode rules override any later tool description or guidance that suggests using mutation tools; those tools remain listed only to keep the request shape stable. Do not use todo_write to track this planning phase: it tracks implementation after an approved plan, while the plan itself belongs in exit_plan_mode.
 
-    Resolve discoverable facts by inspection; ask the user only about choices that are theirs to make or ambiguities inspection cannot answer. Do not ask where code lives or how current behaviour works when you can find out.
+    Resolve discoverable facts by inspection. Ask the user only for user-owned choices or material ambiguity that inspection cannot answer. Do not ask the user where code lives or how current behavior works when you can find out.
 
     Make the plan decision-complete: state the goal and success criteria; group implementation changes by subsystem; identify public API, schema, and data-flow changes; cover edge cases, failure modes, tests, acceptance criteria, and explicit assumptions. Keep it concise enough to review but detailed enough that another engineer can implement it without making design decisions.
 
-    When ready, call exit_plan_mode with the complete plan markdown, starting with a # title. Make exit_plan_mode the only and final tool call in that assistant response: it presents the plan, and implementation begins only after it is called. Do not paste the final plan as a plain reply or ask "should I proceed?" through prose.
+    When ready, call exit_plan_mode with the complete plan markdown, starting with a # title. Make exit_plan_mode the only and final tool call in that assistant response: it presents the plan for approval, and implementation begins only in a later step after approval. Do not paste the final plan as a plain reply or ask "should I proceed?" through prose. If review rejects it, incorporate the feedback and present again. If the review channel is unavailable or aborted, stay in plan mode and ask the user to switch modes manually; do not proceed with implementation.
     """
 
     // MARK: - Transition

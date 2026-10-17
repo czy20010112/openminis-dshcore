@@ -377,7 +377,7 @@ struct BackupDestinationDetailView: View {
                             .lineLimit(1)
                             .truncationMode(.middle)
                         Text(detail(for: p))
-                            .font(.caption)
+                            .font(AppFont.sw(12, weight: .regular, category: .ui))
                             .foregroundStyle(.secondary)
                     }
                     // [T-backup-remote-delete] Swipe to delete the file ON THE

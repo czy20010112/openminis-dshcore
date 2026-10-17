@@ -25,7 +25,7 @@ struct AIDataSharingConsentView: View {
                     GroupBox {
                         VStack(alignment: .leading, spacing: 12) {
                             Text("We Do Not Collect Your Data")
-                                .font(.headline)
+                                .font(AppFont.sw(17, weight: .semibold, category: .body))
                             Text("Minis does not operate any server and does not collect, store, or process any of your personal data. All data stays on your device.")
                                 .font(AppFont.sw(15, weight: .regular, category: .body))
                                 .foregroundStyle(.secondary)
@@ -58,7 +58,7 @@ struct AIDataSharingConsentView: View {
                             }
 
                             Text("Each provider has its own privacy policy and terms of service that govern how they handle your data.")
-                                .font(.caption)
+                                .font(AppFont.sw(12, weight: .regular, category: .ui))
                                 .foregroundStyle(.secondary)
                         }
                     }
@@ -66,7 +66,7 @@ struct AIDataSharingConsentView: View {
                     GroupBox {
                         VStack(alignment: .leading, spacing: 12) {
                             Text("Your Control")
-                                .font(.headline)
+                                .font(AppFont.sw(17, weight: .semibold, category: .body))
 
                             VStack(alignment: .leading, spacing: 6) {
                                 dataItem("API keys and tokens are stored only in the iOS Keychain on your device and are never sent to us")
@@ -532,7 +532,7 @@ struct AddProviderView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 8))
 
                     Text("Or Import Provider from File")
-                        .font(.body.weight(.medium))
+                        .font(AppFont.sw(17, weight: .medium, category: .body))
                         .foregroundStyle(Color(UIColor.label))
 
                     Spacer()
@@ -633,7 +633,7 @@ struct AddProviderView: View {
 
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(cred == .apiKey ? "API Key" : "OAuth")
-                                        .font(.body.weight(.medium))
+                                        .font(AppFont.sw(17, weight: .medium, category: .body))
                                         .foregroundStyle(Color(UIColor.label))
                                     Text(credentialDescription(type: type, credential: cred))
                                         .font(AppFont.sw(12, weight: .regular, category: .ui))
@@ -800,6 +800,20 @@ struct AddProviderView: View {
             // API Format picker for OpenAI provider (hidden for voice-only templates)
             if !enteredViaVoiceTemplate, selectedType == .openAI || selectedType == .openAIResponses {
                 Section {
+                    // [T-font-picker-value] DIAGNOSIS ONLY — the control is left
+                    // as a `Picker` on purpose. The operator's guess was right:
+                    // the row's VALUE is a UIKit control's title, and `.font(...)`
+                    // on a `Form` `Picker` does not reach it (it only styles the
+                    // popover list, which UIKit draws too). Two rewrites would
+                    // work, and both need a device check before shipping:
+                    //   a) NOT AVAILABLE: `Menu` has no `selection:` initializer
+                    //      (checked against Apple's own docs index for `Menu` —
+                    //      only `init(content:label:)` and friends exist), so the
+                    //      menu-based fix found in blog posts does not apply.
+                    //   b) two plain `Button` rows with a checkmark — works on
+                    //      15, but changes the control the user sees.
+                    // Rather than ship an unverifiable change to a working
+                    // control, the row keeps its behaviour and this is reported.
                     Picker("API Format", selection: $useResponsesAPI) {
                         Text("Chat Completions").tag(false)
                         Text("Responses API").tag(true)
@@ -904,7 +918,13 @@ struct AddProviderView: View {
         // minted from a GitHub OAuth token and lives ~25 minutes.
         if selectedType != .antigravity && selectedType != .githubCopilot && !pendingOAuthDone {
             Section {
-                TextField(defaultBaseURL, text: $customBaseURLInput)
+                // [T-font-textfield-placeholder] Same prompt-vs-placeholder
+                // reason as `customBaseURLSection`: the label form's string is
+                // drawn by UIKit with the system font.
+                TextField(text: $customBaseURLInput, prompt: Text(defaultBaseURL)
+                    .font(AppFont.sw(17, weight: .regular, category: .code))) {
+                    Text("Custom API Base")
+                }
                     .font(AppFont.sw(17, weight: .regular, category: .code))
                     .foregroundStyle(.secondary)
                     .textInputAutocapitalization(.never)
@@ -957,7 +977,18 @@ struct AddProviderView: View {
 
     private var customBaseURLSection: some View {
         Section {
-            TextField(defaultBaseURL, text: $customBaseURLInput)
+            // [T-font-textfield-placeholder] The prompt is its OWN `Text`, not
+            // the `TextField(_:text:)` label form: that form hands the string to
+            // UIKit as the field's `placeholder`, which is drawn with the
+            // system font and IGNORES the `.font(...)` on the field — so the
+            // grey default URL the user sees before typing was the one piece of
+            // text in this screen still in SF. An explicit prompt is laid out by
+            // SwiftUI with the environment font, and the category font below
+            // makes it the code face like the value line.
+            TextField(text: $customBaseURLInput, prompt: Text(defaultBaseURL)
+                .font(AppFont.sw(17, weight: .regular, category: .code))) {
+                Text("Custom API Base")
+            }
                 .font(AppFont.sw(17, weight: .regular, category: .code))
                 .foregroundStyle(.secondary)
                 .textInputAutocapitalization(.never)
