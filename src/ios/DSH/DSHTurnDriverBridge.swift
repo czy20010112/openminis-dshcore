@@ -27,6 +27,7 @@ enum DSHSessionProjection {
     /// Project a session entry onto a provider message.
     static func toAgentMessage(_ entry: DSHLogEntry) -> AgentMessage {
         var parts: [AgentContentPart] = []
+        var toolArguments: [String: AgentToolArguments.Record] = [:]
         for block in entry.message.blocks {
             switch block {
             case let text as DSHTextBlock:
@@ -34,10 +35,18 @@ enum DSHSessionProjection {
             case let reasoning as DSHReasoningBlock:
                 parts.append(.text(reasoning.text))
             case let call as DSHToolCallBlock:
+                // See projectMessages in DSHTurnDriver: the block's own bytes are
+                // what replays, the dictionary is for execution.
                 let args = (try? JSONSerialization.jsonObject(
                     with: Data(call.arguments.utf8)
                 )) as? [String: Any] ?? [:]
                 parts.append(.toolUse(id: call.id, name: call.name, input: args))
+                // Only a parsed JSON object replays verbatim: an empty or
+                // malformed arguments string is sent as `{}`, exactly as it was
+                // before this fix.
+                if !args.isEmpty {
+                    toolArguments[call.id] = AgentToolArguments.Record(text: call.arguments, input: args)
+                }
             case let result as DSHToolResultBlock:
                 parts.append(.toolResult(
                     id: result.callId,
@@ -64,6 +73,7 @@ enum DSHSessionProjection {
             parts: parts
         )
         message.dshSeq = entry.seq.value
+        message.toolArguments = toolArguments
         return message
     }
 

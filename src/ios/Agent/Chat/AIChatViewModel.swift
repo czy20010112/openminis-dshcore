@@ -5738,6 +5738,18 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
             turnUsage = streamResult.turnUsage
             logger.info("📐 Context after API: latestContextTokens=\(turnUsage.latestContextTokens) (in:\(turnUsage.inputTokens) cache_read:\(turnUsage.cacheReadTokens) cache_create:\(turnUsage.cacheCreationTokens))")
 
+            // Publish this response's usage on the row NOW, rather than only at
+            // the end of the turn (`messages[msgIdx].usage = turnUsage` after the
+            // loop). Each iteration is a separate request and a separate provider
+            // report, and the context ring plus the panel behind it read the row:
+            // stamping once at the end left both describing the PREVIOUS turn for
+            // the whole of the current one. The store takes the same value, so the
+            // panel's cache row moves with each response too.
+            if msgIdx >= 0, msgIdx < messages.count {
+                messages[msgIdx].usage = turnUsage
+                DSHContextBreakdownStore.shared.recordUsage(turnUsage)
+            }
+
             // Track session-level token stats
             let iterationStreamDuration = streamEnd.timeIntervalSince(iterationStreamStart)
             let iterUsage = streamResult.turnUsage

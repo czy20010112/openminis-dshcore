@@ -6173,10 +6173,16 @@ private struct TokenUsageSheet: View {
                     // over total input (incl. cache) — the same denominator as the
                     // "Input (incl. cache)" row above (input + cacheRead + cacheWrite).
                     // Shows how much of this session's input was served from cache.
+                    //
+                    // Through the shared formatter, not `%.1f%%`: a session at 99.96%
+                    // must not print "100.0%", and integer rounding is what upstream
+                    // avoids with its widening branch. Decimal places 0 because this is
+                    // a session total (upstream's session pill is dp=0; the per-turn
+                    // panel is the one that uses 1).
                     let totalInput = s.input + s.cacheRead + s.cacheWrite
-                    if totalInput > 0 && s.cacheRead > 0 {
-                        let hitRate = Double(s.cacheRead) / Double(totalInput) * 100
-                        StatRow(label: "Cache Hit Rate", value: String(format: "%.1f%%", hitRate), icon: "percent")
+                    if totalInput > 0, s.cacheRead > 0,
+                       let rate = DSHCacheHitFormat.formatCacheHitPercent(s.cacheRead, totalInput, 0) {
+                        StatRow(label: "Cache Hit Rate", value: rate + "%", icon: "percent")
                     }
                 }
 

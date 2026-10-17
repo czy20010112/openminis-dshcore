@@ -169,13 +169,43 @@ struct QueuedPrompt: Identifiable {
 /// that providers emitting cumulative usage on every chunk don't inflate the count.
 /// Cache metrics and context size reflect only the **latest** API call, since
 /// cumulative cache numbers are misleading in multi-call agent turns.
-struct TokenUsage {
+///
+/// The upstream DSH client keeps two separate accounts and this struct is the
+/// second one only. Its `tokenUsage` projection *sums* the four disjoint buckets
+/// over the whole session and shows the hit rate of that sum; its per-turn panel
+/// computes the rate from the single turn's own buckets. A cache-hit rate is only
+/// meaningful against a denominator from the same account, so a panel that shows
+/// one request's occupancy (this struct, `latestContextTokens`) must take the
+/// numerator from that same request — hence last-wins here, never a sum. Summing
+/// across calls would also make the rate drift toward "everything is cached" as a
+/// turn's tool loop re-sends the same prefix.
+/// `Equatable` so a reader can tell "the newest report changed the row" from
+/// "the driver re-reported the same numbers" — the streaming row is published on
+/// every report, and republishing an unchanged value is a needless UI pass.
+struct TokenUsage: Equatable {
     var inputTokens: Int = 0
     var outputTokens: Int = 0
     var cacheCreationTokens: Int = 0
     var cacheReadTokens: Int = 0
     /// Context size of the latest API call (input + cache_read + cache_creation).
     var latestContextTokens: Int = 0
+    /// Whether the provider actually accounted for the cache in this value.
+    ///
+    /// `true` once a response folded into this value named a cache bucket at all
+    /// — Anthropic's `cache_read_input_tokens`/`cache_creation_input_tokens`, or
+    /// the OpenAI-compatible `prompt_tokens_details.cached_tokens` /
+    /// `prompt_cache_hit_tokens` that `OpenAIAgentProvider` maps onto them. It is
+    /// the gate the context panel uses to decide whether a cache-hit rate exists:
+    /// a backend that names neither field is not a 0% hit but an *unknown* one,
+    /// and the panel drops the row instead of printing a fabricated zero.
+    ///
+    /// Deliberately NOT inferred from `cacheReadTokens > 0`: a reporting provider
+    /// whose prefix was genuinely cold reports 0 reads, and `> 0` would hide that
+    /// honest 0% while still being unable to tell it apart from silence.
+    ///
+    /// Persisted as `StoredTokenUsage.cacheReported` (optional, so rows written
+    /// before the field existed decode as nil and read back as `false`).
+    var cacheReported: Bool = false
 
     mutating func add(_ u: LLMUsage) {
         // Use max() instead of += to handle providers that emit cumulative usage
@@ -192,6 +222,11 @@ struct TokenUsage {
         latestContextTokens = u.inputTokens
             + (u.cacheReadInputTokens ?? 0)
             + (u.cacheCreationInputTokens ?? 0)
+        // Sticky within the value: one chunk naming a cache bucket is enough to
+        // know this provider accounts for the cache (see `cacheReported`).
+        if u.cacheReadInputTokens != nil || u.cacheCreationInputTokens != nil {
+            cacheReported = true
+        }
     }
 }
 

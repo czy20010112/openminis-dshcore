@@ -150,8 +150,10 @@ final class GeminiAgentProvider: AgentProvider {
                 case .toolUse(let id, let name, let input):
                     if unsignedToolCallIds.contains(id) {
                         // Convert unsigned function call to text summary
-                        let argsDesc = (try? JSONSerialization.data(withJSONObject: input))
-                            .flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+                        // Canonical, not raw JSONSerialization output: this text
+                        // is part of the request, so an unstable key order here
+                        // breaks the prefix exactly like a tool-call argument.
+                        let argsDesc = AgentToolArguments.canonical(input)
                         parts.append(["text": "[Called \(name) with: \(argsDesc)]"])
                     } else {
                         let sig = toolCallMetadataMap[id]?.thoughtSignature

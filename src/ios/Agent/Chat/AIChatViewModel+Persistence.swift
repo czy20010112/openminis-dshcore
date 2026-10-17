@@ -1379,13 +1379,11 @@ extension AIChatViewModel {
             case .text(let s):
                 parts.append(.text(s))
             case .toolUse(let id, let name, let input):
-                let inputJSON: String
-                if let data = try? JSONSerialization.data(withJSONObject: input),
-                   let str = String(data: data, encoding: .utf8) {
-                    inputJSON = str
-                } else {
-                    inputJSON = "{}"
-                }
+                // Raw text wins: this row is what every later turn replays, so
+                // writing a re-serialized dictionary here makes the persisted
+                // turn drift from the bytes the model produced. See
+                // AgentToolArguments.
+                let inputJSON = AgentToolArguments.wire(input, record: msg.toolArguments[id])
                 parts.append(.toolUse(ToolUse(
                     toolUseId: id, name: name, input: inputJSON,
                     description: input["tool_title"] as? String,
@@ -1416,7 +1414,8 @@ extension AIChatViewModel {
             StoredTokenUsage(
                 inputTokens: $0.inputTokens, outputTokens: $0.outputTokens,
                 cacheCreationTokens: $0.cacheCreationTokens, cacheReadTokens: $0.cacheReadTokens,
-                latestContextTokens: $0.latestContextTokens
+                latestContextTokens: $0.latestContextTokens,
+                cacheReported: $0.cacheReported
             )
         }
 

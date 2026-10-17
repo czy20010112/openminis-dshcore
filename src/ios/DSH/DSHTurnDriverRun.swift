@@ -302,18 +302,25 @@ extension AIChatViewModel {
             // driver turned thinking off for every DSH turn, silently.
             thinkingLevel: dshThinkingLevel(for: entry),
             enableLoopGuard: true,
-            compactionRetainTokens: Self.dshCompactionRetainTokens,
-            // Pressure is judged against the serving model's real window. A
-            // fixed 120k threshold fires on every step of a small-context model
-            // and compacts away the user's own request, so the model answers
-            // from nothing. Derive it from the window and skip compaction
-            // entirely when the window is unknown.
+            compactionPolicy: DSHCompactionPolicy(),
+            // Capacity is resolved the way every other capacity decision in this
+            // app resolves it — the bound group's limit when it has one, then the
+            // model's own declared window — rather than from `model.contextWindow`
+            // alone, which is nil for a model the catalog has no entry for and
+            // for one whose limit the user only ever set on the group.
             //
-            // An explicit override exists so the behaviour can be exercised on a
-            // device without filling a 262k window: set `minis.dshCompactOverride`
-            // to a token count and compaction fires there instead. Leave it unset
-            // in normal use.
-            compactionPressureTokens: Self.dshCompactionPressureTokens(for: entry.model),
+            // A window of 0 is "unknown" and is passed as nil: DSH cannot derive
+            // a threshold without declared capacity either, and compacting on a
+            // guess is worse than running long — compacting away the user's live
+            // request makes the model answer from nothing.
+            contextWindow: effectiveContextWindow(for: entry.model),
+            // Absolute overrides so the trigger can be exercised on a device
+            // without filling a 262k window. `minis.dshCompactOverride` moves the
+            // threshold, `minis.dshCompactRetainOverride` the retained tail;
+            // unset, both derive from the window and the policy above, which is
+            // the shipped configuration.
+            compactionPressureTokensOverride: Self.dshCompactionPressureOverride,
+            compactionRetainTokensOverride: Self.dshCompactionRetainOverride,
             autoCompactionEnabled: true,
             // The same backoff the legacy loop waits out on a retryable stream
             // failure, so the two paths recover from a network blip alike.
@@ -363,7 +370,12 @@ extension AIChatViewModel {
         let tokensBefore = DSHTokenEstimate.total(surfaceBefore)
         AppLogger(category: "DSHLoop").warning(
             "[DSH] turn start surface=\(surfaceBefore.count) entries tokens=\(tokensBefore) "
-            + "pressure=\(config.compactionPressureTokens) retain=\(config.compactionRetainTokens)"
+            + "window=\(effectiveContextWindow(for: entry.model)) "
+            + "ratio=\(config.compactionPolicy.thresholdRatio) "
+            + "headroom=\(config.compactionPolicy.headroomTokens) "
+            + "retainRatio=\(config.compactionPolicy.retainRatio) "
+            + "pressureOverride=\(Self.dshCompactionPressureOverride.map(String.init) ?? "nil") "
+            + "retainOverride=\(Self.dshCompactionRetainOverride.map(String.init) ?? "nil")"
         )
         if Self.dshCompactionProbeEnabled {
             let info = ChatMessage(role: .systemInfo, content: "")
@@ -388,8 +400,17 @@ extension AIChatViewModel {
                 seed = "sess=\(sessionId?.prefix(8) ?? "nil") marker=none history=\(agentHistory.count) "
                     + "effective=\(effectiveAgentHistory().count)"
             }
+            // The threshold shown is the one the driver will actually apply, read
+            // back from the resolved trace instead of restated from the policy:
+            // a readout that recomputes the number it is describing can disagree
+            // with the number in force, and then the probe is measuring itself.
+            let spec = driver.resolvedCompactionSpec(
+                reservedCompletionTokens: config.maxTokens
+            )
+            let threshold = spec.map { "\($0.thresholdTokens)" } ?? "none (no declared window)"
+            let retain = spec.map { "\($0.retainTokens)" } ?? "-"
             info.content = "DSH surface: \(surfaceBefore.count) entries, ~\(tokensBefore) tokens "
-                + "(compact at \(config.compactionPressureTokens)) | seed: \(seed)"
+                + "(compact at \(threshold), retain \(retain)) | seed: \(seed)"
             messages.append(info)
         }
 
@@ -532,6 +553,11 @@ extension AIChatViewModel {
         out.latestContextTokens = usage.inputTokens
             + out.cacheCreationTokens
             + out.cacheReadTokens
+        // The driver's type keeps the cache buckets optional, and that is exactly
+        // the distinction the panel needs: present means the provider accounted for
+        // the cache (a 0% hit rate is then a fact), absent means it said nothing
+        // about it (and the panel shows no rate at all). See `TokenUsage.cacheReported`.
+        out.cacheReported = usage.cacheReadTokens != nil || usage.cacheWriteTokens != nil
         return out
     }
 
@@ -562,24 +588,35 @@ extension AIChatViewModel {
         #endif
     }
 
-    static var dshCompactionRetainTokens: Int {
+    /// Absolute retained-tail budget, replacing the policy's derived one.
+    ///
+    /// nil — the shipped value — lets `DSHCompactionPolicy.retainRatio` derive it
+    /// as 16% of the message budget, which is what DSH does. The key exists so a
+    /// device experiment can hold the tail fixed while the threshold moves.
+    static var dshCompactionRetainOverride: Int? {
         if dshCompactionProbeEnabled { return 400 }
         if let override = UserDefaults.standard.object(forKey: "minis.dshCompactRetainOverride") as? Int,
            override > 0 {
             return override
         }
-        return 20_000
+        return nil
     }
 
-    /// Pressure threshold for one model's context window.
+    /// Absolute pressure threshold, replacing the policy's derived one.
     ///
-    /// DSH compacts at roughly 80% of the window. An unknown window returns
-    /// `Int.max`, which disables automatic compaction rather than compacting on
-    /// a guess — compacting away the live request is worse than running long.
-    static func dshCompactionPressureTokens(for model: LLMModel) -> Int {
-        if dshCompactionProbeEnabled { return 2000 }
-        guard let window = model.contextWindow, window > 0 else { return Int.max }
-        return (window * 80) / 100
+    /// nil — the shipped value — derives the threshold from the serving model's
+    /// window as `min(W × 0.8, W − O − 65536)`, which is DSH's own rule. The same
+    /// 80%-of-window figure stated without the output reservation and headroom is
+    /// not the same trigger: on a 128k model it fires ~70k tokens later, by which
+    /// point the request has already been rejected — the reason a long turn could
+    /// blow the window with no compaction having run.
+    static var dshCompactionPressureOverride: Int? {
+        if dshCompactionProbeEnabled { return 2_000 }
+        if let override = UserDefaults.standard.object(forKey: "minis.dshCompactOverride") as? Int,
+           override > 0 {
+            return override
+        }
+        return nil
     }
 
     // MARK: - Session Sync

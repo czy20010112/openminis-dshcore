@@ -129,6 +129,7 @@ public final class DSHSession: @unchecked Sendable {
     private var log: [DSHLogEntry] = []
     private var nextSeq: Int = 1
     private var compactions: [DSHCompactionRecord] = []
+    private var replacements: Int = 0
 
     public init() {}
 
@@ -176,7 +177,23 @@ public final class DSHSession: @unchecked Sendable {
             provider: provider,
             completed: true
         ))
+        replacements += 1
         return seq
+    }
+
+    /// Monotonic count of committed surface replacements.
+    ///
+    /// DSH's `surface.replaceGeneration`. A caller that reacted to a failed
+    /// request by compacting has to prove the surface actually moved before it
+    /// retries: without that proof the retry re-sends a request that was already
+    /// rejected, and the pair of them repeat for as long as the caller is
+    /// willing to loop. Append-only growth does not advance this — only a
+    /// summary that shadows a range does, which is exactly the change a retry
+    /// depends on.
+    public var surfaceReplacementGeneration: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return replacements
     }
 
     // MARK: - Redrive

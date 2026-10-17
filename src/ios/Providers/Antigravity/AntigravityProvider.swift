@@ -403,8 +403,13 @@ final class AntigravityProvider: LLMProvider {
         guard let usage = effective["usageMetadata"] as? [String: Any] else { return nil }
         let input = usage["promptTokenCount"] as? Int ?? 0
         let output = usage["candidatesTokenCount"] as? Int ?? 0
-        return LLMUsage(inputTokens: input, outputTokens: output,
-                        cacheCreationInputTokens: nil, cacheReadInputTokens: nil)
+        // [T-ctx-cache-hit-rate] Same wire shape as Gemini (this endpoint speaks
+        // it), so the same cache rule applies — see `GeminiProvider.extractUsage`.
+        // The iOS 26 line already routes both providers through one shared parser.
+        let cachedTokens = (usage["cachedContentTokenCount"] as? Int).flatMap { $0 > 0 ? $0 : nil }
+        let freshInput = cachedTokens.map { max(0, input - $0) } ?? input
+        return LLMUsage(inputTokens: freshInput, outputTokens: output,
+                        cacheCreationInputTokens: nil, cacheReadInputTokens: cachedTokens)
     }
 
     private func parseStreamChunk(_ json: [String: Any]) -> [GeminiStreamEvent] {

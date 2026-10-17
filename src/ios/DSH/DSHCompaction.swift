@@ -91,6 +91,288 @@ public enum DSHTokenEstimate {
     }
 }
 
+// MARK: - Trigger Policy
+
+/// Failure resolving a trigger budget from model capacity and the routed request.
+///
+/// The iOS counterpart of DSH's `TargetPressureConfigError`. It carries the
+/// exact route as a stable key so a caller can warn once per target instead of
+/// once per step: the misconfiguration is a property of the deployment, and a
+/// model that declares no capacity would otherwise produce one warning per
+/// model request for the life of the conversation.
+public struct DSHCompactionConfigError: Error, Sendable, Equatable {
+    /// Exact `provider/model` route the failure belongs to.
+    public let targetKey: String
+    /// Actionable configuration detail.
+    public let detail: String
+
+    public init(targetKey: String, detail: String) {
+        self.targetKey = targetKey
+        self.detail = detail
+    }
+
+    public var message: String { detail }
+}
+
+/// Concrete token budgets for one routed request, scaled to its model capacity.
+///
+/// DSH's `ResolvedCompactSpec`. `thresholdTokens` is compared against the priced
+/// request envelope (system prompt, tool roster, and surface), never against the
+/// surface alone — the envelope is what the provider counts.
+public struct DSHCompactionSpec: Sendable, Equatable {
+    /// Capacity of the routed model.
+    public let contextWindow: Int
+    /// Output tokens the routed request reserves inside that capacity.
+    public let reservedCompletionTokens: Int
+    /// Window fraction used in the threshold.
+    public let thresholdRatio: Double
+    /// Pressure headroom beyond the output reservation.
+    public let headroomTokens: Int
+    /// Priced-envelope tokens at or above which pressure compaction runs.
+    public let thresholdTokens: Int
+    /// Recent-tail budget retained verbatim.
+    public let retainTokens: Int
+    /// Extra condensation attempts after the first while pressure remains.
+    ///
+    /// Carried on the resolved spec rather than read from the policy at the call
+    /// site, so one resolved value drives the whole retry sequence.
+    public let compactionRetries: Int
+    /// Maximum retries after a provider-confirmed context overflow.
+    public let maxOverflowRetries: Int
+
+    public init(
+        contextWindow: Int,
+        reservedCompletionTokens: Int,
+        thresholdRatio: Double,
+        headroomTokens: Int,
+        thresholdTokens: Int,
+        retainTokens: Int,
+        compactionRetries: Int,
+        maxOverflowRetries: Int
+    ) {
+        self.contextWindow = contextWindow
+        self.reservedCompletionTokens = reservedCompletionTokens
+        self.thresholdRatio = thresholdRatio
+        self.headroomTokens = headroomTokens
+        self.thresholdTokens = thresholdTokens
+        self.retainTokens = retainTokens
+        self.compactionRetries = compactionRetries
+        self.maxOverflowRetries = maxOverflowRetries
+    }
+
+    /// Replace the derived threshold with an absolute one.
+    ///
+    /// An override moves *when* a compaction fires, never what it keeps: the
+    /// retained-tail budget, the capacity checks, and the retry budgets stay as
+    /// derived. It exists for deployments whose window is too large to fill by
+    /// hand (a probe build, a device experiment), so the pressure path is
+    /// reachable without manufacturing a 262k-token conversation.
+    public func overridingThreshold(_ tokens: Int) -> DSHCompactionSpec {
+        DSHCompactionSpec(
+            contextWindow: contextWindow,
+            reservedCompletionTokens: reservedCompletionTokens,
+            thresholdRatio: thresholdRatio,
+            headroomTokens: headroomTokens,
+            thresholdTokens: tokens,
+            retainTokens: retainTokens,
+            compactionRetries: compactionRetries,
+            maxOverflowRetries: maxOverflowRetries
+        )
+    }
+}
+
+/// Pressure and retention policy resolved against one routed model.
+///
+/// Port of DSH `compaction-basic`'s `resolveConfig` defaults plus
+/// `resolveCompactSpec`. The defaults are DSH's own published values
+/// (`thresholdRatio` 0.8, `headroomTokens` 65536, `retainRatio` 0.16,
+/// `compactionRetries` 1, `maxOverflowRetries` 1) so a compaction fires at the
+/// same point this app's upstream does.
+public struct DSHCompactionPolicy: Sendable {
+
+    /// Window fraction used in `min(W × thresholdRatio, W − O − headroomTokens)`.
+    public var thresholdRatio: Double
+    /// Additional pressure headroom beyond the routed output reservation.
+    public var headroomTokens: Int
+    /// Recent tail kept verbatim as a fraction of `W − O`.
+    public var retainRatio: Double
+    /// Absolute recent-tail budget; nil derives `floor((W − O) × retainRatio)`.
+    public var retainTokens: Int?
+    /// Extra condensation attempts after the first while pressure remains.
+    public var compactionRetries: Int
+    /// Maximum retries after a provider-confirmed context overflow.
+    public var maxOverflowRetries: Int
+
+    public init(
+        thresholdRatio: Double = 0.8,
+        headroomTokens: Int = 65_536,
+        retainRatio: Double = 0.16,
+        retainTokens: Int? = nil,
+        compactionRetries: Int = 1,
+        maxOverflowRetries: Int = 1
+    ) {
+        self.thresholdRatio = thresholdRatio
+        self.headroomTokens = headroomTokens
+        self.retainRatio = retainRatio
+        self.retainTokens = retainTokens
+        self.compactionRetries = compactionRetries
+        self.maxOverflowRetries = maxOverflowRetries
+    }
+
+    /// Scale this policy into concrete budgets for one model's capacity.
+    ///
+    /// Pressure is capped by both the window fraction and the capacity left
+    /// after the routed output reservation plus headroom. Retention scales the
+    /// message budget before headroom is deducted. Every rejection is a load- or
+    /// first-use-time misconfiguration rather than a silent skip: a policy that
+    /// cannot resolve must not silently disable compaction, or the failure looks
+    /// exactly like "the conversation was never under pressure".
+    ///
+    /// - Parameters:
+    ///   - contextWindow: adapter-declared capacity for the routed model.
+    ///   - reservedCompletionTokens: output tokens one routed request reserves.
+    /// - Returns: pressure and retention budgets for that route.
+    /// - Throws: `DSHCompactionConfigError` naming the route and the cause.
+    public func resolveSpec(
+        targetKey: String,
+        contextWindow: Int,
+        reservedCompletionTokens: Int
+    ) throws -> DSHCompactionSpec {
+        guard contextWindow > 0 else {
+            throw DSHCompactionConfigError(
+                targetKey: targetKey,
+                detail: "contextWindow (\(contextWindow)) must be a positive integer"
+            )
+        }
+        guard reservedCompletionTokens >= 0 else {
+            throw DSHCompactionConfigError(
+                targetKey: targetKey,
+                detail: "reservedCompletionTokens (\(reservedCompletionTokens)) "
+                    + "must be a non-negative integer"
+            )
+        }
+        guard thresholdRatio > 0, thresholdRatio <= 1 else {
+            throw DSHCompactionConfigError(
+                targetKey: targetKey,
+                detail: "thresholdRatio (\(thresholdRatio)) must be a number in (0, 1]"
+            )
+        }
+        guard headroomTokens >= 0 else {
+            throw DSHCompactionConfigError(
+                targetKey: targetKey,
+                detail: "headroomTokens (\(headroomTokens)) must be non-negative"
+            )
+        }
+        // A window that has to be fully spent on the output reservation plus
+        // headroom leaves nothing to measure pressure against.
+        let messageBudgetTokens = contextWindow - reservedCompletionTokens
+        guard messageBudgetTokens > 0 else {
+            throw DSHCompactionConfigError(
+                targetKey: targetKey,
+                detail: "\(targetKey) reserves \(reservedCompletionTokens) completion tokens "
+                    + "of its \(contextWindow)-token context window, leaving no message budget"
+            )
+        }
+        let pressureBudgetTokens = messageBudgetTokens - headroomTokens
+        guard pressureBudgetTokens > 0 else {
+            throw DSHCompactionConfigError(
+                targetKey: targetKey,
+                detail: "\(targetKey) reserves \(reservedCompletionTokens) completion tokens "
+                    + "and \(headroomTokens) headroom tokens of its \(contextWindow)-token "
+                    + "context window, leaving no pressure budget"
+            )
+        }
+        let windowFraction = Int((Double(contextWindow) * thresholdRatio).rounded(.down))
+        let thresholdTokens = min(windowFraction, pressureBudgetTokens)
+        let derivedRetain = Int((Double(messageBudgetTokens) * retainRatio).rounded(.down))
+        let retainTokens = self.retainTokens ?? derivedRetain
+        guard retainTokens < thresholdTokens else {
+            throw DSHCompactionConfigError(
+                targetKey: targetKey,
+                detail: "retainTokens (\(retainTokens)) must be less than threshold tokens "
+                    + "(\(thresholdTokens))"
+            )
+        }
+        return DSHCompactionSpec(
+            contextWindow: contextWindow,
+            reservedCompletionTokens: reservedCompletionTokens,
+            thresholdRatio: thresholdRatio,
+            headroomTokens: headroomTokens,
+            thresholdTokens: thresholdTokens,
+            retainTokens: retainTokens,
+            compactionRetries: compactionRetries,
+            maxOverflowRetries: maxOverflowRetries
+        )
+    }
+
+    /// The route key used to report one misconfiguration once.
+    public static func targetKey(provider: String, model: String) -> String {
+        "\(provider)/\(model)"
+    }
+}
+
+// MARK: - Overflow Classification
+
+/// Recognizes the provider wording that means "this request exceeded the model's
+/// context window".
+///
+/// Port of DSH's `isContextWindowExceededError`. Overflow recovery hangs off this
+/// classifier, so a miss is not cosmetic: an unclassified over-length refusal
+/// ends the turn as a provider error instead of being answered with a compaction
+/// and a retry. The patterns are the same ones DSH ships — the structured
+/// `context_length_exceeded`/`context window exceeded` family, the
+/// "maximum context length" family, and the three phrasings that tie "too
+/// large"/"exceeds" to the model's context specifically.
+///
+/// DSH's adapters normalize recognized failures to a `CONTEXT_WINDOW_EXCEEDED`
+/// code. This app's providers surface the provider's own message text, so the
+/// classifier is the only route to the same decision; callers must therefore
+/// pass every piece of text a failure carries (code, status, message), not just
+/// the message.
+public enum DSHContextOverflow {
+
+    /// Structured codes and plain phrases that explicitly name a context bound
+    /// being exceeded.
+    private static let structured = #"(?:^|[^a-z0-9])context[\s_-](?:length|window)[\s_-](?:exceed(?:ed|s)?|overflow(?:ed)?|limit[\s_-]exceeded)(?:$|[^a-z0-9])"#
+
+    /// Request-size wording that ties "too large" directly to model capacity.
+    private static let tooLargeForContext = #"\b(?:request|prompt|input|messages?)\s+(?:is\s+|are\s+)?too\s+(?:large|long)\s+for\s+(?:(?:this|the)\s+)?(?:model(?:'s)?\s+)?context(?:\s+window)?\b"#
+
+    /// "Exceeds" wording is safe only when its object is explicitly the model
+    /// context.
+    private static let exceedsModelContext = #"\b(?:input|prompt|request|messages?)\b.{0,40}\b(?:exceed(?:s|ed)?|overflows?|is\s+larger\s+than)\b.{0,40}\b(?:the\s+)?(?:model(?:'s)?\s+)?context(?:\s+(?:length|window))?\b"#
+
+    /// The declared maximum context, named as such.
+    private static let maximumContext = #"\b(?:maximum|max)(?:\s+(?:allowed|supported))?\s+context\s+(?:length|window)\b"#
+
+    /// "too long for this model", without naming the context explicitly.
+    private static let tooLongForModel = #"\b(?:input|prompt|request)\s+(?:is\s+)?too\s+(?:long|large)\s+for\s+(?:this|the)\s+model\b"#
+
+    /// The canonical provider-neutral code DSH normalizes this failure to.
+    public static let code = "CONTEXT_WINDOW_EXCEEDED"
+
+    /// Whether a failure's text identifies a request exceeding the model window.
+    ///
+    /// - Parameter detail: provider code, status, and message text joined into
+    ///   one string, so in-band and thrown delivery styles share one classifier.
+    /// - Returns: true when the detail names a context bound being exceeded.
+    public static func isContextWindowExceeded(_ detail: String) -> Bool {
+        if detail.contains(code) { return true }
+        return matches(structured, detail)
+            || matches(maximumContext, detail)
+            || matches(tooLargeForContext, detail)
+            || matches(tooLongForModel, detail)
+            || matches(exceedsModelContext, detail)
+    }
+
+    private static func matches(_ pattern: String, _ detail: String) -> Bool {
+        detail.range(
+            of: pattern,
+            options: [.regularExpression, .caseInsensitive]
+        ) != nil
+    }
+}
+
 // MARK: - Selection
 
 /// One validated inclusive span of surface positions to compact.
@@ -135,18 +417,26 @@ public enum DSHCompactionSelection {
     /// - Parameters:
     ///   - surface: current surface, oldest first.
     ///   - retainTokens: minimum recent-tail budget retained verbatim.
-    ///   - pressureThreshold: total tokens above which compaction is worth doing.
-    ///     When the surface is below this, selection returns nil.
+    ///   - pressureThreshold: priced tokens above which compaction is worth doing.
+    ///     When the measurement passed below is below this, selection returns
+    ///     nil. Pass `0` to select the maximal balanced head reduction with no
+    ///     pressure gate at all — the provider-confirmed overflow path, where the
+    ///     request has already failed.
+    ///   - measuredTokens: the priced request envelope the gate compares, i.e.
+    ///     system prompt + tool roster + surface. DSH gates on the token meter's
+    ///     envelope total, not on the surface total; measuring the surface alone
+    ///     under-reports exactly the part of the request this app cannot shrink
+    ///     and lets a request overflow while the surface still looks small.
     /// - Returns: the range to compact, or nil when nothing should be compacted.
     public static func select(
         surface: [DSHLogEntry],
         retainTokens: Int,
-        pressureThreshold: Int
+        pressureThreshold: Int,
+        measuredTokens: Int
     ) -> DSHCompactableRange? {
         guard !surface.isEmpty else { return nil }
 
-        let totalTokens = DSHTokenEstimate.total(surface)
-        guard totalTokens >= pressureThreshold else { return nil }
+        guard measuredTokens >= pressureThreshold else { return nil }
 
         // A system head at node 0 is never inside the range.
         let firstIdx = isSystemHead(surface[0]) ? 1 : 0
@@ -268,8 +558,12 @@ public enum DSHCompaction {
     ///   - session: the session to compact.
     ///   - turn: the enclosing turn for an automatic compaction, or nil for a
     ///     standalone manual one.
-    ///   - retainTokens: recent-tail budget retained verbatim.
-    ///   - pressureThreshold: total tokens above which compaction runs.
+    ///   - retainTokens: recent-tail budget retained verbatim. `0` retains only
+    ///     the newest surface node, which is the maximal balanced head reduction.
+    ///   - pressureThreshold: priced tokens above which compaction runs; `0`
+    ///     removes the gate (the provider-confirmed overflow path).
+    ///   - measuredTokens: the priced request envelope `pressureThreshold` is
+    ///     compared against. Must be the same value the caller gated on.
     ///   - summarize: builds the summary for the shadowed content. Called with
     ///     the surface text of the range being compacted.
     ///   - model / provider: recorded on the summary so "which model wrote this"
@@ -280,6 +574,7 @@ public enum DSHCompaction {
         turn: Int?,
         retainTokens: Int,
         pressureThreshold: Int,
+        measuredTokens: Int,
         model: String,
         provider: String,
         summarize: @escaping @Sendable (String) async throws -> String
@@ -290,7 +585,8 @@ public enum DSHCompaction {
         guard let range = DSHCompactionSelection.select(
             surface: surface,
             retainTokens: retainTokens,
-            pressureThreshold: pressureThreshold
+            pressureThreshold: pressureThreshold,
+            measuredTokens: measuredTokens
         ) else {
             return .failure(.noShrink)
         }

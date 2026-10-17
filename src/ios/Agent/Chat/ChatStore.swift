@@ -355,6 +355,9 @@ struct StoredTokenUsage: Codable, Hashable {
     var cacheCreationTokens: Int
     var cacheReadTokens: Int
     var latestContextTokens: Int?
+    /// Optional so rows written before this field decode as nil; `nil` means the
+    /// provider did not report cache buckets for that turn.
+    var cacheReported: Bool? = nil
 }
 
 /// A single message in the conversation (one "turn").
@@ -4883,7 +4886,8 @@ extension RawMessage {
                 outputTokens: usage.outputTokens,
                 cacheCreationTokens: usage.cacheCreationTokens,
                 cacheReadTokens: usage.cacheReadTokens,
-                latestContextTokens: usage.latestContextTokens ?? 0
+                latestContextTokens: usage.latestContextTokens ?? 0,
+                cacheReported: usage.cacheReported ?? false
             )
         }
         msg.streamInterruptCount = streamInterruptCount
@@ -4991,6 +4995,7 @@ extension RawMessage {
     func toAgentMessage(mediaResolver: (MediaRef) -> URL) -> AgentMessage {
         let agentRole: AgentMessage.Role = role == .user ? .user : .assistant
         var agentParts: [AgentContentPart] = []
+        var toolArguments: [String: AgentToolArguments.Record] = [:]
 
         for part in parts {
             switch part {
@@ -5003,6 +5008,16 @@ extension RawMessage {
             case .toolUse(let tu):
                 let input = parseJSONToDict(tu.input)
                 agentParts.append(.toolUse(id: tu.toolUseId, name: tu.name, input: input))
+                // The stored string is the replay bytes. Keeping it here (rather
+                // than only the parsed dictionary above) is what makes a
+                // restored session byte-identical to the one the server cached;
+                // see AgentToolArguments.
+                // Guarded: only a parsed JSON object replays verbatim. A
+                // malformed or empty stored string is sent as `{}`, exactly as
+                // it was before this fix.
+                if !input.isEmpty {
+                    toolArguments[tu.toolUseId] = AgentToolArguments.Record(text: tu.input, input: input)
+                }
             case .toolResult(let tr):
                 var imgData: Data? = nil
                 var imgMime: String? = nil
@@ -5020,6 +5035,7 @@ extension RawMessage {
 
         var msg = AgentMessage(role: agentRole, parts: agentParts)
         msg.reasoningContent = reasoningContent
+        msg.toolArguments = toolArguments
         return msg
     }
 

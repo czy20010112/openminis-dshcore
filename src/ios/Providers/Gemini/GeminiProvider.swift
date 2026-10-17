@@ -538,8 +538,22 @@ final class GeminiProvider: LLMProvider {
         guard let usage = effective["usageMetadata"] as? [String: Any] else { return nil }
         let input = usage["promptTokenCount"] as? Int ?? 0
         let output = usage["candidatesTokenCount"] as? Int ?? 0
-        return LLMUsage(inputTokens: input, outputTokens: output,
-                        cacheCreationInputTokens: nil, cacheReadInputTokens: nil)
+        // [T-ctx-cache-hit-rate] Gemini reports the tokens it served from its own
+        // cache (implicit or explicit) at `cachedContentTokenCount`, and
+        // `promptTokenCount` INCLUDES them — the same shape as OpenAI's
+        // `prompt_tokens` vs `prompt_tokens_details.cached_tokens`. Not reading it
+        // here is why a Gemini session could never show a cache-hit rate: every
+        // response looked like a total miss. The iOS 26 line's
+        // `GeminiProvider.parseUsageMetadata` reads it; this is that rule.
+        //
+        // Absent or 0 both mean "no cache to report" → nil, so a cache-less chunk
+        // stays distinguishable from a measured zero and the panel drops the row
+        // instead of printing a 0%. Clamped, so a relay reporting a cache larger
+        // than the prompt cannot produce a negative input count.
+        let cachedTokens = (usage["cachedContentTokenCount"] as? Int).flatMap { $0 > 0 ? $0 : nil }
+        let freshInput = cachedTokens.map { max(0, input - $0) } ?? input
+        return LLMUsage(inputTokens: freshInput, outputTokens: output,
+                        cacheCreationInputTokens: nil, cacheReadInputTokens: cachedTokens)
     }
 
     /// Parse a single SSE chunk from streaming response into events.

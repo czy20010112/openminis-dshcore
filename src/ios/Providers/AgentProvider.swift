@@ -69,6 +69,66 @@ enum AgentContentPart: @unchecked Sendable {
     case imageData(data: Data, mimeType: String, linuxPath: String? = nil)
 }
 
+// MARK: - Tool-call arguments
+
+/// Canonical serialization of a tool call's `arguments`.
+///
+/// A tool call's arguments reach the wire as a **string**, so the request body's
+/// own `.sortedKeys` canonicalization (OpenAIProvider's `streamRaw` and friends)
+/// cannot see inside it: everything else in the body is key-sorted recursively,
+/// and this one value is opaque. Anything that turns a parsed dictionary back
+/// into that string therefore decides the bytes of a historical turn — and
+/// `JSONSerialization` default emits Swift's dictionary iteration order, which
+/// is not a stable contract. Two turns of the same conversation then differ
+/// before their tails, and a server caching the KV prefix by longest common
+/// prefix has to re-prefill the entire history.
+///
+/// Rules: keys sorted, no escaped slashes, no pretty printing. Byte-identical
+/// for semantically identical input; nothing else changes.
+enum AgentToolArguments {
+    static func canonical(_ input: [String: Any]) -> String {
+        guard let data = try? JSONSerialization.data(
+            withJSONObject: input,
+            options: [.sortedKeys, .withoutEscapingSlashes]
+        ), let text = String(data: data, encoding: .utf8) else { return "{}" }
+        return text
+    }
+
+    /// The boundaries of the raw-bytes fast path: the bytes that replay, and the
+    /// canonical form of the same value so a rewrite can be detected without
+    /// re-parsing. See `AgentMessage.toolArguments`.
+    struct Record {
+        /// Verbatim `arguments` text as received — what goes back on the wire.
+        let text: String
+        /// `canonical()` of the value `text` carries.
+        ///
+        /// Built by the caller from the dictionary it already parsed, so this
+        /// costs no second parse.
+        let canonical: String
+
+        init(text: String, input: [String: Any]) {
+            self.text = text
+            self.canonical = AgentToolArguments.canonical(input)
+        }
+    }
+
+    /// The `arguments` string to put on the wire for one tool call.
+    ///
+    /// Verbatim when the message still carries the bytes the model emitted and
+    /// they still describe `input`; otherwise the canonical form of `input`.
+    ///
+    /// The equality check is not defensive padding — context offloading rewrites
+    /// a tool call's parsed `input` in place (it replaces a large `content` with
+    /// a stub pointing at the file it was saved to). Replaying the pre-rewrite
+    /// text verbatim would silently undo that rewrite and put the whole file
+    /// back into the request, so a stale record must lose to the dictionary.
+    static func wire(_ input: [String: Any], record: Record?) -> String {
+        let canonicalInput = canonical(input)
+        guard let record, record.canonical == canonicalInput else { return canonicalInput }
+        return record.text
+    }
+}
+
 /// Native reasoning payload captured from the provider response, used to
 /// preserve chain-of-thought across multi-turn requests. Lives **in memory
 /// only** (not persisted) — restart loses encrypted content, which is
@@ -130,6 +190,16 @@ struct AgentMessage: @unchecked Sendable {
     /// This replaces the index-resync patches: the driver addresses entries by
     /// seq, and the UI can always recover the seq of any message it holds.
     var dshSeq: Int? = nil
+    /// Each tool call's `arguments` as received, keyed by tool-call id.
+    ///
+    /// `parts` carries the parsed dictionary because that is what execution and
+    /// the UI need. Replaying that dictionary is what broke the prefix: parser
+    /// and serializer do not agree on key order, so a historical turn came back
+    /// different from the one the server had cached. The verbatim bytes are what
+    /// the model actually emitted (or what the DB row holds) — see
+    /// `AgentToolArguments.wire` for when they are used and why a rewritten
+    /// dictionary has to win over them.
+    var toolArguments: [String: AgentToolArguments.Record] = [:]
 }
 
 // MARK: - Stream Events
