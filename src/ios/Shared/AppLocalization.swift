@@ -82,3 +82,25 @@ func AppLocalized(_ resource: LocalizedStringResource) -> String {
     // pretending the override applies.
     String(localized: resource)
 }
+
+/// Overload for a key that is a **variable**, not a literal.
+///
+/// Without this, `AppLocalized(someString)` matches nothing: the primary
+/// overload takes `String.LocalizationValue` and the other takes
+/// `LocalizedStringResource`, and a `String` VALUE converts implicitly to
+/// neither (only literals do). The compiler then reports the mismatch against
+/// `LocalizedStringResource`, which reads like a broken call site in a file that
+/// is perfectly fine.
+///
+/// That is exactly what failed the ios26 CI line on `DSHContextPanel.swift:483`
+/// (`AppLocalized(noun.key(for: n))` — a singular/plural key chosen at runtime).
+/// The ios15 line has no such problem because its primary overload takes a
+/// `String`.
+///
+/// `@_disfavoredOverload` keeps every existing literal call site resolving to the
+/// primary overload, so this only ever catches the values that had nowhere else
+/// to go.
+@_disfavoredOverload
+func AppLocalized(_ key: String, comment: StaticString? = nil) -> String {
+    NSLocalizedString(key, bundle: AppBundle.current, comment: comment.map { "\($0)" } ?? "")
+}
