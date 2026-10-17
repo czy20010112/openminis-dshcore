@@ -42,16 +42,12 @@ struct EnhancedBackgroundSettingsView: View {
                 .focusHighlight(shouldFocus("backgroundBoostRecommended",
                                             current: boost.mode == BackgroundBoostMode.recommended))
 
-                if boost.mode != .off {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(boost.mode.summary)
-                            .font(AppFont.sw(13, weight: .regular, category: .body))
-                            .foregroundColor(.secondary)
-                        Text(boost.mode.risk)
-                            .font(AppFont.sw(12, weight: .regular, category: .ui))
-                            .foregroundColor(.orange)
-                    }
-                }
+                // No mode summary and no risk note under this picker. Both were
+                // per-option prose ("what this mode does", "what it costs"), and
+                // the operator had that class of text removed from the settings
+                // screens on 2026-10-17. The picker's own titles carry the choice;
+                // `BackgroundBoostMode.summary` / `.risk` stay recorded on the
+                // enum for the log and for a future screen.
 
                 Toggle("Re-apply on Launch", isOn: $boost.armOnLaunch)
 
@@ -68,8 +64,6 @@ struct EnhancedBackgroundSettingsView: View {
                 }
             } header: {
                 Text("Background Boost")
-            } footer: {
-                Text("Sets every background switch on this page in one step and re-applies the preset at every launch, so the configuration is in force before a task is ever interrupted. iOS shows no permission prompt for background audio or for Live Activities; location is the only leg that asks, and picking a preset that uses it asks for you. \"Custom\" writes nothing and leaves the switches exactly as they are. Open \"Check Current Effect\" to see what is configured, what is running right now, and what the installed build actually declares.")
             }
 
             Section {
@@ -475,8 +469,6 @@ struct BackgroundBoostStatusView: View {
                           value: yesNo(s.armOnLaunch))
             } header: {
                 Text("Configuration")
-            } footer: {
-                Text("An effective configuration is one that can actually hold the process open. The master switch alone is not enough: the audio leg is what does the keeping-alive, and its live state is in the next group.")
             }
 
             Section {
@@ -509,8 +501,6 @@ struct BackgroundBoostStatusView: View {
                           value: "\(s.liveBackgroundGrants)")
             } header: {
                 Text("Now")
-            } footer: {
-                Text("Keep-alive is only needed while a task runs; an idle app is allowed to suspend. Silent audio is the mechanism that holds the process open, so \"Playing (silent)\" while a task runs is the healthy state.")
             }
 
             Section {
@@ -531,8 +521,6 @@ struct BackgroundBoostStatusView: View {
                           value: remainingValue(s))
             } header: {
                 Text("Timeline")
-            } footer: {
-                Text("Measured: the background duration, the suspend/resume stamps and the task counts all come from real notifications. \"Readable remaining\" is iOS's own finite background-task clock (UIApplication.backgroundTimeRemaining); it reads as unlimited once a keep-alive leg is holding the process open, or while the app is in the foreground. iOS does not publish how long a keep-alive leg will survive, so no such figure exists here and none is invented. The timestamp rows stay at \"not yet\" until this process has backgrounded and returned once.")
             }
 
             Section {
@@ -554,8 +542,6 @@ struct BackgroundBoostStatusView: View {
                           tint: s.liveActivitySupported && s.liveActivityExtensionEmbedded ? .green : .secondary)
             } header: {
                 Text("Installed Build")
-            } footer: {
-                Text("Read from the Info.plist and the embedded PlugIns of the app bundle installed on this device, not from the source tree. UIBackgroundModes is a declaration rather than a permission: iOS never asks for audio, and Live Activities never ask for anything, so there is no prompt that a differently-signed build could have skipped. \"not embedded\" means this build ships no widget extension, so Live Activities cannot appear in it at all; and on an iOS 15 device the feature does not exist regardless, because ActivityKit arrived in iOS 16.1.")
             }
         }
     }

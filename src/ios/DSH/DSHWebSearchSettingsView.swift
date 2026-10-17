@@ -2,8 +2,8 @@
 //  DSHWebSearchSettingsView.swift
 //  Minis
 //
-//  The Web Search screen: which backend the `web_search` tool uses, its key, its
-//  endpoint, and a button that proves it works.
+//  The Web Search screen: the priority queue the `web_search` tool walks, and a
+//  button that proves it works.
 //
 //  WHY THIS FILE SITS IN `src/ios/DSH/`
 //  ---------------------------------------------------------------------------
@@ -13,22 +13,21 @@
 //  `Views/Settings/`, but a new file there is not compiled until it is added to
 //  the pbxproj by hand, twice.
 //
+//  THE QUEUE IS THE FORM
+//  ---------------------------------------------------------------------------
+//  Every row IS an entry of `DSHWebSearchConfig.entries`: switch it off, rename
+//  it, change its provider, its key, its endpoint, move it up or down, delete it.
+//  Order on screen is priority order — the tool tries row 1 first. The same
+//  provider may appear in several rows, each with its own key and endpoint.
+//
 //  WHY THE "TEST SEARCH" BUTTON IS THE POINT OF THE SCREEN
 //  ---------------------------------------------------------------------------
 //  A search backend fails in ways a form cannot show: a key that is valid for
-//  everything except search, an endpoint whose path is one segment off (Tavily's
-//  proxy is `/tavily/search`, not `/search`), a provider that answers 200 with an
-//  empty array. All three look identical in the settings UI and identical in a
-//  chat transcript. So the screen runs the real code path against a fixed query
-//  and prints what came back, including the raw error text the model would see.
-//
-//  WHAT THE READOUT SHOWS
-//  ---------------------------------------------------------------------------
-//  The "In force" section reads through `DSHWebSearchProvider.effectiveKey()` and
-//  `effectiveBase()` — the same accessors the tool uses — not from the fields
-//  above. The two differ exactly when a value is stored from an earlier session
-//  or the operator default is filling in, which is the state a user cannot infer
-//  from the form.
+//  everything except search, an endpoint whose path is one segment off, a
+//  provider that answers 200 with an empty array. All three look identical in the
+//  settings UI and identical in a chat transcript. So the button runs the real
+//  queue — fallback and all — against a fixed query, and prints what came back,
+//  including the raw error text the model would see.
 //
 
 import SwiftUI
@@ -36,10 +35,6 @@ import SwiftUI
 struct DSHWebSearchSettingsView: View {
 
     @StateObject private var store = DSHWebSearchStore()
-
-    /// The provider the form's fields belong to. `onChange` runs after the bound
-    /// value has changed, so the outgoing provider is held here instead.
-    @State private var formProvider: DSHWebSearchProvider = DSHWebSearchConfig.provider
 
     // MARK: - Test search state
 
@@ -54,87 +49,135 @@ struct DSHWebSearchSettingsView: View {
 
     var body: some View {
         List {
-            providerSection
-            credentialsSection
+            entriesSection
             testSection
-            inForceSection
+            resetSection
         }
         .listStyle(.insetGrouped)
         .navigationTitle("Web Search")
         .navigationBarTitleDisplayMode(.inline)
-    }
-
-    // MARK: - Provider
-
-    private var providerSection: some View {
-        Section {
-            Picker("Search provider", selection: $store.provider) {
-                ForEach(DSHWebSearchProvider.allCases) { provider in
-                    Text(verbatim: provider.displayName).tag(provider)
-                }
-            }
-            .pickerStyle(.menu)
-            .onChange(of: store.provider) { newValue in
-                store.providerChanged(to: newValue, from: formProvider)
-                formProvider = newValue
-            }
-            Text(LocalizedStringKey(store.provider.summary))
-                .font(AppFont.sw(12, category: .ui))
-                .foregroundStyle(.secondary)
-
-            Text(LocalizedStringKey(store.provider.needsKey
-                ? "This provider needs an API key from its own website. Jina and a self-hosted SearXNG do not."
-                : "This provider works without an API key."))
-                .font(AppFont.sw(12, category: .ui))
-                .foregroundStyle(.secondary)
-        } header: {
-            Text("Provider")
+        .toolbar {
+            // Drag to reorder, and the red delete circles, both live in edit
+            // mode. The row buttons below do the same two things without it.
+            EditButton()
         }
     }
 
-    // MARK: - Key and endpoint
+    // MARK: - Entries
 
-    private var credentialsSection: some View {
+    private var entriesSection: some View {
         Section {
-            HStack(alignment: .firstTextBaseline) {
-                Text("API Key")
-                Spacer(minLength: 12)
-                TextField("sk-…", text: $store.apiKey)
-                    .textInputAutocapitalization(.never)
-                    .disableAutocorrection(true)
-                    .multilineTextAlignment(.trailing)
-                    .font(AppFont.sw(13, category: .code))
-                    .onChange(of: store.apiKey) { newValue in
-                        store.keyChanged(newValue)
-                    }
+            ForEach($store.entries) { $entry in
+                entryRow($entry)
+            }
+            .onMove { source, destination in
+                store.move(from: source, to: destination)
+            }
+            .onDelete { offsets in
+                store.delete(at: offsets)
             }
 
-            HStack(alignment: .firstTextBaseline) {
-                Text("Endpoint")
-                Spacer(minLength: 12)
-                TextField("Provider default", text: $store.endpointText)
-                    .textInputAutocapitalization(.never)
-                    .disableAutocorrection(true)
-                    .keyboardType(.URL)
-                    .multilineTextAlignment(.trailing)
-                    .font(AppFont.sw(13, category: .code))
-                    .onChange(of: store.endpointText) { newValue in
-                        store.endpointChanged(newValue)
-                    }
+            Button {
+                store.addEntry()
+            } label: {
+                Label("Add Search Entry", systemImage: "plus.circle.fill")
             }
-
-
-            Button("Reset to the shipped defaults") {
-                store.resetToDefaults()
-                formProvider = store.provider
-                testLines = []
-                testFailed = false
-            }
-            .foregroundStyle(.red)
         } header: {
-            Text("Credentials")
-        } footer: {
-            Text("The key is sent only to the endpoint above. Leave the endpoint empty to use the provider's own default. The snippets the search returns are placed in the conversation, so the provider you choose sees your query.")
+            Text("Search Entries")
+        }
+    }
+
+    /// One row of the queue: the whole entry, editable in place.
+    private func entryRow(_ entry: Binding<DSHWebSearchEntry>) -> some View {
+        let value = entry.wrappedValue
+        let index = store.entries.firstIndex(where: { $0.id == value.id }) ?? 0
+        return VStack(alignment: .leading, spacing: 6) {
+            Toggle(isOn: entry.enabled) {
+                HStack(spacing: 8) {
+                    Text(verbatim: value.title)
+                        .font(AppFont.sw(14, category: .ui))
+                    if let status = value.status {
+                        // A state, not a sentence: `needs a key` is a catalog key,
+                        // and `String` only reaches the catalog through
+                        // `LocalizedStringKey`.
+                        Text(LocalizedStringKey(status))
+                            .font(AppFont.sw(12, category: .ui))
+                            .foregroundStyle(.red)
+                    }
+                }
+            }
+
+            HStack(alignment: .firstTextBaseline) {
+                Text("Provider")
+                Spacer(minLength: 12)
+                Picker("Provider", selection: entry.provider) {
+                    ForEach(DSHWebSearchProvider.allCases) { provider in
+                        Text(verbatim: provider.displayName).tag(provider)
+                    }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+            }
+
+            field("Name", text: entry.label, prompt: "")
+            field("API Key", text: entry.apiKey, prompt: "sk-…")
+            field(
+                "Endpoint",
+                text: entry.endpoint,
+                prompt: value.provider.defaultBase,
+                keyboard: .URL
+            )
+
+            HStack(spacing: 22) {
+                Button {
+                    store.moveUp(value.id)
+                } label: {
+                    Image(systemName: "arrow.up")
+                }
+                .buttonStyle(.borderless)
+                .disabled(index == 0)
+
+                Button {
+                    store.moveDown(value.id)
+                } label: {
+                    Image(systemName: "arrow.down")
+                }
+                .buttonStyle(.borderless)
+                .disabled(index >= store.entries.count - 1)
+
+                Spacer(minLength: 12)
+
+                Button {
+                    store.remove(value.id)
+                } label: {
+                    Image(systemName: "trash")
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(.red)
+            }
+            .font(AppFont.sw(13, category: .ui))
+        }
+        .padding(.vertical, 4)
+    }
+
+    /// A labelled field on its own line. The label is a catalog key; the
+    /// placeholder is a value (a key shape, or the provider's default endpoint)
+    /// and is rendered verbatim.
+    private func field(
+        _ label: LocalizedStringKey,
+        text: Binding<String>,
+        prompt: String,
+        keyboard: UIKeyboardType = .default
+    ) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(label)
+            Spacer(minLength: 12)
+            TextField(prompt, text: text)
+                .textInputAutocapitalization(.never)
+                .disableAutocorrection(true)
+                .keyboardType(keyboard)
+                .multilineTextAlignment(.trailing)
+                .font(AppFont.sw(13, category: .code))
         }
     }
 
@@ -146,7 +189,12 @@ struct DSHWebSearchSettingsView: View {
                 runTest()
             } label: {
                 HStack {
-                    Text(testRunning ? "Testing…" : "Test Search")
+                    // Both branches spell out LocalizedStringKey: a plain ternary of
+                    // two literals is inferred as String, and `Text(String)` does not
+                    // consult the catalog, so the title would stay English in Chinese.
+                    Text(testRunning
+                         ? LocalizedStringKey("Testing…")
+                         : LocalizedStringKey("Test Search"))
                     if testRunning {
                         Spacer(minLength: 8)
                         ProgressView()
@@ -175,46 +223,19 @@ struct DSHWebSearchSettingsView: View {
             }
         } header: {
             Text("Results")
-        } footer: {
-            Text("Runs a real search through the settings above and prints the hits, or the exact error the tool would have handed the model. Nothing is added to the conversation.")
         }
     }
 
-    // MARK: - In force
+    // MARK: - Reset
 
-    private var inForceSection: some View {
+    private var resetSection: some View {
         Section {
-            readout("Search provider", LocalizedStringKey(store.provider.displayName))
-            readout("State", LocalizedStringKey(store.keyState))
-            readout("Endpoint", LocalizedStringKey(store.effectiveBase.isEmpty
-                ? "Not set"
-                : store.effectiveBase))
-            readout("Search tool", "web_search")
-            readout("Results per search", LocalizedStringKey("up to \(DSHWebSearchConfig.maxLimit)"))
-            readout("Request timeout", LocalizedStringKey("\(Int(DSHWebSearchTransport.timeout)) seconds"))
-        } header: {
-            Text("Current Effect")
-        } footer: {
-            Text("Read from what the tool will actually use, not from the fields above — the two differ whenever a value was stored earlier or a shipped default is filling in.")
-        }
-    }
-
-    // MARK: - Rows
-
-    /// One label/value row. Both halves are `LocalizedStringKey`s: `Text(_: String)`
-    /// does not consult the catalog, so a `String` value would render English on
-    /// a Chinese device while the rest of the row translated. A value that is a
-    /// URL, a tool name or a number simply has no catalog entry and renders as
-    /// written.
-    private func readout(_ label: LocalizedStringKey, _ value: LocalizedStringKey) -> some View {
-        HStack(alignment: .top) {
-            Text(label)
-            Spacer(minLength: 12)
-            Text(value)
-                .font(AppFont.sw(13, category: .ui))
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.trailing)
-                .textSelection(.enabled)
+            Button("Reset to the shipped defaults") {
+                store.resetToDefaults()
+                testLines = []
+                testFailed = false
+            }
+            .foregroundStyle(.red)
         }
     }
 
@@ -224,13 +245,9 @@ struct DSHWebSearchSettingsView: View {
         testRunning = true
         testFailed = false
         testLines = [AppLocalized("Searching…")]
-        let provider = store.provider
         let query = Self.testQuery
         Task {
-            let outcome = await DSHWebSearchTool.run(
-                args: ["query": query, "limit": 3],
-                provider: provider
-            )
+            let outcome = await DSHWebSearchTool.run(args: ["query": query, "limit": 3])
             let lines = outcome.output
                 .components(separatedBy: "\n")
                 .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
@@ -243,89 +260,55 @@ struct DSHWebSearchSettingsView: View {
 
 // MARK: - Store
 
-/// The settings the screen edits, and the write-through to `UserDefaults`.
+/// The queue the screen edits, and the write-through to `UserDefaults`.
 ///
-/// The key and the endpoint are stored PER PROVIDER, so the picker has to save
-/// the outgoing provider's values and load the incoming one's. That is a
-/// sequence, not a binding, so persistence is explicit: the three `@Published`
-/// fields hold what is on screen, and `providerChanged` / `keyChanged` /
-/// `endpointChanged` are the only writers. Persisting from a `didSet` instead
-/// made loading a provider's saved values write them straight back, and made the
-/// order of two `didSet`s decide what ended up stored.
+/// One stored value holds the whole queue, so every edit persists the array as
+/// it stands rather than tracking which field of which row was touched. Order is
+/// the array's order, which is the priority order the tool walks.
 @MainActor
 final class DSHWebSearchStore: ObservableObject {
 
-    @Published var provider: DSHWebSearchProvider
-    @Published var apiKey: String = ""
-    @Published var endpointText: String = ""
-
-    /// Mirrors of what `DSHWebSearchConfig` resolves, so the readout does not
-    /// have to be recomputed mid-render.
-    @Published private(set) var effectiveBase: String = ""
-    @Published private(set) var keyState: String = ""
-    @Published private(set) var hasStoredKey: Bool = false
+    @Published var entries: [DSHWebSearchEntry] {
+        didSet { DSHWebSearchConfig.setEntries(entries) }
+    }
 
     init() {
-        let configured = DSHWebSearchConfig.provider
-        provider = configured
-        let storedKey = DSHWebSearchConfig.apiKey(for: configured)
-        let storedEndpoint = DSHWebSearchConfig.endpointOverride(for: configured)
-        apiKey = storedKey
-        endpointText = storedEndpoint
-        refreshReadout()
+        entries = DSHWebSearchConfig.entries
     }
 
-    // MARK: Writing
+    // MARK: Editing
 
-    /// Persist what is on screen under the provider it belongs to, record the new
-    /// selection, then show the new provider's own stored values.
-    ///
-    /// `outgoing` is passed in rather than read from a captured `oldValue`: the
-    /// key being saved belongs to the provider that was selected when the user
-    /// typed it, and that is not recoverable once `provider` has moved.
-    func providerChanged(to provider: DSHWebSearchProvider, from outgoing: DSHWebSearchProvider) {
-        guard provider != outgoing else { return }
-        DSHWebSearchConfig.setAPIKey(apiKey, for: outgoing)
-        DSHWebSearchConfig.setEndpointOverride(endpointText, for: outgoing)
-        DSHWebSearchConfig.provider = provider
-        apiKey = DSHWebSearchConfig.apiKey(for: provider)
-        endpointText = DSHWebSearchConfig.endpointOverride(for: provider)
-        refreshReadout()
+    func addEntry() {
+        entries.append(DSHWebSearchEntry())
     }
 
-    func keyChanged(_ value: String) {
-        DSHWebSearchConfig.setAPIKey(value, for: provider)
-        refreshReadout()
+    func remove(_ id: DSHWebSearchEntry.ID) {
+        entries.removeAll { $0.id == id }
     }
 
-    /// Persist the endpoint override and refresh the readout. The refresh matters
-    /// on clearing the field: that is the transition from an override back to the
-    /// provider's default, and the readout would otherwise keep showing the old
-    /// endpoint until the screen was reopened.
-    func endpointChanged(_ value: String) {
-        DSHWebSearchConfig.setEndpointOverride(value, for: provider)
-        refreshReadout()
+    func delete(at offsets: IndexSet) {
+        entries.remove(atOffsets: offsets)
+    }
+
+    func move(from source: IndexSet, to destination: Int) {
+        entries.move(fromOffsets: source, toOffset: destination)
+    }
+
+    /// Step one entry past its neighbour. The row buttons move it a place; the
+    /// drag handles in edit mode move it anywhere.
+    func moveUp(_ id: DSHWebSearchEntry.ID) { step(id, by: -1) }
+
+    func moveDown(_ id: DSHWebSearchEntry.ID) { step(id, by: 1) }
+
+    private func step(_ id: DSHWebSearchEntry.ID, by offset: Int) {
+        guard let index = entries.firstIndex(where: { $0.id == id }) else { return }
+        let target = index + offset
+        guard entries.indices.contains(target) else { return }
+        entries.swapAt(index, target)
     }
 
     func resetToDefaults() {
         DSHWebSearchConfig.resetToDefaults()
-        let restored = DSHWebSearchConfig.provider
-        provider = restored
-        apiKey = DSHWebSearchConfig.apiKey(for: restored)
-        endpointText = DSHWebSearchConfig.endpointOverride(for: restored)
-        refreshReadout()
-    }
-
-    private func refreshReadout() {
-        let resolved = provider
-        effectiveBase = resolved.effectiveBase()
-        hasStoredKey = !DSHWebSearchConfig.apiKey(for: resolved).isEmpty
-        if !resolved.needsKey {
-            keyState = "no key needed"
-        } else if resolved.effectiveKey().isEmpty {
-            keyState = "needs a key"
-        } else {
-            keyState = "your own key"
-        }
+        entries = DSHWebSearchConfig.entries
     }
 }

@@ -969,11 +969,12 @@ extension AIChatViewModel {
 
         case "web_search":
             // [T-tools-web-search] The whole feature lives in
-            // `DSHWebSearch.swift` — provider dispatch, settings, result
-            // formatting — so this branch only has to route the outcome. The
-            // provider is resolved inside the tool from `UserDefaults` at call
-            // time, which is what makes a settings change take effect on the next
-            // search instead of after a relaunch.
+            // `DSHWebSearch.swift` — provider dispatch, the priority queue and
+            // its fallback walk, settings, result formatting — so this branch
+            // only has to route the outcome. The queue is resolved inside the
+            // tool from `UserDefaults` at call time, which is what makes a
+            // settings change take effect on the next search instead of after a
+            // relaunch.
             let searchResult = await DSHWebSearchTool.run(args: toolArgs)
             toolOutput = searchResult.success
                 ? searchResult.output
