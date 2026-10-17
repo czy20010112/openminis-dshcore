@@ -269,6 +269,14 @@ extension AIChatViewModel {
             propertyOrdering: ["plan"]
         ))
 
+        // [T-tools-goal] DSH's goal tools (`packages/goal/tool-goal`): one
+        // long-running completion objective per session, with the round budget
+        // that makes it safe to leave running. Their schemas live in
+        // `DSHGoalTools.definitions` because both iOS lines keep separate copies
+        // of this file, and registered for every turn like the plan tools above,
+        // so the catalog does not change when a goal appears.
+        tools.append(contentsOf: DSHGoalTools.definitions)
+
         return tools
     }
 

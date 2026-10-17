@@ -233,6 +233,12 @@ extension AIChatViewModel {
         // catalog constant across modes for the same reason.
         disposers.append(prompt.section(DSHPlanMode.policySection()))
 
+        // [T-tools-goal] The goal-tool policy. Registered unconditionally, like
+        // the plan section above and for the same reason: DSH holds its sections
+        // and its tool catalog constant across states so that a request is not
+        // reshaped by a state change, and so the prompt cache keeps hitting.
+        disposers.append(prompt.section(DSHGoalTools.policySection()))
+
         // The app's own system prompt, verbatim.
         //
         // The port started by re-authoring this as a short DSH-flavoured base and

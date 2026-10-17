@@ -676,6 +676,10 @@ extension AIChatViewModel {
         // conversation, so "Clear" clears them too. DSH scopes its `todos`
         // projection to the session for the same reason.
         DSHTodoStore.shared.clear()
+        // [T-tools-goal] The goal belongs to this conversation too. DSH scopes it
+        // to the session the same way, and a goal that outlived "Clear" would
+        // describe work the transcript no longer contains.
+        DSHGoalStore.shared.clear()
 
         if let sessionId {
             Task { await ISHExecutionCoordinator.shared.sessionDidTerminate(sessionId: sessionId) }

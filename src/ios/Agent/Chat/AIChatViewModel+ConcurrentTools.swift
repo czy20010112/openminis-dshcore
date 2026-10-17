@@ -840,6 +840,20 @@ extension AIChatViewModel {
             if msgIdx < messages.count, blockIdx < messages[msgIdx].blocks.count {
                 messages[msgIdx].blocks[blockIdx].content = toolOutput
             }
+
+        case "get_goal", "create_goal", "update_goal":
+            // [T-tools-goal] The whole feature lives in `DSHGoalStore` /
+            // `DSHGoalTools` — phase rules, the compare-and-set ref and the
+            // canonical JSON the model reads — so this branch only routes the
+            // outcome. The goal bar above the composer renders from the store, so
+            // a rejected call changes nothing on screen either.
+            let goalResult = DSHGoalTools.run(name: tu.name, arguments: toolArgs)
+            toolOutput = goalResult.success ? goalResult.output : "Error: \(goalResult.output)"
+            toolSuccess = goalResult.success
+            if msgIdx < messages.count, blockIdx < messages[msgIdx].blocks.count {
+                messages[msgIdx].blocks[blockIdx].content = toolOutput
+            }
+
         default:
             toolOutput = "Error: Unknown tool '\(tu.name)'"
             toolSuccess = false

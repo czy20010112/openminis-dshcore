@@ -26,6 +26,10 @@ public enum DSHSectionOrder: Int, CaseIterable {
     case toolReference = 1100
     case skills = 1500
     case memory = 1600
+    /// The goal-tool policy. DSH's `TOOL_GOAL` is 2400 — behind the tool
+    /// guidance, because a goal does not change what is allowed, only whether
+    /// work continues.
+    case toolGoal = 2400
     case runtimeContext = 9000
     case deliverableReference = 9010
     case personaSuffix = 10200
