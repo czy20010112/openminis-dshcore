@@ -8282,6 +8282,19 @@ private struct SettingsSheet: View {
                                 .background(.brown, in: Circle())
                         }
                     }
+                    NavigationLink {
+                        DSHWebSearchSettingsView()
+                    } label: {
+                        Label {
+                            Text("Web Search")
+                        } icon: {
+                            Image(systemName: "magnifyingglass.circle.fill")
+                                .font(.system(size: 9))
+                                .foregroundStyle(.white)
+                                .frame(width: 21, height: 21)
+                                .background(.cyan, in: Circle())
+                        }
+                    }
                 }
 
                 Section("Storage") {

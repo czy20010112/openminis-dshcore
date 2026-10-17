@@ -152,8 +152,15 @@ struct DSHTodoPanelView: View {
                         Image(systemName: "checklist")
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundStyle(.secondary)
+                        // Was `.system(size: 12, weight: .medium)`, which is why
+                        // this one run of text kept the system face while the rest
+                        // of the bar followed the font settings. The category font
+                        // replaces it; `.monospacedDigit()` stays, because the
+                        // counts change while a task runs and tabular digits keep
+                        // the row from jittering.
                         Text(store.progressLabel)
-                            .font(.system(size: 12, weight: .medium).monospacedDigit())
+                            .font(AppFont.sw(12, weight: .medium, category: .ui))
+                            .monospacedDigit()
                             .foregroundStyle(.secondary)
                         Spacer(minLength: 8)
                         if !expanded, let active = store.activeContent {

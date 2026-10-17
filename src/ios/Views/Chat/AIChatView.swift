@@ -1105,12 +1105,18 @@ struct AIChatView: View {
         // [T-ctx-ring] The breakdown behind the composer's ring. Same detents as
         // the token-usage sheet: both are "look at the numbers" sheets opened
         // from the same row.
+        //
+        // `.medium` and not `.fraction(0.8)`: the panel's content is ~310pt, so
+        // eight tenths of the screen left a third of the sheet empty underneath
+        // (measured 349pt of whitespace on the ios15 line, which has no detents
+        // at all and could only be fixed from inside the panel). Half the screen
+        // fits the content and still drags up to `.large` for a long session.
         .sheet(isPresented: $showContextPanel) {
             DSHContextPanel(reading: DSHContextReading.latest(
                 messages: cached.vm.messages,
                 window: cached.vm.currentModelContextWindow
             ))
-            .presentationDetents([.fraction(0.8), .large])
+            .presentationDetents([.medium, .large])
         }
         // [T-tools-todo-plan] The plan review `exit_plan_mode` is suspended on.
         // Presented from the coordinator's published request, not from a flag
@@ -1256,6 +1262,11 @@ struct AIChatView: View {
         .photosPicker(isPresented: $showPhotoPicker, selection: $selectedPhotoItems,
                       maxSelectionCount: 50, matching: .any(of: [.images, .videos]))
         .onChange(of: selectedPhotoItems) { items in
+            // [Attach] The photo path's only observable seam: pairs with the
+            // `[Attach] menu: Photos tapped` line, and with the file picker's
+            // `[Attach] picker returned ...` line, it says which of the two
+            // attachment routes actually completes on a given device.
+            minisLogger.info("[Attach] photosPicker onChange items=\(items.count)")
             guard !items.isEmpty else { return }
             // [T-ios-photo-pick-placeholder] 1) Insert a loading placeholder chip
             // for every picked item RIGHT NOW (one main-actor batch update), so the
@@ -1312,18 +1323,33 @@ struct AIChatView: View {
                 }
             }
         }
-        .fileImporter(
-            isPresented: $showDocumentPicker,
-            allowedContentTypes: [.image, .pdf, .plainText, .json, .sourceCode, .presentation, .spreadsheet, .data],
-            allowsMultipleSelection: true
-        ) { result in
-            switch result {
-            case .success(let urls):
+        // [T-file-attach-picker] A UIKit document picker hosted in a sheet, NOT
+        // `.fileImporter`. On iPadOS 26.5 (iPad16,3 / 26.5 23F77) the SwiftUI
+        // modifier presented the picker but never ran the completion: confirming
+        // a file produced no `.success`, no `.failure` and no dismissal, so the
+        // selection looked like it did nothing and left no trace in the log
+        // (`.fileImporter`'s completion is SwiftUI-internal — there is nowhere to
+        // observe it). A delegate the app owns fires `didPickDocumentsAt` /
+        // `documentPickerWasCancelled` unconditionally, and every step now logs
+        // under `[Attach]`. `asCopy: true` additionally hands over a copy inside
+        // the app's own tmp/, so the security-scoped-resource hop inside
+        // `addFileAttachment` stops being load-bearing.
+        //
+        // Same shape as FileBrowserView's `FileImportPicker` and
+        // SkillsManagementView's `SkillFileDocumentPicker`: an opening picker
+        // (UIDocumentPickerViewController) inside a `.sheet`. `allowedContentTypes`
+        // is the byte-identical list the `.fileImporter` call used.
+        .sheet(isPresented: $showDocumentPicker) {
+            AttachmentDocumentPicker(
+                allowedContentTypes: [.image, .pdf, .plainText, .json, .sourceCode, .presentation, .spreadsheet, .data],
+                allowsMultipleSelection: true
+            ) { urls in
+                showDocumentPicker = false
+                minisLogger.info("[Attach] picker returned urls=\(urls.count) names=\(urls.map { $0.lastPathComponent }.joined(separator: ","))")
+                guard !urls.isEmpty else { return }
                 for url in urls {
                     vm.addFileAttachment(from: url)
                 }
-            case .failure(let error):
-                minisLogger.error("File import failed: \(error.localizedDescription)")
             }
         }
         // [T-minisurl-wrong-active-session] A draft opened from the UI has
@@ -3350,8 +3376,14 @@ struct AIChatView: View {
         if #available(iOS 17, *) {
             Menu {
                 Button { showCamera = true } label: { Label("Take Photo", systemImage: "camera") }
-                Button { showPhotoPicker = true } label: { Label("Choose Photos & Videos", systemImage: "photo.on.rectangle") }
-                Button { showDocumentPicker = true } label: { Label("Add File", systemImage: "doc") }
+                Button {
+                    minisLogger.info("[Attach] menu: Photos tapped → showPhotoPicker=true")
+                    showPhotoPicker = true
+                } label: { Label("Choose Photos & Videos", systemImage: "photo.on.rectangle") }
+                Button {
+                    minisLogger.info("[Attach] menu: Add File tapped → showDocumentPicker=true")
+                    showDocumentPicker = true
+                } label: { Label("Add File", systemImage: "doc") }
             } label: {
                 icon
             }
@@ -3361,8 +3393,14 @@ struct AIChatView: View {
             }
             .confirmationDialog("Add Attachment", isPresented: $showAttachmentMenu) {
                 Button { showCamera = true } label: { Label("Take Photo", systemImage: "camera") }
-                Button { showPhotoPicker = true } label: { Label("Choose Photos & Videos", systemImage: "photo.on.rectangle") }
-                Button { showDocumentPicker = true } label: { Label("Add File", systemImage: "doc") }
+                Button {
+                    minisLogger.info("[Attach] menu: Photos tapped → showPhotoPicker=true")
+                    showPhotoPicker = true
+                } label: { Label("Choose Photos & Videos", systemImage: "photo.on.rectangle") }
+                Button {
+                    minisLogger.info("[Attach] menu: Add File tapped → showDocumentPicker=true")
+                    showDocumentPicker = true
+                } label: { Label("Add File", systemImage: "doc") }
             }
         }
     }
@@ -7091,4 +7129,69 @@ final class ComposerActionChannel {
     /// an early arrow/tab key keeps its default text-view behaviour).
     @discardableResult
     func send(_ action: Action) -> Bool { handler?(action) ?? false }
+}
+
+// MARK: - Attachment document picker [T-file-attach-picker]
+
+/// `UIDocumentPickerViewController` in import mode, wrapped so the composer owns
+/// the callback instead of SwiftUI's `.fileImporter` bridge.
+///
+/// Why the app does not use `.fileImporter` for this button: on iPadOS 26.5 the
+/// modifier presented the picker exactly as asked (`allowedContentTypes` was
+/// honoured, the picker appeared) but the completion never ran — neither
+/// `.success` nor `.failure`, and the sheet was not dismissed either, so
+/// tapping Open looked like a dead button and left nothing in the log to
+/// distinguish it from a user cancel. There is no observable hook inside that
+/// bridge. A delegate the app owns fires unconditionally, and both delegate
+/// methods are logged under `[Attach]`, which makes the next occurrence
+/// self-describing.
+///
+/// `asCopy: true` is what makes the handoff survivable: the system copies each
+/// picked document into the app's own temporary directory before handing the
+/// URL over, so `addFileAttachment` reads an ordinary local file instead of
+/// depending on `startAccessingSecurityScopedResource()` succeeding on a file
+/// provider URL (iCloud Drive / SMB / third-party providers all vary there).
+/// The security-scope call in that function is kept — it is a no-op returning
+/// false for these copies — so this picker is still a drop-in for other callers.
+///
+/// Hosted in a `.sheet`, matching the two opening pickers the app already ships:
+/// `FileImportPicker` in FileBrowserView and `SkillFileDocumentPicker` in
+/// SkillsManagementView.
+private struct AttachmentDocumentPicker: UIViewControllerRepresentable {
+    let allowedContentTypes: [UTType]
+    var allowsMultipleSelection: Bool = true
+    /// Called with the picked URLs, or with an empty array on cancel. Empty is
+    /// the cancel signal on purpose — same convention as `CompatPhotoPicker` in
+    /// the iOS 15 line, and it keeps the call site a single trailing closure.
+    let onPick: ([URL]) -> Void
+
+    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
+        minisLogger.info("[Attach] picker presenting types=\(allowedContentTypes.map { $0.identifier }.joined(separator: ",")) multi=\(allowsMultipleSelection) asCopy=true")
+        let picker = UIDocumentPickerViewController(forOpeningContentTypes: allowedContentTypes,
+                                                   asCopy: true)
+        picker.delegate = context.coordinator
+        picker.allowsMultipleSelection = allowsMultipleSelection
+        return picker
+    }
+
+    func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
+
+    func makeCoordinator() -> Coordinator { Coordinator(onPick: onPick) }
+
+    final class Coordinator: NSObject, UIDocumentPickerDelegate {
+        private let onPick: ([URL]) -> Void
+
+        init(onPick: @escaping ([URL]) -> Void) { self.onPick = onPick }
+
+        func documentPicker(_ controller: UIDocumentPickerViewController,
+                            didPickDocumentsAt urls: [URL]) {
+            minisLogger.info("[Attach] didPickDocumentsAt count=\(urls.count) first=\(urls.first?.lastPathComponent ?? "-")")
+            onPick(urls)
+        }
+
+        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+            minisLogger.info("[Attach] documentPickerWasCancelled")
+            onPick([])
+        }
+    }
 }

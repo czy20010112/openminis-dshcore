@@ -50,6 +50,9 @@ public enum DSHMinisPrompt {
                 if tools.contains("browser_use") {
                     lines.append("- A browser you can drive, with up to three tabs.")
                 }
+                if tools.contains("web_search") {
+                    lines.append("- `web_search`: a real search API, not a scraped results page.")
+                }
                 if tools.contains("memory_get") || tools.contains("memory_write") {
                     lines.append("- A memory store that persists across sessions.")
                 }
@@ -90,6 +93,7 @@ public enum DSHMinisPrompt {
 
             - `tool_title` is shown to the user in the transcript. Write it as a short human-readable summary of what the call does, in the user's language — not a restatement of the tool name.
             - Every tool that takes a path needs an absolute path inside the Linux sandbox.
+            - When a tool can look something up (`web_search`), use it instead of driving `browser_use` to a search-engine home page. Keep a search query to keywords; open a returned URL only when you need the whole page.
             - Large outputs are truncated with a header telling you how to continue. Use the offset the header names instead of re-reading the whole file.
             - For a long-running command, pass a `timeout` rather than a `sleep` loop.
             - Tools available in this turn are listed in the request. If a tool is absent, it is disabled for this conversation — do not attempt it.

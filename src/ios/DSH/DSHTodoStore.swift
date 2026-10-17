@@ -125,12 +125,21 @@ final class DSHTodoStore: ObservableObject {
     /// DSH's `progressLabel` omits empty segments and joins the rest with an
     /// en-space, a middle dot and an en-space, which is what keeps the header
     /// from reading as a wall of zeros before the first task is done.
+    ///
+    /// Each segment is a catalog key (`"%lld done"`, `"%lld active"`,
+    /// `"%lld pending"`) applied through `String(format:)`, not a literal
+    /// interpolated into one sentence: this is a `String` that a view renders,
+    /// so `Text` would take the finished sentence verbatim and the bar would read
+    /// English on every device. The leading total is a bare number and needs no
+    /// key. A key that is not in the catalog yet falls back to the English
+    /// source, which is why the call sites are safe to land before the table is
+    /// filled in.
     var progressLabel: String {
         let c = counts
         var parts: [String] = ["\(todos.count)"]
-        if c.completed > 0 { parts.append("\(c.completed) done") }
-        if c.inProgress > 0 { parts.append("\(c.inProgress) active") }
-        if c.pending > 0 { parts.append("\(c.pending) pending") }
+        if c.completed > 0 { parts.append(String(format: AppLocalized("%lld done"), c.completed)) }
+        if c.inProgress > 0 { parts.append(String(format: AppLocalized("%lld active"), c.inProgress)) }
+        if c.pending > 0 { parts.append(String(format: AppLocalized("%lld pending"), c.pending)) }
         return parts.joined(separator: "\u{2002}\u{00B7}\u{2002}")
     }
 

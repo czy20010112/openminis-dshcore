@@ -524,6 +524,11 @@ extension AIChatViewModel {
 
         let fileName = sourceURL.lastPathComponent
         let destURL = dir.appendingPathComponent("\(UUID().uuidString.prefix(8))_\(fileName)")
+        // [Attach] The whole file-attachment chain is bracketed by these lines:
+        // picker → enter → copy ok / copy FAILED → count. Before them, a picker
+        // that never called back and a picker whose copy threw looked identical
+        // in the log (i.e. like nothing at all).
+        logger.info("[Attach] addFileAttachment enter name=\(fileName) exists=\(fm.fileExists(atPath: sourceURL.path)) src=\(sourceURL.path)")
         do {
             // sourceURL may be security-scoped
             let accessed = sourceURL.startAccessingSecurityScopedResource()
@@ -557,8 +562,11 @@ extension AIChatViewModel {
             } else {
                 kind = .document
             }
+            let bytes = (try? destURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
             attachments.append(InputAttachment(fileName: fileName, cacheURL: destURL, kind: kind))
+            logger.info("[Attach] copy ok name=\(fileName) bytes=\(bytes) kind=\(kind) scoped=\(accessed) count=\(attachments.count)")
         } catch {
+            logger.error("[Attach] copy FAILED name=\(fileName) src=\(sourceURL.path) err=\(error.localizedDescription)")
             logger.error("Failed to cache file attachment: \(error.localizedDescription)")
         }
     }
