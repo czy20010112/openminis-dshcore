@@ -368,6 +368,9 @@ struct StoredTokenUsage: Codable, Hashable {
     var cacheCreationTokens: Int
     var cacheReadTokens: Int
     var latestContextTokens: Int?
+    /// Optional so rows written before this field decode as nil; `nil` means the
+    /// provider did not report cache buckets for that turn.
+    var cacheReported: Bool? = nil
     /// [T-ctx-measure-outbound] See TokenUsage.estimatedRequestTokens. Optional
     /// so rows written before this field decode as nil, and so older builds and
     /// Android's backup reader (ignoreUnknownKeys) skip it.
@@ -5884,7 +5887,8 @@ extension RawMessage {
                 latestContextTokens: usage.latestContextTokens ?? 0,
                 estimatedRequestTokens: usage.estimatedRequestTokens ?? 0,
                 estimatedFixedTokens: usage.estimatedFixedTokens ?? 0,
-                calibrationModelId: usage.calibrationModelId
+                calibrationModelId: usage.calibrationModelId,
+                cacheReported: usage.cacheReported ?? false
             )
             // [T-usage-capsule-time] Restore the completion clock from the row
             // rather than stamping Date() here — this runs on RELOAD, so a
@@ -6018,6 +6022,7 @@ extension RawMessage {
     func toAgentMessage(mediaResolver: (MediaRef) -> URL) -> AgentMessage {
         let agentRole: AgentMessage.Role = role == .user ? .user : .assistant
         var agentParts: [AgentContentPart] = []
+        var toolArguments: [String: AgentToolArguments.Record] = [:]
 
         for part in parts {
             switch part {
@@ -6049,6 +6054,16 @@ extension RawMessage {
             case .toolUse(let tu):
                 let input = parseJSONToDict(tu.input)
                 agentParts.append(.toolUse(id: tu.toolUseId, name: tu.name, input: input))
+                // The stored string is the replay bytes. Keeping it here (rather
+                // than only the parsed dictionary above) is what makes a
+                // restored session byte-identical to the one the server cached;
+                // see AgentToolArguments.
+                // Guarded: only a parsed JSON object replays verbatim. A
+                // malformed or empty stored string is sent as `{}`, exactly as
+                // it was before this fix.
+                if !input.isEmpty {
+                    toolArguments[tu.toolUseId] = AgentToolArguments.Record(text: tu.input, input: input)
+                }
             case .toolResult(let tr):
                 var imgData: Data? = nil
                 var imgMime: String? = nil
@@ -6066,6 +6081,7 @@ extension RawMessage {
 
         var msg = AgentMessage(role: agentRole, parts: agentParts)
         msg.reasoningContent = reasoningContent
+        msg.toolArguments = toolArguments
         // [T-responses-echo-persist] Restore the native reasoning head. Before
         // this, `reasoningEcho` was in-memory only, so every turn rehydrated
         // from the DB reached the Responses builder with no echo and no real

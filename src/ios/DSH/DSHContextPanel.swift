@@ -35,6 +35,19 @@
 //  its place in this window. None of them may come back; the provenance lives in
 //  this comment instead.
 //
+//  A THIRD FIGURE, and the only measured ROW in the sheet, sits under the total:
+//  the provider's cache-hit share for its newest response
+//  (`DSHContextBreakdownStore.latestUsage`), written on every response report by
+//  whichever loop is driving the turn — the DSH driver's per-step report and the
+//  legacy agent loop's per-iteration stamp — so it moves with each model call
+//  rather than only when the turn ends. Its value comes from `DSHCacheHitFormat`, a
+//  port of the upstream client's `formatCacheHitPercent` (the rules, and why a
+//  partial hit never prints 100%, are documented on that type); its denominator is
+//  the prompt-side total of the SAME response, so it cannot disagree with the
+//  header figure about which request is being described. When the backend reports
+//  no cache buckets the row is absent rather than reading 0%: silence about the
+//  cache is not a cache miss.
+//
 //  The denominator is the model's WINDOW (`AIChatViewModel
 //  .currentModelContextWindow`), not the compaction pressure threshold. The
 //  threshold is a policy of ours — 80% of the window on the iOS 26 line — and a
@@ -110,6 +123,142 @@ enum DSHContextFormat {
 
     private static func trimZero(_ s: String) -> String {
         s.hasSuffix(".0") ? String(s.dropLast(2)) : s
+    }
+}
+
+// MARK: - Cache hit
+
+/// The provider's cache-hit share, ported from the upstream DSH client.
+///
+/// `formatCacheHitPercent` — `packages/client/ui-chat/src/client/chat/token-format.ts`
+/// in the upstream checkout — is the one definition of this number there: the
+/// composer's cache pill reads it over the session's SUMMED buckets
+/// (`StatsPills.cacheHitPercent`, no decimal), and the per-turn usage panel reads
+/// it over one turn's buckets with one decimal (`TurnUsagePanel`). This app's
+/// panel describes one request at a time, so the per-turn reading is the one
+/// ported here: same numerator (tokens served from cache), same denominator (the
+/// request's prompt-side billing buckets: uncached input + cache reads + cache
+/// writes), same precision rule, same `nil` for "no prompt input".
+///
+/// Each rule below is a choice upstream made deliberately, and the obvious
+/// `cacheRead / prompt * 100` breaks all three:
+///
+///   * the denominator is the three disjoint input buckets, NOT `totalTokens` —
+///     output tokens are not something a cache could have served;
+///   * rounding is half-UP on exact percentage units and done in integer
+///     arithmetic, so 2/3 cannot come out "66.99999";
+///   * a partial hit is NEVER rounded up to 100%. 999/1000 would print "100" with
+///     one decimal, so the formatter widens the display to as many decimals as
+///     the gap needs and prints `99.9…X`; only an exact hit prints "100".
+///
+/// It exists on both lines because it depends on nothing but `Int`.
+enum DSHCacheHitFormat {
+
+    /// "78.5" · "99.9" · "100" · nil when there is no rate to state.
+    ///
+    /// The percent sign belongs to the row, not here: keeping it out makes every
+    /// value below comparable, value for value, with upstream's.
+    static func percent(_ reading: DSHUsageReading?, decimalPlaces: Int = 1) -> String? {
+        guard let reading else { return nil }
+        // The upstream fold relies on `cacheRead <= prompt`: with a negative gap
+        // its `while` loop multiplies a negative number and never terminates. Every
+        // mapping in this app upholds the invariant — `TokenUsage.inputTokens` is
+        // uncached-only and `promptTokens` adds the cache buckets back, both from
+        // the same response (`TokenUsage.add`, `minisTokenUsage`) — so this is a
+        // trap for a malformed receipt, not a state the UI reaches. An impossible
+        // ratio is reported as "no rate" rather than hanging the main thread.
+        guard reading.cacheReadTokens <= reading.promptTokens else { return nil }
+        return formatCacheHitPercent(
+            reading.cacheReadTokens,
+            reading.promptTokens,
+            decimalPlaces
+        )
+    }
+
+    /// Display-ready cache-hit share without rounding a partial hit to 100%.
+    /// - Parameters:
+    ///   - cacheReadTokens: exact prompt tokens served from cache.
+    ///   - promptTokens: exact aggregate prompt tokens.
+    ///   - decimalPlaces: ordinary-ratio precision; a partial hit that would round
+    ///     to 100 automatically uses enough additional precision to stay honest.
+    /// - Returns: percentage text, or nil when there was no prompt input.
+    static func formatCacheHitPercent(_ cacheReadTokens: Int, _ promptTokens: Int, _ decimalPlaces: Int = 0) -> String? {
+        if promptTokens == 0 {
+            return nil
+        }
+        let missedInputTokens = promptTokens - cacheReadTokens
+        if missedInputTokens == 0 {
+            return "100"
+        }
+
+        let roundedUnits = roundedPercentUnits(cacheReadTokens, promptTokens, decimalPlaces)
+        let fullHitUnits = decimalPlaces == 0 ? 100 : 1_000
+        if roundedUnits < fullHitUnits {
+            return displayPercentUnits(roundedUnits, decimalPlaces)
+        }
+
+        // A partial hit that rounds to a full 100: widen the display instead of
+        // claiming the hit, so the extra decimals carry the miss.
+        var distinguishingPlaces = 1
+        var scaledDoubleGap = missedInputTokens * 200
+        let promptTens = promptTokens / 10
+        while scaledDoubleGap <= promptTens {
+            scaledDoubleGap *= 10
+            distinguishingPlaces += 1
+        }
+        let promptOnes = promptTokens % 10
+        var roundedLoss = 5
+        for loss in 1..<5 {
+            let factor = loss * 2 + 1
+            let threshold = factor * promptTens + (factor * promptOnes) / 10
+            if scaledDoubleGap <= threshold {
+                roundedLoss = loss
+                break
+            }
+        }
+        return "99." + String(repeating: "9", count: distinguishingPlaces - 1) + String(10 - roundedLoss)
+    }
+
+    /// Round a cache-read ratio to exact percentage units, with positive ties
+    /// rounded up.
+    ///
+    /// Integer arithmetic throughout, mirroring upstream: every candidate is
+    /// compared against `ceil((2·candidate − 1)·prompt / (2·scale))`, which is
+    /// "round half up" without ever forming a floating-point quotient. The search
+    /// is a bisection because the comparison cannot be inverted in closed form
+    /// once the residual is carried separately.
+    private static func roundedPercentUnits(_ cacheReadTokens: Int, _ promptTokens: Int, _ decimalPlaces: Int) -> Int {
+        let unitsPerPercent = decimalPlaces == 0 ? 1 : 10
+        let scale = unitsPerPercent * 100
+        let doubledScale = scale * 2
+        let promptQuotient = promptTokens / doubledScale
+        let promptRemainder = promptTokens % doubledScale
+        var lower = 0
+        var upper = scale
+        while lower < upper {
+            let candidate = (lower + upper + 1) / 2
+            let factor = candidate * 2 - 1
+            let threshold = factor * promptQuotient + (factor * promptRemainder + doubledScale - 1) / doubledScale
+            if cacheReadTokens >= threshold {
+                lower = candidate
+            } else {
+                upper = candidate - 1
+            }
+        }
+        return lower
+    }
+
+    /// "78" · "78.5" — a trailing zero tenth is dropped, so 78.0 prints "78".
+    private static func displayPercentUnits(_ units: Int, _ decimalPlaces: Int) -> String {
+        if decimalPlaces == 0 {
+            return String(units)
+        }
+        let whole = units / 10
+        let tenths = units % 10
+        if tenths == 0 {
+            return String(whole)
+        }
+        return "\(whole).\(tenths)"
     }
 }
 
@@ -217,18 +366,47 @@ struct DSHContextBreakdown: Equatable {
     var estimatedTotal: Int { systemPromptTokens + toolTokens + surfaceTokens }
 }
 
+/// The provider's own accounting for ONE response, in the two numbers a
+/// cache-hit share needs.
+///
+/// Both come from one receipt, which is what makes their ratio mean anything: the
+/// numerator is what the cache served, the denominator what the request cost. The
+/// `promptTokens` construction is `TokenUsage.latestContextTokens` exactly
+/// (uncached input + cache reads + cache writes), so this panel's rate and the
+/// row's own context figure describe the same request.
+///
+/// A reading exists only while the backend is accounting for the cache. A backend
+/// that reports neither cache bucket says nothing about caching, and a 0% row for
+/// it would be fabrication — which is why this is optional and why the panel drops
+/// the row rather than defaulting to zero.
+struct DSHUsageReading: Equatable {
+
+    /// Prompt-side tokens of that response: uncached input + cache reads + cache writes.
+    var promptTokens: Int
+    /// Of those, the tokens the provider served from its cache.
+    var cacheReadTokens: Int
+}
+
 /// Holds the newest breakdown so the sheet can show it.
 ///
 /// A store rather than a ViewModel property because the writer is the turn
 /// driver (once per step, mid-turn) and the reader is a sheet the composer owns;
 /// routing it through the ViewModel would add a published property that only
-/// this panel reads.
+/// this panel reads. It carries two things — this session's request measurement
+/// and the newest provider receipt — because between them they describe the one
+/// request the panel is about.
 @MainActor
 final class DSHContextBreakdownStore: ObservableObject {
 
     static let shared = DSHContextBreakdownStore()
 
     @Published private(set) var latest: DSHContextBreakdown?
+
+    /// The newest provider receipt, which is the one measured figure the panel
+    /// has: its cache-hit share. Written by whichever path is driving the turn,
+    /// each time a response reports usage (`recordUsage`), so it moves with every
+    /// model call of an agent loop rather than only at the end of the turn.
+    @Published private(set) var latestUsage: DSHUsageReading?
 
     private init() {}
 
@@ -262,12 +440,35 @@ final class DSHContextBreakdownStore: ObservableObject {
         if next != latest { latest = next }
     }
 
+    /// Record one response's own accounting.
+    ///
+    /// Called where a response's usage lands on its row, and nowhere else, so this
+    /// always holds the NEWEST response of a running turn instead of the turn's
+    /// total: an agent loop issues one request per tool round, and the panel has to
+    /// move with each of them — a rate that only appeared when the whole turn ended
+    /// was the reported defect.
+    ///
+    /// A response that names no cache bucket CLEARS the reading rather than leaving
+    /// the previous one standing. Keeping it would put a stale cache share beside a
+    /// newer occupancy figure — the panel draws them together — and the pair would
+    /// silently describe two different requests.
+    func recordUsage(_ usage: TokenUsage) {
+        let next = usage.cacheReported && usage.latestContextTokens > 0
+            ? DSHUsageReading(
+                promptTokens: usage.latestContextTokens,
+                cacheReadTokens: usage.cacheReadTokens
+            )
+            : nil
+        if next != latestUsage { latestUsage = next }
+    }
+
     /// Drop the measurement, so a later session cannot open the panel on the
     /// previous session's request. Not wired to a call site yet: the next turn of
     /// any session overwrites it, and the panel is opened from a composer whose
     /// own turn has assembled at least one request.
     func clear() {
         if latest != nil { latest = nil }
+        if latestUsage != nil { latestUsage = nil }
     }
 }
 
@@ -393,6 +594,17 @@ struct DSHContextPanel: View {
     /// Used by the iOS 26 line (`AIChatView`, its context-panel `.sheet`). The
     /// iOS 15 line cannot use it — below iOS 16 there is no custom detent at all —
     /// and pins `.medium` from inside instead, see `DSHContextSheetHeightProbe`.
+    ///
+    /// The cache row added under the total costs one more divider plus one more
+    /// 18pt row and their 10pt gaps — 39pt — and this constant was deliberately
+    /// NOT raised with it. It is a device measurement (the frames above), the
+    /// cache row is conditional on the backend reporting cache buckets, and the
+    /// rows live in a `ScrollView`, so a short sheet scrolls by ~39pt on the iOS 26
+    /// line instead of clipping anything; the iOS 15 line pins `.medium` (456pt)
+    /// and has 200pt of blank to absorb it. Raising it to 327 is the correct
+    /// follow-up, and it needs a device measurement plus an update to
+    /// `_tools/context-usage-selftest.cjs`, which pins this number to the frames
+    /// above. Both are the Lead's call, not this agent's.
     static let sheetHeight: CGFloat = 288
 
     /// Snapshot taken when the sheet was presented; the presenting view
@@ -520,6 +732,26 @@ struct DSHContextPanel: View {
                     detail: nil,
                     emphasised: true
                 )
+                // The panel's one MEASURED row, under the same heading as the
+                // estimated ones because it is the same request's receipt and the
+                // panel carries no words to say so (the provenance of every figure
+                // here is this file's header comment). Same denominator as the row
+                // above it, from the same response, so the two can never describe
+                // different requests. Absent — never "0%" — while the backend
+                // reports no cache buckets at all: `DSHUsageReading`.
+                //
+                // It sits INSIDE the breakdown branch on purpose. The receipt and
+                // the breakdown are written together on the DSH path (`buildRequest`
+                // measures the request, the response reports the usage), so the
+                // pair is either both present or both absent; on the legacy agent
+                // loop, which never records a breakdown, drawing the row anyway
+                // would put a measured rate right under the "no request has been
+                // assembled yet in this session" sentence. Moving these two lines
+                // out of the branch is all it takes to show it there too.
+                if let hit = DSHCacheHitFormat.percent(breakdowns.latestUsage) {
+                    Divider()
+                    ContextRow(label: "Cache Hit Rate", value: hit + "%")
+                }
                 // Nothing under the rows. A one-line note used to sit here
                 // ("Estimated from character count at 3.6 characters per token…")
                 // carrying the attribution of the two figures; the operator had it

@@ -269,6 +269,44 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
             }
             dshLastUsageAt = now
         }
+
+        // Publish this response's usage on the running row NOW.
+        //
+        // The row used to be stamped once, in `dshSealStreamingTurn`, so for the
+        // whole of a multi-step turn the composer's context ring and the panel
+        // behind it described the PREVIOUS turn: the driver reports once per model
+        // call, and every one of those reports is a real report from the provider.
+        // Stamping here is what makes "each response updates the reading" true, and
+        // the store takes the same value so the panel's cache row moves with it.
+        dshPublishLiveUsage()
+    }
+
+    /// Stamp the streaming row — and the panel's cache reading — with the newest
+    /// provider report. No-op before the row exists, and while nothing has been
+    /// reported yet (`dshTurnUsage` is the driver's zero value until then).
+    private func dshPublishLiveUsage() {
+        guard dshStreamingMsgIdx >= 0, dshStreamingMsgIdx < messages.count else { return }
+        guard dshTurnUsage.inputTokens > 0
+            || dshTurnUsage.outputTokens > 0
+            || (dshTurnUsage.cacheReadTokens ?? 0) > 0
+            || (dshTurnUsage.cacheWriteTokens ?? 0) > 0 else { return }
+        let idx = dshStreamingMsgIdx
+        let stamped = minisTokenUsage(dshTurnUsage)
+        if messages[idx].usage != stamped {
+            messages[idx].usage = stamped
+        }
+        DSHContextBreakdownStore.shared.recordUsage(stamped)
+        // One line per model response, and the only place the panel's inputs are
+        // visible on a device: `cache_reported=false` is the proof that this
+        // backend names no cache bucket at all (so the panel's cache row is
+        // correctly absent rather than reading 0%), and `prompt` is the same
+        // denominator the panel's rate uses.
+        AppLogger(category: "DSHLoop").info(
+            "[DSH] usage report: prompt=\(stamped.latestContextTokens) "
+            + "cache_read=\(stamped.cacheReadTokens) cache_write=\(stamped.cacheCreationTokens) "
+            + "cache_reported=\(stamped.cacheReported) out=\(stamped.outputTokens)"
+        )
+        publishUnlessTransitioning()
     }
 
     public func driver(_ driver: DSHTurnDriver, didCompact outcome: DSHCompactionOutcome) {

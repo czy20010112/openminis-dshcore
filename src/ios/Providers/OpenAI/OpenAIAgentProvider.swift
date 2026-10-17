@@ -109,6 +109,12 @@ final class OpenAIAgentProvider: AgentProvider {
             }
         }
 
+        // The invariant the local engine's KV prefix cache depends on: the
+        // conversation may only grow at the tail. Checked here because this is
+        // the last point where the outbound array is final; see
+        // DSHPrefixStability for the switch and the report format.
+        DSHPrefixStability.note(allMessages, label: "chat-completions")
+
         var body: [String: Any] = [
             "model": model.id,
             "messages": allMessages,
@@ -548,6 +554,9 @@ final class OpenAIAgentProvider: AgentProvider {
         let responsesTools = convertToolsResponsesAPI(tools)
 
         let isCodexOAuth = !provider.forceResponsesAPI && provider.isOAuth && provider.customBaseURL == nil
+
+        // Same prefix-stability assertion as the Chat Completions path.
+        DSHPrefixStability.note(inputMessages, label: "responses")
 
         var body: [String: Any] = [
             "model": model.id,
@@ -1358,7 +1367,11 @@ final class OpenAIAgentProvider: AgentProvider {
             if !toolUses.isEmpty {
                 var toolCalls: [[String: Any]] = []
                 for (id, name, input) in toolUses {
-                    let argsJSON = (try? JSONSerialization.data(withJSONObject: input)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+                    // Raw string when this message carries one — the bytes the
+                    // model emitted (or the DB row holds). Rebuilding from the
+                    // parsed dictionary changes the key order and breaks the
+                    // server's KV prefix; see AgentToolArguments.
+                    let argsJSON = AgentToolArguments.wire(input, record: msg.toolArguments[id])
                     toolCalls.append([
                         "id": Self.capChatId(id),
                         "type": "function",
@@ -1778,7 +1791,8 @@ final class OpenAIAgentProvider: AgentProvider {
         if !toolUses.isEmpty {
             var toolCalls: [[String: Any]] = []
             for (id, name, input) in toolUses {
-                let argsJSON = (try? JSONSerialization.data(withJSONObject: input)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+                // See the sibling site in convertMessagesChatCompletions.
+                let argsJSON = AgentToolArguments.wire(input, record: msg.toolArguments[id])
                 toolCalls.append([
                     "id": Self.capChatId(id),
                     "type": "function",
@@ -1976,7 +1990,8 @@ final class OpenAIAgentProvider: AgentProvider {
                     result.append(["role": role, "content": text])
 
                 case .toolUse(let id, let name, let input, _):
-                    let argsStr = (try? JSONSerialization.data(withJSONObject: input)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+                    // See the sibling site in convertMessagesChatCompletions.
+                    let argsStr = AgentToolArguments.wire(input, record: msg.toolArguments[id])
                     let (callId, fcId) = Self.splitResponsesAPIIds(id)
                     let safeCallId = Self.capResponsesId(callId)
                     var entry: [String: Any] = [

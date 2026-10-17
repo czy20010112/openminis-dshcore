@@ -6801,9 +6801,12 @@ private struct TokenUsageSheet: View {
                     // "Input (incl. cache)" row above (input + cacheRead + cacheWrite).
                     // Shows how much of this session's input was served from cache.
                     let totalInput = s.input + s.cacheRead + s.cacheWrite
-                    if totalInput > 0 && s.cacheRead > 0 {
-                        let hitRate = Double(s.cacheRead) / Double(totalInput) * 100
-                        StatRow(label: "Cache Hit Rate", value: String(format: "%.1f%%", hitRate), icon: "percent")
+                    // Through the shared formatter, not a printf percent: a session at 99.96%
+                    // must not print 100.0%. Decimal places 0 because this is a session total;
+                    // the per-turn panel is the one that uses 1.
+                    if totalInput > 0, s.cacheRead > 0,
+                       let rate = DSHCacheHitFormat.formatCacheHitPercent(s.cacheRead, totalInput, 0) {
+                        StatRow(label: "Cache Hit Rate", value: rate + "%", icon: "percent")
                     }
                 }
 

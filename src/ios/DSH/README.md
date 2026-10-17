@@ -176,9 +176,52 @@ Matches DSH's `selectCompactableRange`:
 4. Shadow the resulting range with one summary entry, and only when the summary
    actually costs less than what it replaces.
 
-The threshold is 80% of the serving model's context window. An unknown window
-disables automatic compaction rather than compacting on a guess — compacting
-away the live request is worse than running long.
+## When compaction runs
+
+Two triggers, both DSH's, both owned by the turn driver rather than by the chat
+view model — a turn that fans out into dozens of tool calls has to be able to
+compact in the middle of itself, and a check that only runs when the user presses
+send cannot do that.
+
+**Pressure, once per step.** Before every step's request is derived, the driver
+prices the envelope of the request the provider last answered — its own reported
+prompt tokens when it reported any, the character-based estimate otherwise, plus
+whatever the surface has grown by since — and compacts when that crosses the
+route's threshold:
+
+```
+threshold = floor(min(W × thresholdRatio, W − O − headroomTokens))
+retained  = floor((W − O) × retainRatio)
+```
+
+with DSH's defaults (`thresholdRatio` 0.8, `headroomTokens` 65 536,
+`retainRatio` 0.16). `W` is the serving model's window and `O` the output the
+request reserves. An unknown window disables this trigger rather than compacting
+on a guess — compacting away the live request makes the model answer from
+nothing — and reports that once per route. The first step of a turn has no priced
+request yet, so it does not compact; DSH compacts only against a request it has
+already routed, for the same reason.
+
+The envelope matters: the system prompt and the tool roster are part of what the
+provider counts against the window and are exactly the part a compaction cannot
+shrink, so a rule that measures only the surface lets a request overflow while
+the conversation still looks small. The threshold matters too: 80% of the window
+stated without the output reservation and the headroom is not the same trigger —
+on a 128k model it fires ~70k tokens later, by which point the request has
+already been rejected.
+
+**Context overflow, on the failed request.** A provider that reports the request
+exceeded the model's window gets one maximal balanced head reduction (the
+retained tail is dropped to the newest node) and one retry of the same step. The
+pressure threshold does not apply: the request has already failed. A retry needs
+proof that the surface actually shrank, so the recovery is authorized only after
+the session's replacement generation advances.
+
+Every outcome leaves one line: `[CompactDiag] mid-turn compaction at turn=… step=…
+before=… after=… shadowed=… reason=pressure|context-overflow …`, or the matching
+`skipped` / `unavailable` / `recovery exhausted` line. A silent context rewrite
+is indistinguishable from the model forgetting, and a silent *refusal* to
+rewrite was indistinguishable from a threshold that never fired.
 
 ## Compaction verified on device
 
@@ -209,6 +252,25 @@ the same rule, `_testdata/compaction_probe.py`):
 
 Every accepted cut was tool-pairing balanced, so a compaction cannot strand a
 tool call from its result.
+
+## Reproducing the trigger decision without a device
+
+`_tools/midturn-compaction-selftest.cjs` asserts *where* a compaction fires, not
+just that the code says the right words. It reads the two trees, requires the
+shared files to be byte-identical and `DSHTurnDriver.swift` to differ only by the
+iOS 26 `.responseModel` case; reads the upstream TypeScript and checks the two
+hook points, the arithmetic, and the retry guard are what the port claims; runs
+upstream's real `isContextWindowExceededError` out of `packages/llm/llm/src/error.ts`
+in a vm and requires the port's extracted patterns to agree with it over a corpus
+of provider wordings; translates the port's `resolveSpec` arithmetic out of the
+Swift and requires exact agreement with upstream's own expression lines across 40
+`(window, reserved output)` pairs; and then runs the driver's fire/no-fire
+decision over step sequences, including the counterfactual of the removed
+80%-of-window rule that never fired in the reported case.
+
+`_tools/midturn-compaction-mutation-test.ps1` proves the harness is not vacuous:
+it applies six deliberate regressions one at a time to the shipped files, requires
+the harness to fail each time, and restores every file byte-for-byte.
 
 ## Two device-only facts worth knowing
 

@@ -98,10 +98,29 @@ public struct DSHTurnDriverConfig: Sendable {
     public var loopWarningThreshold: Int
     /// Loop-guard critical threshold.
     public var loopCriticalThreshold: Int
-    /// Recent-tail budget retained verbatim by a compaction.
-    public var compactionRetainTokens: Int
-    /// Total surface tokens above which a compaction is worth doing.
-    public var compactionPressureTokens: Int
+    /// Trigger policy: the pressure threshold and the retained-tail budget this
+    /// conversation resolves against the serving model's capacity.
+    ///
+    /// DSH splits the trigger into a policy (`compaction-basic`'s resolved
+    /// config) and a capacity (`resolveCompactSpec`'s `contextWindow` argument).
+    /// These two fields are that pair.
+    public var compactionPolicy: DSHCompactionPolicy
+    /// Adapter-resolved capacity of the routed model, or nil when none is known.
+    ///
+    /// nil leaves proactive pressure compaction off rather than compacting on a
+    /// guess — DSH reports the same case as a target configuration error and
+    /// warns once per route. Provider-confirmed overflow recovery stays
+    /// available either way, because that trigger needs no capacity at all: the
+    /// provider has already told us the request did not fit.
+    public var contextWindow: Int?
+    /// Absolute pressure threshold, replacing the policy's derived one.
+    ///
+    /// An override moves *when* a compaction fires, never what it keeps. It
+    /// exists so the pressure path can be exercised on a device whose window is
+    /// too large to fill by hand; a released build leaves it nil.
+    public var compactionPressureTokensOverride: Int?
+    /// Absolute retained-tail budget, replacing the policy's derived one.
+    public var compactionRetainTokensOverride: Int?
     /// Whether automatic compaction is enabled.
     public var autoCompactionEnabled: Bool
     /// Ordered tool names, with the rest marker exactly once. nil means
@@ -129,8 +148,10 @@ public struct DSHTurnDriverConfig: Sendable {
         enableLoopGuard: Bool = true,
         loopWarningThreshold: Int = 10,
         loopCriticalThreshold: Int = 20,
-        compactionRetainTokens: Int = 20_000,
-        compactionPressureTokens: Int = 120_000,
+        compactionPolicy: DSHCompactionPolicy = DSHCompactionPolicy(),
+        contextWindow: Int? = nil,
+        compactionPressureTokensOverride: Int? = nil,
+        compactionRetainTokensOverride: Int? = nil,
         autoCompactionEnabled: Bool = true,
         toolOrder: [String]? = nil,
         streamRetryDelays: [Int] = [3, 5, 10, 15, 30]
@@ -142,8 +163,18 @@ public struct DSHTurnDriverConfig: Sendable {
         self.enableLoopGuard = enableLoopGuard
         self.loopWarningThreshold = max(1, loopWarningThreshold)
         self.loopCriticalThreshold = max(self.loopWarningThreshold + 1, loopCriticalThreshold)
-        self.compactionRetainTokens = max(0, compactionRetainTokens)
-        self.compactionPressureTokens = max(1, compactionPressureTokens)
+        self.compactionPolicy = compactionPolicy
+        if let contextWindow, contextWindow > 0 {
+            self.contextWindow = contextWindow
+        } else {
+            self.contextWindow = nil
+        }
+        self.compactionPressureTokensOverride = compactionPressureTokensOverride.flatMap {
+            $0 > 0 ? $0 : nil
+        }
+        self.compactionRetainTokensOverride = compactionRetainTokensOverride.flatMap {
+            $0 >= 0 ? $0 : nil
+        }
         self.autoCompactionEnabled = autoCompactionEnabled
         self.toolOrder = toolOrder
         self.streamRetryDelays = streamRetryDelays.filter { $0 > 0 }
@@ -174,6 +205,42 @@ public final class DSHTurnDriver {
     private var currentTurn = 0
     private var isRunning = false
     private var cancelled = false
+
+    /// The last request envelope the provider priced, and the surface it was
+    /// priced against.
+    ///
+    /// DSH's pressure check prices the latest *durable routed request* — the
+    /// request header in its session log — together with the current surface.
+    /// This app has no request log, so the driver keeps the two facts that stand
+    /// in for one: the prompt tokens the provider itself counted for the last
+    /// request (or the character-based envelope estimate when the adapter
+    /// reported no usage), and the surface total at that moment, which is added
+    /// to so growth since the request still counts.
+    ///
+    /// Seeded from the envelope the turn is about to send, then replaced by what
+    /// each request actually reported. DSH reads the equivalent figure out of the
+    /// previous turn's durable request header; a driver constructed per turn has
+    /// no such header, so it measures instead — which also lets the first step of
+    /// a turn compact, where DSH has nothing to price yet.
+    private var lastPricedRequest: PricedRequest?
+
+    /// One routed request's priced envelope.
+    private struct PricedRequest {
+        /// Prompt tokens the provider counted, or the estimated envelope total.
+        let promptTokens: Int
+        /// Output tokens the request reserved inside the window.
+        let reservedCompletionTokens: Int
+        /// Surface tokens the envelope was measured with.
+        let surfaceTokens: Int
+    }
+
+    /// Provider-confirmed overflow recoveries spent in this turn.
+    private var overflowRetries = 0
+    /// Routes whose pressure configuration has already been reported.
+    private var warnedPressureTargets = Set<String>()
+    /// Skip reasons already reported this turn, so a surface that repeats the same
+    /// refusal on every step logs it once instead of once per step.
+    private var reportedSkips = Set<String>()
 
     public weak var delegate: (any DSHTurnDriverDelegate)?
 
@@ -213,6 +280,19 @@ public final class DSHTurnDriver {
         self.config = config
     }
 
+    /// The trigger budget this driver will apply to its next request.
+    ///
+    /// Exposed so a host can display the threshold that is actually in force
+    /// rather than restating the policy and hoping the two agree. nil means no
+    /// capacity is known, which is the same condition under which the driver
+    /// leaves proactive pressure compaction off.
+    ///
+    /// - Parameter reservedCompletionTokens: output tokens the request reserves.
+    /// - Returns: the resolved pressure and retention budgets, or nil.
+    public func resolvedCompactionSpec(reservedCompletionTokens: Int) -> DSHCompactionSpec? {
+        try? resolveSpec(reservedCompletionTokens: reservedCompletionTokens)
+    }
+
     // MARK: - Turn
 
     /// Cancel the running turn at the next step boundary.
@@ -239,6 +319,19 @@ public final class DSHTurnDriver {
 
         // Counters are per turn, so a call repeated across turns is not a loop.
         gate.reset()
+        // A new turn starts a fresh overflow-recovery sequence: DSH clears the
+        // same counter when the agent goes idle.
+        overflowRetries = 0
+        reportedSkips.removeAll()
+        // Prime the priced envelope before the first step, so a turn that opens
+        // on an already-over-threshold conversation compacts before its first
+        // request instead of spending that request to discover the overflow.
+        // DSH reads this from the previous turn's durable request header; the
+        // driver is constructed per turn here, so it measures the envelope it is
+        // about to send.
+        if config.autoCompactionEnabled {
+            lastPricedRequest = measureRequestEnvelope()
+        }
 
         while step < config.maxStepsPerTurn {
             if cancelled {
@@ -249,150 +342,195 @@ public final class DSHTurnDriver {
             step += 1
             delegate?.driver(self, didStartStep: turn, step: step)
 
-            // Automatic compaction, before the request is built. Running it here
-            // rather than inside the request builder keeps the surface the model
-            // sees consistent with the surface the driver just measured.
+            // DSH's `agent/pre-step` pressure trigger. It runs before the request
+            // for this step is derived, so the surface the model is given is the
+            // surface this check just measured, and it runs once per proposed
+            // step — which is what makes a turn that fans out into dozens of
+            // tool calls compact mid-turn instead of only at send time.
             if config.autoCompactionEnabled {
-                await maybeCompact(turn: turn)
+                await compactForPressure(turn: turn, step: step)
             }
 
-            let request = buildRequest()
-
-            let stream: AsyncThrowingStream<AgentStreamEvent, Error>
-            //
-            // Retryable transport failures are retried with the host's backoff
-            // before the turn is allowed to fail. `LLMError.isRetryable` is the
-            // same predicate the legacy loop retried on, so a network blip or a
-            // 5xx recovers here instead of ending the turn with an error banner.
-            var retryAttempt = 0
-            while true {
-                do {
-                    stream = try await provider.streamAgentMessageClamped(
-                        messages: request.messages,
-                        systemPrompt: request.systemPrompt,
-                        tools: request.tools,
-                        maxTokens: request.maxTokens,
-                        thinkingLevel: request.thinkingLevel
-                    )
-                    // Tell the host the stream is open, so it can clear the
-                    // countdown and the error it showed on the row.
-                    delegate?.driver(self, streamRetryCountdown: 0)
-                    break
-                } catch let error as LLMError
-                    where error.isRetryable && retryAttempt < config.streamRetryDelays.count {
-                    retryAttempt += 1
-                    let seconds = config.streamRetryDelays[retryAttempt - 1]
-                    delegate?.driver(
-                        self,
-                        willRetryStreamAfter: error,
-                        attempt: retryAttempt,
-                        seconds: seconds
-                    )
-                    do {
-                        for remaining in stride(from: seconds, through: 1, by: -1) {
-                            delegate?.driver(self, streamRetryCountdown: remaining)
-                            try await Task.sleep(nanoseconds: 1_000_000_000)
-                        }
-                    } catch {
-                        // Cancelled during the backoff — Stop, or session teardown.
-                        delegate?.driver(self, streamRetryCountdown: 0)
-                        delegate?.driver(self, didEndTurn: .cancelled)
-                        return .cancelled
-                    }
-                    continue
-                } catch {
-                    let failure = error as? DSHFailure
-                        ?? DSHFailure(message: String(describing: error), code: "PROVIDER_ERROR")
-                    delegate?.driver(self, didFail: failure)
-                    return .cancelled
-                }
-            }
+            var request = buildRequest()
 
             var assistantParts: [DSHContentBlock] = []
             var toolCalls: [DSHToolCallBlock] = []
             var stopReason: AgentStopReason = .endTurn
             var usage = DSHTokenUsage()
 
-            do {
-                for try await event in stream {
-                    switch event {
-                    case .textDelta(let text):
-                        delegate?.driver(self, didEmitText: text)
-                        if let last = assistantParts.last, let existing = last as? DSHTextBlock {
-                            assistantParts[assistantParts.count - 1] = DSHTextBlock(text: existing.text + text)
-                        } else {
-                            assistantParts.append(DSHTextBlock(text: text))
-                        }
+            // One step may issue more than one request: a provider-confirmed
+            // context overflow is answered with a compaction and a retry of the
+            // same step, exactly as DSH's `agent/request-error` recovery
+            // re-derives and re-issues the request it just lost.
+            attemptLoop: while true {
+                // A retried attempt starts from a clean local frame. The driver
+                // commits only after a stream completes, so nothing durable came
+                // from the failed attempt and reusing its partial parts would
+                // append a duplicated answer.
+                assistantParts = []
+                toolCalls = []
+                stopReason = .endTurn
+                usage = DSHTokenUsage()
 
-                    case .thinkingDelta(let text):
-                        delegate?.driver(self, didEmitReasoning: text)
-
-                    case .reasoningContent, .reasoningEcho, .contentBlockStart, .toolInputDelta:
-                        // Provider-private payloads and previews. The driver
-                        // commits on toolCallComplete, so these are not
-                        // model-visible state the driver owns.
-                        break
-
-                    case .responseModel:
-                        // [T-agent-model-identity] The model the API reported
-                        // serving. Identity reporting is the ViewModel's
-                        // concern; the driver addresses the model it was
-                        // configured with, so this carries no loop state.
-                        break
-
-                    case .toolCallComplete(let id, let name, let args, _):
-                        let block = DSHToolCallBlock(
-                            id: id, name: name, arguments: encodeArguments(args)
+                let stream: AsyncThrowingStream<AgentStreamEvent, Error>
+                //
+                // Retryable transport failures are retried with the host's backoff
+                // before the turn is allowed to fail. `LLMError.isRetryable` is the
+                // same predicate the legacy loop retried on, so a network blip or a
+                // 5xx recovers here instead of ending the turn with an error banner.
+                var retryAttempt = 0
+                while true {
+                    do {
+                        stream = try await provider.streamAgentMessageClamped(
+                            messages: request.messages,
+                            systemPrompt: request.systemPrompt,
+                            tools: request.tools,
+                            maxTokens: request.maxTokens,
+                            thinkingLevel: request.thinkingLevel
                         )
-                        toolCalls.append(block)
-                        assistantParts.append(block)
-                        // [T-ios-tool-announce-in-stream] Announce now, not after
-                        // the stream ends.
-                        //
-                        // The batch announce below used to be the only one, so
-                        // every tool block of a step appeared in one frame at the
-                        // end of the provider stream — and the text tail the
-                        // throttle was holding landed in that same frame, which is
-                        // the reported "a few characters, then the rest together
-                        // with all the tool calls". Here the block lands as soon as
-                        // its own call finished streaming, so several parallel calls
-                        // appear in the order they completed, as the legacy loop's
-                        // per-`contentBlockStart` append did.
-                        //
-                        // A call the loop guard later refuses needs no special
-                        // case: it is announced like any other, and `recordBlocked`
-                        // renders its refusal through `didFinishTool`, which the
-                        // adapter resolves by call id into the block that already
-                        // exists.
-                        announcedCallIds.insert(id)
+                        // Tell the host the stream is open, so it can clear the
+                        // countdown and the error it showed on the row.
+                        delegate?.driver(self, streamRetryCountdown: 0)
+                        break
+                    } catch let error as LLMError
+                        where error.isRetryable && retryAttempt < config.streamRetryDelays.count {
+                        retryAttempt += 1
+                        let seconds = config.streamRetryDelays[retryAttempt - 1]
                         delegate?.driver(
                             self,
-                            willRunTool: name,
-                            callId: id,
-                            arguments: args
+                            willRetryStreamAfter: error,
+                            attempt: retryAttempt,
+                            seconds: seconds
                         )
-
-                    case .usage(let reported):
-                        usage.inputTokens += reported.inputTokens
-                        usage.outputTokens += reported.outputTokens
-                        if let v = reported.cacheCreationInputTokens {
-                            usage.cacheWriteTokens = (usage.cacheWriteTokens ?? 0) + v
+                        do {
+                            for remaining in stride(from: seconds, through: 1, by: -1) {
+                                delegate?.driver(self, streamRetryCountdown: remaining)
+                                try await Task.sleep(nanoseconds: 1_000_000_000)
+                            }
+                        } catch {
+                            // Cancelled during the backoff — Stop, or session teardown.
+                            delegate?.driver(self, streamRetryCountdown: 0)
+                            delegate?.driver(self, didEndTurn: .cancelled)
+                            return .cancelled
                         }
-                        if let v = reported.cacheReadInputTokens {
-                            usage.cacheReadTokens = (usage.cacheReadTokens ?? 0) + v
+                        continue
+                    } catch {
+                        let failure = error as? DSHFailure
+                            ?? DSHFailure(message: String(describing: error), code: "PROVIDER_ERROR")
+                        if await recoverFromContextOverflow(failure, turn: turn, step: step) {
+                            request = buildRequest()
+                            continue attemptLoop
                         }
-                        delegate?.driver(self, didReportUsage: usage)
-
-                    case .done(let reason):
-                        stopReason = reason
+                        delegate?.driver(self, didFail: failure)
+                        return .cancelled
                     }
                 }
-            } catch {
-                let failure = error as? DSHFailure
-                    ?? DSHFailure(message: String(describing: error), code: "STREAM_ERROR")
-                delegate?.driver(self, didFail: failure)
-                return .cancelled
+
+                do {
+                    for try await event in stream {
+                        switch event {
+                        case .textDelta(let text):
+                            delegate?.driver(self, didEmitText: text)
+                            if let last = assistantParts.last, let existing = last as? DSHTextBlock {
+                                assistantParts[assistantParts.count - 1] = DSHTextBlock(text: existing.text + text)
+                            } else {
+                                assistantParts.append(DSHTextBlock(text: text))
+                            }
+
+                        case .thinkingDelta(let text):
+                            delegate?.driver(self, didEmitReasoning: text)
+
+                        case .reasoningContent, .reasoningEcho, .contentBlockStart, .toolInputDelta:
+                            // Provider-private payloads and previews. The driver
+                            // commits on toolCallComplete, so these are not
+                            // model-visible state the driver owns.
+                            break
+
+                        case .responseModel:
+                            // [T-agent-model-identity] The model the API reported
+                            // serving. Identity reporting is the ViewModel's
+                            // concern; the driver addresses the model it was
+                            // configured with, so this carries no loop state.
+                            break
+
+                        case .toolCallComplete(let id, let name, let args, _):
+                            let block = DSHToolCallBlock(
+                                id: id, name: name, arguments: encodeArguments(args)
+                            )
+                            toolCalls.append(block)
+                            assistantParts.append(block)
+                            // [T-ios-tool-announce-in-stream] Announce now, not after
+                            // the stream ends.
+                            //
+                            // The batch announce below used to be the only one, so
+                            // every tool block of a step appeared in one frame at the
+                            // end of the provider stream — and the text tail the
+                            // throttle was holding landed in that same frame, which is
+                            // the reported "a few characters, then the rest together
+                            // with all the tool calls". Here the block lands as soon as
+                            // its own call finished streaming, so several parallel calls
+                            // appear in the order they completed, as the legacy loop's
+                            // per-`contentBlockStart` append did.
+                            //
+                            // A call the loop guard later refuses needs no special
+                            // case: it is announced like any other, and `recordBlocked`
+                            // renders its refusal through `didFinishTool`, which the
+                            // adapter resolves by call id into the block that already
+                            // exists.
+                            announcedCallIds.insert(id)
+                            delegate?.driver(
+                                self,
+                                willRunTool: name,
+                                callId: id,
+                                arguments: args
+                            )
+
+                        case .usage(let reported):
+                            usage.inputTokens += reported.inputTokens
+                            usage.outputTokens += reported.outputTokens
+                            if let v = reported.cacheCreationInputTokens {
+                                usage.cacheWriteTokens = (usage.cacheWriteTokens ?? 0) + v
+                            }
+                            if let v = reported.cacheReadInputTokens {
+                                usage.cacheReadTokens = (usage.cacheReadTokens ?? 0) + v
+                            }
+                            // Deliberately NOT reported here. The accumulator below
+                            // carries this step's running total, and every chunk
+                            // repeats the same total, so reporting per chunk made the
+                            // delegate add it twice (three times with two chunks) and
+                            // the session figures read about 2x until a relaunch
+                            // recomputed them from the database. DSH keys usage by
+                            // (turn, step) and replaces rather than adds, so the one
+                            // report at the end of the step is the equivalent. The
+                            // live figure while streaming comes from the estimate.
+
+                        case .done(let reason):
+                            stopReason = reason
+                        }
+                    }
+                } catch {
+                    let failure = error as? DSHFailure
+                        ?? DSHFailure(message: String(describing: error), code: "STREAM_ERROR")
+                    // A provider that reports the request exceeded its context
+                    // window is answered with one compaction and a retry of this
+                    // same step. Anything else ends the turn as before.
+                    if await recoverFromContextOverflow(failure, turn: turn, step: step) {
+                        request = buildRequest()
+                        continue attemptLoop
+                    }
+                    delegate?.driver(self, didFail: failure)
+                    return .cancelled
+                }
+                break attemptLoop
             }
+
+            // Refine the priced envelope with what the provider itself counted.
+            // DSH's meter reuses provider-reported usage when the request carried
+            // it and falls back to character counting otherwise, because the
+            // provider's number is the only one that knows how that adapter
+            // tokenized the request. This is the figure the next step's pressure
+            // check compares against the threshold.
+            recordProviderPricing(usage)
 
             // Commit the assistant turn before any tool results, so the
             // conversation stays provider-valid (tool_use then tool_result).
@@ -401,6 +539,10 @@ public final class DSHTurnDriver {
                     DSHMessage(role: .assistant, blocks: assistantParts),
                     turn: turn
                 )
+                // A completed response starts a fresh overflow-recovery sequence,
+                // even when tool calls continue the same turn into another
+                // request (DSH clears the same counter on `assistant/message`).
+                overflowRetries = 0
             }
 
             delegate?.driver(self, didReportUsage: usage)
@@ -507,19 +649,185 @@ public final class DSHTurnDriver {
 
     // MARK: - Compaction
 
-    /// Compact the surface when it is under pressure.
-    private func maybeCompact(turn: Int) async {
+    /// DSH's `agent/pre-step` pressure trigger.
+    ///
+    /// Prices the latest routed request against the routed model's threshold and
+    /// compacts when it crosses. Runs once per proposed step, before this step's
+    /// request is derived, so the surface the model is given is the surface this
+    /// check just measured — and so a single turn that fans out into dozens of
+    /// tool iterations compacts in the middle of itself rather than only when the
+    /// user next presses send.
+    ///
+    /// Threshold and retention both come from `compactionPolicy` scaled to the
+    /// resolved window, never from a fixed token count: a fixed count either
+    /// fires on every step of a small-window model or never fires on a large one.
+    ///
+    /// - Parameters:
+    ///   - turn: enclosing turn, recorded on the compaction bracket.
+    ///   - step: step the compaction precedes, for the diagnostic line.
+    private func compactForPressure(turn: Int, step: Int) async {
         guard config.autoCompactionEnabled else { return }
+        guard let price = lastPricedRequest else { return }
 
-        let surface = session.surface()
-        let total = DSHTokenEstimate.total(surface)
-        guard total >= config.compactionPressureTokens else { return }
+        let surfaceNow = DSHTokenEstimate.total(session.surface())
+        let measured = price.promptTokens + max(0, surfaceNow - price.surfaceTokens)
+
+        let spec: DSHCompactionSpec
+        do {
+            spec = try resolveSpec(reservedCompletionTokens: price.reservedCompletionTokens)
+        } catch let error as DSHCompactionConfigError {
+            // Misconfiguration is a property of the route, so it is reported once
+            // per route rather than once per step. DSH warns once for the same
+            // reason and skips proactive compaction until the config is fixed.
+            if warnedPressureTargets.insert(error.targetKey).inserted {
+                AppLogger(category: "CompactDiag").warning(
+                    "[CompactDiag] mid-turn compaction unavailable for \(error.targetKey): "
+                    + "\(error.message); provider-confirmed overflow recovery stays active"
+                )
+            }
+            return
+        } catch {
+            return
+        }
+
+        guard measured >= spec.thresholdTokens else { return }
+
+        // The system prompt and tool roster are part of the request the provider
+        // prices but cannot be shadowed by a compaction, so they are carried
+        // across the re-measure below instead of being recomputed from the
+        // surface.
+        let envelopeHead = max(0, measured - surfaceNow)
+
+        for attempt in 0...spec.compactionRetries {
+            let result = await DSHCompaction.compact(
+                session: session,
+                turn: turn,
+                retainTokens: spec.retainTokens,
+                pressureThreshold: spec.thresholdTokens,
+                measuredTokens: measured,
+                model: provider.model.id,
+                provider: provider.name
+            ) { [weak self] shadowedText in
+                guard let self else { throw DSHCompactionError.summaryFailed("driver deallocated") }
+                return try await self.summarize(shadowedText)
+            }
+
+            switch result {
+            case .success(let outcome):
+                let position = "turn=\(turn) step=\(step)"
+                let tokens = "before=\(outcome.beforeTokens) after=\(outcome.afterTokens)"
+                let shadowed = outcome.range.shadowedSeqs.count
+                AppLogger(category: "CompactDiag").warning(
+                    "[CompactDiag] mid-turn compaction at \(position): \(tokens) "
+                    + "shadowed=\(shadowed) reason=pressure "
+                    + specFacts(spec, measured: measured)
+                    + " attempt=\(attempt) reserved=\(spec.reservedCompletionTokens)"
+                )
+                delegate?.driver(self, didCompact: outcome)
+                // Re-price through the same composition the gate used: the freed
+                // tokens are what decides whether another attempt is needed.
+                let after = DSHTokenEstimate.total(session.surface()) + envelopeHead
+                if after < spec.thresholdTokens { return }
+                lastPricedRequest = PricedRequest(
+                    promptTokens: after,
+                    reservedCompletionTokens: spec.reservedCompletionTokens,
+                    surfaceTokens: DSHTokenEstimate.total(session.surface())
+                )
+            case .failure(let error):
+                // Reported once per reason per turn: a surface that is over
+                // threshold with nothing safely compactable refuses identically
+                // on every step, and one line per step buries the reason it is
+                // refusing. `.noShrink` covers both "nothing safe to select" and
+                // "the summary would not be smaller than what it replaces".
+                let key = "\(error)"
+                if reportedSkips.insert(key).inserted {
+                    let position = "turn=\(turn) step=\(step)"
+                    let reason = error.message
+                    let entries = session.surfaceCount
+                    AppLogger(category: "CompactDiag").warning(
+                        "[CompactDiag] mid-turn compaction skipped at \(position): "
+                        + "reason=\(reason) \(specFacts(spec, measured: measured)) "
+                        + "surfaceEntries=\(entries)"
+                    )
+                }
+                return
+            }
+        }
+
+        let attempts = spec.compactionRetries + 1
+        AppLogger(category: "CompactDiag").warning(
+            "[CompactDiag] mid-turn compaction still above threshold at turn=\(turn) step=\(step) "
+            + "after \(attempts) attempt(s): \(specFacts(spec, measured: measured))"
+        )
+    }
+
+    /// The budget facts one compaction line reports.
+    ///
+    /// A named piece rather than one long `+` chain: a single chain holding a
+    /// dozen interpolations over mixed `Int`/`Double`/`String` operands makes the
+    /// type checker search every overload combination, and the whole expression
+    /// gets rejected as "unable to type-check in reasonable time" — a real build
+    /// failure that a local syntax check cannot see.
+    ///
+    /// - Parameters:
+    ///   - spec: the resolved trigger budget.
+    ///   - measured: the priced envelope the threshold was compared against.
+    /// - Returns: one line's worth of threshold, window, and retention facts.
+    private func specFacts(_ spec: DSHCompactionSpec, measured: Int) -> String {
+        "measured=\(measured) threshold=\(spec.thresholdTokens)"
+            + " window=\(spec.contextWindow) retain=\(spec.retainTokens)"
+    }
+
+    /// DSH's `agent/request-error` context-overflow recovery.
+    ///
+    /// A provider that reports the request exceeded the model's window is
+    /// answered with one maximal balanced head reduction and one retry of the
+    /// same step. Both the pressure threshold and the retained-tail policy are
+    /// deliberately bypassed here: the request has already failed, so any
+    /// reduction that advances the surface is progress, and `retainTokens: 0`
+    /// retains only the newest surface node — the largest reduction the selection
+    /// rule can produce.
+    ///
+    /// A retry is authorized only after the surface actually shrank. Without that
+    /// proof the retry re-sends the request that was just rejected, and the pair
+    /// of them repeat until `maxOverflowRetries` runs out.
+    ///
+    /// - Parameters:
+    ///   - failure: the provider's structured failure.
+    ///   - turn: enclosing turn.
+    ///   - step: step being retried.
+    /// - Returns: true when the surface shrank and the caller should retry.
+    private func recoverFromContextOverflow(
+        _ failure: DSHFailure,
+        turn: Int,
+        step: Int
+    ) async -> Bool {
+        guard config.autoCompactionEnabled else { return false }
+
+        // Every piece of text the failure carries is classified, because the
+        // provider's code and message differ per adapter and only one of them may
+        // name the context bound.
+        let detail = "\(failure.code) \(failure.status.map(String.init) ?? "") \(failure.message)"
+        guard DSHContextOverflow.isContextWindowExceeded(detail) else { return false }
+
+        guard overflowRetries < config.compactionPolicy.maxOverflowRetries else {
+            AppLogger(category: "CompactDiag").warning(
+                "[CompactDiag] context-overflow recovery exhausted at turn=\(turn) step=\(step): "
+                + "attempts=\(overflowRetries)/\(config.compactionPolicy.maxOverflowRetries) "
+                + "failure=\(failure.code)"
+            )
+            return false
+        }
+
+        let generation = session.surfaceReplacementGeneration
+        let surfaceBefore = DSHTokenEstimate.total(session.surface())
 
         let result = await DSHCompaction.compact(
             session: session,
             turn: turn,
-            retainTokens: config.compactionRetainTokens,
-            pressureThreshold: config.compactionPressureTokens,
+            retainTokens: 0,
+            pressureThreshold: 0,
+            measuredTokens: 0,
             model: provider.model.id,
             provider: provider.name
         ) { [weak self] shadowedText in
@@ -527,9 +835,125 @@ public final class DSHTurnDriver {
             return try await self.summarize(shadowedText)
         }
 
-        if case .success(let outcome) = result {
+        switch result {
+        case .success(let outcome):
+            let position = "turn=\(turn) step=\(step)"
+            let tokens = "before=\(outcome.beforeTokens) after=\(outcome.afterTokens)"
+            let shadowed = outcome.range.shadowedSeqs.count
+            let attempt = overflowRetries + 1
+            let limits = config.compactionPolicy.maxOverflowRetries
+            AppLogger(category: "CompactDiag").warning(
+                "[CompactDiag] mid-turn compaction at \(position): \(tokens) "
+                + "shadowed=\(shadowed) reason=context-overflow "
+                + "failure=\(failure.code) attempt=\(attempt)/\(limits)"
+            )
             delegate?.driver(self, didCompact: outcome)
+        case .failure(let error):
+            let position = "turn=\(turn) step=\(step)"
+            let reason = error.message
+            let code = failure.code
+            let tokens = surfaceBefore
+            AppLogger(category: "CompactDiag").warning(
+                "[CompactDiag] context-overflow recovery not possible at \(position): "
+                + "reason=\(reason) surfaceTokens=\(tokens) failure=\(code)"
+            )
         }
+
+        guard session.surfaceReplacementGeneration > generation else { return false }
+        overflowRetries += 1
+        return true
+    }
+
+    /// The priced envelope for the request this driver would build right now.
+    ///
+    /// Prices the three things a request is made of — the rendered system prompt,
+    /// the tool roster, and the surface — because that is what the provider
+    /// counts against the window and what DSH's meter prices from the logged
+    /// request. Measuring the surface alone is what lets a request overflow while
+    /// the conversation still looks small: the prompt and the roster are the
+    /// difference, and they are exactly the part a compaction cannot shrink.
+    ///
+    /// - Returns: the envelope price, with the reserved output tokens the next
+    ///   request will carry.
+    private func measureRequestEnvelope() -> PricedRequest {
+        let schemas = registry.schemas()
+        let context = DSHAssembleContext(
+            model: provider.model.id,
+            provider: provider.name,
+            cwd: nil,
+            toolNames: schemas.map(\.name),
+            isHelper: false
+        )
+        let assembly = prompt.assemble(
+            tools: schemas,
+            context: context,
+            toolOrder: config.toolOrder
+        )
+        let rendered = DSHSystemPrompt.renderPrompt(assembly)
+        let snapshot = DSHSystemPrompt.renderContextSnapshot(assembly)
+        let surfaceTokens = DSHTokenEstimate.total(session.surface())
+        let promptTokens = DSHTokenEstimate.tokens(forText: rendered)
+            + DSHTokenEstimate.tokens(forText: snapshot)
+            + DSHTokenEstimate.tokens(forToolSchemas: schemas)
+            + surfaceTokens
+        return PricedRequest(
+            promptTokens: promptTokens,
+            reservedCompletionTokens: config.maxTokens,
+            surfaceTokens: surfaceTokens
+        )
+    }
+
+    /// Replace the estimated envelope with the prompt tokens the provider counted.
+    ///
+    /// The estimator is character-proportional and excludes none of the request,
+    /// but it cannot know how an adapter tokenizes: CJK text and JSON schema
+    /// documents are both underpriced by any characters-per-token ratio. The
+    /// provider's own count has neither problem, so it supersedes the estimate
+    /// whenever a request reports one — which is also what DSH's meter does.
+    ///
+    /// - Parameter usage: usage accumulated for the request that just finished.
+    private func recordProviderPricing(_ usage: DSHTokenUsage) {
+        guard let built = lastPricedRequest else { return }
+        let reported = usage.inputTokens
+            + (usage.cacheReadTokens ?? 0)
+            + (usage.cacheWriteTokens ?? 0)
+        guard reported > 0 else { return }
+        lastPricedRequest = PricedRequest(
+            promptTokens: reported,
+            reservedCompletionTokens: built.reservedCompletionTokens,
+            surfaceTokens: built.surfaceTokens
+        )
+    }
+
+    /// Resolve this driver's trigger budget for one routed request.
+    ///
+    /// - Parameter reservedCompletionTokens: output tokens the request reserves.
+    /// - Returns: the pressure and retention budgets for this route.
+    /// - Throws: `DSHCompactionConfigError` when no capacity is known, or when the
+    ///   policy cannot be scaled to the capacity that is known.
+    private func resolveSpec(reservedCompletionTokens: Int) throws -> DSHCompactionSpec {
+        let targetKey = DSHCompactionPolicy.targetKey(
+            provider: provider.name,
+            model: provider.model.id
+        )
+        guard let window = config.contextWindow else {
+            throw DSHCompactionConfigError(
+                targetKey: targetKey,
+                detail: "no context capacity for \(targetKey); the serving model "
+                    + "declares no context window"
+            )
+        }
+        var policy = config.compactionPolicy
+        if let retain = config.compactionRetainTokensOverride {
+            policy.retainTokens = retain
+        }
+        let spec = try policy.resolveSpec(
+            targetKey: targetKey,
+            contextWindow: window,
+            reservedCompletionTokens: reservedCompletionTokens
+        )
+        guard let threshold = config.compactionPressureTokensOverride else { return spec }
+        return spec.overridingThreshold(threshold)
     }
 
     /// Ask the model to summarize the shadowed content.
@@ -638,6 +1062,20 @@ public final class DSHTurnDriver {
             provider: provider.name
         )
 
+        // Price the envelope here, where all three of its inputs are in hand at
+        // once: the rendered system prompt, the tool roster, and the surface the
+        // messages are projected from. DSH prices the latest durable routed
+        // request; building one is the moment this driver knows what that request
+        // holds, and the next step's pressure check reads exactly this figure.
+        let pricedSurface = DSHTokenEstimate.total(session.surface())
+        lastPricedRequest = PricedRequest(
+            promptTokens: DSHTokenEstimate.tokens(forText: systemPrompt)
+                + DSHTokenEstimate.tokens(forToolSchemas: schemas)
+                + pricedSurface,
+            reservedCompletionTokens: config.maxTokens,
+            surfaceTokens: pricedSurface
+        )
+
         return LoopRequest(
             messages: requestMessages,
             systemPrompt: systemPrompt.isEmpty ? nil : systemPrompt,
@@ -651,6 +1089,7 @@ public final class DSHTurnDriver {
     private func projectMessages(_ messages: [DSHMessage]) -> [AgentMessage] {
         messages.compactMap { message -> AgentMessage? in
             var parts: [AgentContentPart] = []
+            var toolArguments: [String: AgentToolArguments.Record] = [:]
             for block in message.blocks {
                 switch block {
                 case let text as DSHTextBlock:
@@ -658,10 +1097,17 @@ public final class DSHTurnDriver {
                 case let reasoning as DSHReasoningBlock:
                     parts.append(.text(reasoning.text))
                 case let call as DSHToolCallBlock:
+                    // The block keeps the model's own `arguments` bytes; the
+                    // dictionary is for execution only. Replaying the dictionary
+                    // re-orders the keys and invalidates the engine's KV prefix
+                    // on every turn — see AgentToolArguments.
                     let args = (try? JSONSerialization.jsonObject(
                         with: Data(call.arguments.utf8)
                     )) as? [String: Any] ?? [:]
                     parts.append(.toolUse(id: call.id, name: call.name, input: args))
+                    if !args.isEmpty {
+                        toolArguments[call.id] = AgentToolArguments.Record(text: call.arguments, input: args)
+                    }
                 case let result as DSHToolResultBlock:
                     parts.append(.toolResult(
                         id: result.callId,
@@ -684,7 +1130,12 @@ public final class DSHTurnDriver {
                 }
             }
             guard !parts.isEmpty else { return nil }
-            return AgentMessage(role: message.role == .user ? .user : .assistant, parts: parts)
+            var projected = AgentMessage(
+                role: DSHSessionProjection.agentRole(for: message.role),
+                parts: parts
+            )
+            projected.toolArguments = toolArguments
+            return projected
         }
     }
 

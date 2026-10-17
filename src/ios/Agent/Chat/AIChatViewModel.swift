@@ -7176,6 +7176,19 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
             let stopReason = streamResult.stopReason
             turnUsage = streamResult.turnUsage
             logger.info("📐 Context after API: latestContextTokens=\(turnUsage.latestContextTokens) (in:\(turnUsage.inputTokens) cache_read:\(turnUsage.cacheReadTokens) cache_create:\(turnUsage.cacheCreationTokens))")
+
+            // Publish this response's usage on the row NOW, rather than only at
+            // the end of the turn (`messages[msgIdx].usage = turnUsage` after the
+            // loop). Each iteration is a separate request and a separate provider
+            // report, and the context ring plus the panel behind it read the row:
+            // stamping once at the end left both describing the PREVIOUS turn for
+            // the whole of the current one. Same reason the crossing detector below
+            // is fed mid-loop instead of at turn end. The store takes the same
+            // value, so the panel's cache row moves with each response too.
+            if msgIdx >= 0, msgIdx < messages.count {
+                messages[msgIdx].usage = turnUsage
+                DSHContextBreakdownStore.shared.recordUsage(turnUsage)
+            }
             // [T-ios-context-usage-realtime-crossing] Every API call in the
             // loop reports a fresh context size; feed it to the glow and the
             // first-crossing detector now instead of waiting for turn end.
