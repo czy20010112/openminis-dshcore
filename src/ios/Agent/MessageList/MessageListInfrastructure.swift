@@ -538,6 +538,37 @@ class SelfSizingCell: UICollectionViewCell {
                 + "dir=\(delta > 0 ? "RESERVED-TOO-MUCH" : "LAID-OUT-SHORT") key=\(contentKey ?? "-")")
         }
         #endif
+        // [T-ios-laid-out-short-evidence] Release-visible evidence for the
+        // OTHER half of the missing-gap report: the layout reserving a cell
+        // SHORTER than it renders. `contentView.clipsToBounds` is the authority
+        // on spacing (see the note on it in `SelfSizingCell.init`), so a
+        // too-short cell does not bleed into its neighbour — it gets cropped,
+        // and the crop lands in the gap the layout did reserve. On screen that
+        // reads exactly as "the tool block is glued to the text below it": the
+        // 8pt band is still there, it just contains the previous cell's clipped
+        // last line.
+        //
+        // Kept OUT of `#if DEBUG` (unlike the neighbouring probes) because the
+        // build under investigation is a Release one, where the existing
+        // seed-drift/stale-height lines are compiled out — which is why the
+        // field log for 2026-10-17 contains neither. Cost is one subtraction on
+        // a path that just spent 0.5–4ms in systemLayoutSizeFitting, and the
+        // 8pt gate means a settled screen emits nothing.
+        //
+        // Why 8pt and not 4pt: at settle, UIKit's last pass legitimately asks a
+        // cell to fit at the CONTENT width while the layout's height is the
+        // MEASURED height for the same content, and the two disagree by a
+        // couple of points of line-box rounding. Lowering the gate to 4pt turns
+        // that rounding into per-cell noise. 8pt is a full text line's worth of
+        // error at the body size, i.e. exactly the visible defect.
+        if fittingSize.height - attrs.size.height >= 8, attrs.size.height > 4 {
+            Self.sizingLogger.info(
+                "[BottomGapDiag][laid-out-short] idx=\(idx) reserved=\(String(format: "%.1f", attrs.size.height)) "
+                + "needs=\(String(format: "%.1f", fittingSize.height)) "
+                + "short=\(String(format: "%.1f", fittingSize.height - attrs.size.height))pt "
+                + "key=\(contentKey ?? "-") — layout gave this cell less than it renders "
+                + "(clipsToBounds crops the tail into the inter-cell gap)")
+        }
         attrs.size.height = fittingSize.height
         // Don't cache very small heights (< 4pt) — these typically represent
         // empty text blocks that will receive content shortly via streaming.

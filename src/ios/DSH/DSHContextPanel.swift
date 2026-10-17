@@ -4,28 +4,36 @@
 //
 //  The context ring in the composer, and the breakdown sheet behind it.
 //
-//  Two numbers describe "how full is the context", and they come from different
-//  places on purpose:
+//  Two figures describe "how full is the context":
 //
-//    * the ring's arc and the sheet's HEADER use what the PROVIDER reported for
+//    * the ring's arc and the sheet's HEADER show what the PROVIDER reported for
 //      its last call — `ChatMessage.usage.latestContextTokens` on the newest
-//      usage-bearing assistant row. That is the only measured figure in this
-//      file, and it is what the model will actually be sent next turn;
-//    * the three component ROWS are measured while the request is assembled, in
-//      `DSHTurnDriver.buildRequest()`, where the system prompt, the tool roster
-//      and the conversation are all in hand at once. Estimating them afterwards
-//      (from the UI, against the surface) would describe a different request
-//      than the one that was sent.
+//      usage-bearing assistant row. That is the measured figure, and it is what
+//      the model will actually be sent next turn. While a turn is still running
+//      there is no such row yet, and if the panel were gated on one it would sit
+//      blank for the whole first turn — the operator's report that the main
+//      conversation showed no context figure at all;
+//    * ...so that same slot falls back to OUR OWN estimate of the request that is
+//      already in flight: `DSHContextBreakdown.estimatedTotal`, measured in
+//      `DSHTurnDriver.buildRequest()` before the request goes out. It is the same
+//      value the `Total (estimated)` row further down this sheet renders, so the
+//      ring and the row can never disagree — two estimators on one screen is how
+//      the "the ring says X, the rows say Y" class of bug starts.
 //
-//  ON SCREEN, that difference is carried by ONE short line under the rows
-//  ("Estimated from character count at 3.6 characters per token. The top figure
-//  is the provider's own count, so these rows may sum a few percent above or
-//  below it.") and by nothing else. The panel used to say it three more times —
-//  a "WHO MEASURED WHAT" paragraph, a "measured by the provider" caption under
-//  the header figure, and a "Measured / Provider" pair at the bottom — and the
-//  operator had each of them removed, one round at a time. Do not restore them:
-//  the long form of the attribution is this comment, and the one line under the
-//  rows is what keeps the two figures from reading as one number.
+//  The three component ROWS are measured in `DSHTurnDriver.buildRequest()` too,
+//  where the system prompt, the tool roster and the conversation are all in hand
+//  at once; estimating them afterwards (from the UI, against the surface) would
+//  describe a different request than the one that was sent.
+//
+//  ON SCREEN, the panel says NOTHING about which of the two figures it is
+//  showing, and nothing takes the place of an empty slot. It used to say it four
+//  times — a "WHO MEASURED WHAT" paragraph, a "measured by the provider" caption
+//  under the header figure, a "Measured / Provider" pair at the bottom, and a
+//  one-line note under the rows ("Estimated from character count at 3.6
+//  characters per token…"). The operator had each of them removed, one round at a
+//  time, and the last one came with the instruction that no other words may take
+//  its place in this window. None of them may come back; the provenance lives in
+//  this comment instead.
 //
 //  The denominator is the model's WINDOW (`AIChatViewModel
 //  .currentModelContextWindow`), not the compaction pressure threshold. The
@@ -107,8 +115,9 @@ enum DSHContextFormat {
 
 // MARK: - Reading
 
-/// The provider's own context figure for the last call, and the window it is
-/// measured against.
+/// One reading of "how full is the context": the provider's own figure for the
+/// last call, or — until one has arrived — our estimate of the request that is
+/// already in flight.
 ///
 /// Derived at the call site rather than taken from a ViewModel property, because
 /// the iOS 26 line's `AIChatViewModel.contextUsage` does not exist on the iOS 15
@@ -139,6 +148,39 @@ struct DSHContextReading: Equatable {
         }
         guard let used = reported?.usage?.latestContextTokens, used > 0 else { return nil }
         return DSHContextReading(usedTokens: used, windowTokens: window ?? 0)
+    }
+
+    /// What the ring and the sheet's header show: the provider's figure when a
+    /// receipt has arrived, and our own estimate of the request in flight when it
+    /// has not.
+    ///
+    /// The fallback is not a second estimator. `estimatedTotal` is the same value
+    /// the panel's `Total (estimated)` row renders, so the ring, the header and
+    /// that row are one number in all three places. A receipt wins outright: as
+    /// soon as an assistant row carries usage the estimate is dropped, never
+    /// averaged with the reported figure.
+    static func display(messages: [ChatMessage], window: Int?, streaming: Bool = false) -> DSHContextReading? {
+        // While a turn runs, the provider's last figure describes the PREVIOUS
+        // request, not the one being streamed — so it answers the wrong question and
+        // its number sits still. The estimate is measured from the request assembled
+        // for the turn in flight, so it is both the right request and live. When
+        // nothing is running, the provider's own count wins: it is measured, the
+        // estimate is modelled.
+        if streaming, let inFlight = estimated(window: window) { return inFlight }
+        if let reported = latest(messages: messages, window: window) { return reported }
+        return estimated(window: window)
+    }
+
+    /// Our estimate alone: the request `DSHTurnDriver.buildRequest()` measured
+    /// last, which is the request the token currently being streamed belongs to.
+    ///
+    /// nil until this process has assembled one request. A session whose
+    /// conversation was loaded from the database after a relaunch has messages
+    /// but no breakdown, and the panel has a line that says exactly that.
+    static func estimated(window: Int?) -> DSHContextReading? {
+        guard let breakdown = DSHContextBreakdownStore.shared.latest,
+              breakdown.estimatedTotal > 0 else { return nil }
+        return DSHContextReading(usedTokens: breakdown.estimatedTotal, windowTokens: window ?? 0)
     }
 }
 
@@ -278,10 +320,13 @@ struct DSHContextRing: View {
 /// it has none of `MicButton`'s press-and-hold semantics, and copying that drag
 /// handling would add a gesture competing with the transcript's scroll view.
 struct DSHContextRingButton: View {
-    /// nil until the provider has reported usage for this session. The ring is
-    /// still drawn — an empty ring means "nothing measured yet", which is
-    /// information, and the width stays constant so the read-aloud toggle's width
-    /// budget stays a constant too.
+    /// The reading to draw — `DSHContextReading.display`, i.e. the provider's
+    /// figure once one has arrived and our estimate of the request in flight
+    /// before that. It is nil only when neither exists (no request assembled in
+    /// this process and no receipt): the ring is still drawn then, because an
+    /// empty ring means "nothing measured yet", which is information, and the
+    /// width stays constant so the read-aloud toggle's width budget stays a
+    /// constant too.
     var reading: DSHContextReading?
     var action: () -> Void
 
@@ -298,7 +343,13 @@ struct DSHContextRingButton: View {
     }
 
     private var accessibilityLabel: String {
-        guard let reading else { return AppLocalized("Context: no usage reported yet") }
+        // Nothing to report at all — a session with no request assembled in this
+        // process yet, which is also the only state in which the panel below is
+        // empty. Name the control and stop: this slot used to read "no usage
+        // reported yet", the operator removed the sentence from both here and the
+        // panel's title row, and in practice there is always a context figure to
+        // report.
+        guard let reading else { return AppLocalized("Context") }
         let ratio = DSHContextFormat.ratio(used: reading.usedTokens, window: reading.windowTokens)
         // One key with two arguments, the same shape the iOS 26 line already uses
         // for the reading of this ring.
@@ -310,6 +361,35 @@ struct DSHContextRingButton: View {
 
 /// The context breakdown sheet, presented from the composer's ring.
 struct DSHContextPanel: View {
+
+    /// The height this panel's content needs, for the iOS 26 line's sheet to be
+    /// sized to exactly that instead of to a fraction of the screen.
+    ///
+    /// Measured on the iPhone 13 / iOS 15.3.1 target through the accessibility
+    /// tree, with the frame of every row read back (the same screenshots-plus-tree
+    /// method the probe below was written from): header 68pt + divider 1pt +
+    /// rows 179pt (heading 14, three 18pt rows and the total row, 10pt apart,
+    /// 20pt padding) = **248pt** of content. The 288 here is that 248 plus the
+    /// 34pt home-indicator strip a sheet's last row must not be drawn under, plus
+    /// 6pt of margin for a longer localized label or a larger Dynamic Type step.
+    ///
+    /// A number rather than `.fraction(0.3)`: a fraction is a fraction of the
+    /// SCREEN, so the same value is right on one device and wrong on the next —
+    /// this panel's content does not grow with the screen. Under- rather than
+    /// over-sizing is the safe direction in any case: the rows are inside a
+    /// `ScrollView`, so a short sheet scrolls instead of clipping anything.
+    ///
+    /// The 6pt of margin is the whole of it. The header's subtitle is
+    /// `.lineLimit(2)`, so in a long translation (German is the one to watch: the
+    /// title column has ~131pt) it can take a second line and add ~16pt — that
+    /// eats the margin and puts the last row 10pt into the home-indicator strip,
+    /// which is still on screen, not clipped. If a device ever shows that, this
+    /// constant is the single number to raise (304 restores the margin).
+    ///
+    /// Used by the iOS 26 line (`AIChatView`, its context-panel `.sheet`). The
+    /// iOS 15 line cannot use it — below iOS 16 there is no custom detent at all —
+    /// and pins `.medium` from inside instead, see `DSHContextSheetHeightProbe`.
+    static let sheetHeight: CGFloat = 288
 
     /// Snapshot taken when the sheet was presented; the presenting view
     /// re-evaluates this on every change it observes, so a running turn updates
@@ -329,9 +409,10 @@ struct DSHContextPanel: View {
                 .padding(20)
             }
         }
-        // Ends the sheet near the content's bottom edge instead of leaving the
-        // full page sheet (iOS 15) or the 0.8-fraction detent (iOS 16) standing
-        // open under it. See `DSHContextSheetHeightProbe`.
+        // Ends the sheet at the content's bottom edge instead of leaving the full
+        // page sheet standing open under it: the iOS 26 line sizes the sheet to
+        // `DSHContextPanel.sheetHeight`, this line has no custom detent to size it
+        // with and pins `.medium` from inside. See `DSHContextSheetHeightProbe`.
         .background(DSHContextSheetHeightProbe())
     }
 
@@ -341,7 +422,11 @@ struct DSHContextPanel: View {
     /// not a catalog key; it is set in the CODE face so the digits are tabular
     /// and line up with the value column of the rows underneath.
     private var ratioText: String {
-        guard let reading else { return "—" }
+        // Same guard as `headerSubtitle`, for the same reason: without a window
+        // there is no ratio to state, and `ratio(used:window:)` would render the
+        // nonsense "~12K / 0". A bare em dash is the placeholder the earlier
+        // "no usage reported yet" sentence was removed in favour of.
+        guard let reading, reading.hasWindow else { return "—" }
         return DSHContextFormat.ratio(used: reading.usedTokens, window: reading.windowTokens)
     }
 
@@ -355,18 +440,24 @@ struct DSHContextPanel: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Context")
                     .font(Font(AppFont.ui(17, weight: .semibold, category: .body)))
-                Text(headerSubtitle)
-                    .font(Font(AppFont.ui(12, category: .ui)))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
+                // Omitted rather than rendered empty: an empty `Text` still takes
+                // a line of the header, and this slot is the one the operator
+                // asked to carry no words when there is no percentage to state.
+                if !headerSubtitle.isEmpty {
+                    Text(headerSubtitle)
+                        .font(Font(AppFont.ui(12, category: .ui)))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
             }
             Spacer(minLength: 8)
-            // The provider's figure, and the window it is measured against. This
-            // is the measured number; everything below it is our estimate, and
-            // the note under the rows says so. Two captions used to sit under
-            // this figure — a "via <provider>" line and then "measured by the
-            // provider" — and the operator called the second one unnecessary:
-            // the note says the same thing in the sentence that needs it.
+            // The figure the ring also draws — the provider's own count once a
+            // receipt has arrived, and our estimate of the request in flight
+            // before that (`DSHContextReading.display`). Everything below it is
+            // the breakdown of how that figure is spent. Two captions used to sit
+            // under this number — a "via <provider>" line and then "measured by
+            // the provider" — and the operator called the second one unnecessary;
+            // nothing was put in its place.
             Text(ratioText)
                 .font(AppFont.sw(15, weight: .semibold, category: .code))
                 .foregroundStyle(.primary)
@@ -378,17 +469,19 @@ struct DSHContextPanel: View {
         .padding(.vertical, 14)
     }
 
-    /// The one line under "Context": how full the window is. It does not carry
-    /// the attribution of the two figures — the note under the rows does, and a
-    /// reader who needs the long version has the comment at the top of this file.
+    /// The one line under "Context": how full the window is, and nothing else.
+    ///
+    /// `""` — no line at all — when there is no percentage to state: no reading
+    /// (no request assembled in this process yet) or an unknown window. The
+    /// operator asked for exactly that, and with the estimate fallback the slot
+    /// carries the percentage in every state that can actually occur.
     ///
     /// Built as a `String` through `AppLocalized`/`String(format:)` rather than as
     /// a `LocalizedStringKey`: the sentence is assembled from a format and a name,
     /// and `LocalizedStringKey` does not convert to `String` on the iOS 15 line,
     /// so a composed key could not be handed to `AppLocalized` there.
     private var headerSubtitle: String {
-        guard let reading else { return AppLocalized("No usage reported yet") }
-        guard reading.hasWindow else { return AppLocalized("The model's window is unknown") }
+        guard let reading, reading.hasWindow else { return "" }
         return String(format: AppLocalized("%lld%% of the window"), reading.percent)
     }
 
@@ -423,14 +516,12 @@ struct DSHContextPanel: View {
                     detail: nil,
                     emphasised: true
                 )
-                // Replaces the old "WHO MEASURED WHAT" paragraph: the same
-                // information — these figures are ours, the header's is the
-                // provider's — in the one line a reader needs for it.
-                Text("Estimated from character count at 3.6 characters per token. The top figure is the provider's own count, so these rows may sum a few percent above or below it.")
-                    .font(Font(AppFont.ui(11, category: .ui)))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.top, 2)
+                // Nothing under the rows. A one-line note used to sit here
+                // ("Estimated from character count at 3.6 characters per token…")
+                // carrying the attribution of the two figures; the operator had it
+                // removed and asked for no replacement, the same way the other
+                // three explanations of it had gone before. The provenance is the
+                // comment at the top of this file.
             } else {
                 // Nothing has been assembled in this session, or the app has not
                 // driven a turn since launch. Saying so beats three rows of
@@ -457,26 +548,37 @@ struct DSHContextPanel: View {
 /// panel's bottom edge instead of standing open far below it.
 ///
 /// Why this is not a `.presentationDetents` call in this file: the sheet belongs
-/// to `AIChatView`, which asks for `[.fraction(0.8), .large]` through
-/// `compatDetents` — and `compatDetents` is a NO-OP below iOS 16, which is the
-/// line installed on the device. Measured on the iPhone 13 / iOS 15.3.1 target
-/// (screenshot plus the accessibility tree): the sheet is the full page sheet
-/// (top edge y≈52, bottom 844) while the panel's content ends at y≈495 — 349pt
-/// of empty sheet under it, which is the operator's "too much blank space at the
-/// bottom". Below iOS 16 `PresentationDetent` has no custom height at all, so the
-/// content-proportionate value UIKit does offer is the medium detent (about half
-/// the screen ≈ 420pt, against ≈310pt of content once the provenance rows are
-/// gone). `.large` stays in the set so a taller panel can still be pulled up.
+/// to `AIChatView`, whose detent modifier is a NO-OP below iOS 16, which is the
+/// line installed on the iPhone. Below iOS 16 `PresentationDetent` has no custom
+/// height at all, so the only value UIKit does offer is the medium detent.
 /// `UISheetPresentationController`, `Detent.medium()` / `.large()`,
 /// `selectedDetentIdentifier` and `animateChanges` are all iOS 15.0, so nothing
 /// here is an iOS 16 API.
 ///
+/// MEASURED on the iPhone 13 / iOS 15.3.1 target (screenshot plus the frame of
+/// every row from the accessibility tree), and the reason this file now carries
+/// `DSHContextPanel.sheetHeight`:
+///
+///   * before this probe existed, the sheet was the full page sheet — top edge
+///     y≈52 to 844 — with the content ending at y≈495: 349pt of blank under it;
+///   * with `.medium` pinned here, the sheet is 456pt tall (top edge y=388) and
+///     the content, note included, ended at y=676 — 168pt of blank;
+///   * with the note removed (the panel's own 288pt `sheetHeight` derivation
+///     lists the per-row frames), the same sheet leaves 208pt of blank.
+///
+/// That last number is why the iOS 26 line no longer uses `.medium`: on iOS 16
+/// and later the sheet can be sized to the content (`sheetHeight`), which is what
+/// the operator asked for when he called the blank "too big" a second time. This
+/// probe cannot do the same on the iOS 15 line, and `.medium` is already the
+/// smallest detent there is below iOS 16; the blank on this line is accepted, not
+/// overlooked.
+///
 /// The one-detent guard below is the "do not fight" rule: it pins only while the
 /// sheet is still at UIKit's own default, i.e. while nothing else has expressed a
-/// height preference. On iOS 16+, where `compatDetents` does reach SwiftUI and
-/// `AIChatView` has already set `[.fraction(0.8), .large]`, this leaves those
-/// alone rather than overwriting them from underneath. That line is where the
-/// iOS 26 line's own blank space has to be fixed — out of this file's scope.
+/// height preference. On iOS 16+, where SwiftUI's `.presentationDetents` does
+/// reach the sheet, this leaves those alone rather than overwriting them from
+/// underneath — and that is also how the log line tells the two lines apart: no
+/// `[DSH][Context] panel sheet detents` line means SwiftUI sized the sheet.
 ///
 /// Fail-soft by construction: if the enclosing sheet controller cannot be
 /// reached, no detent is written and the log line says so. And once it has acted

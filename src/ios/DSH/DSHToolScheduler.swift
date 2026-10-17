@@ -213,7 +213,12 @@ public enum DSHToolScheduler {
             // otherwise run. The prompt says the same thing, but this model ignores
             // it (measured: it ran a shell command 13 s into a plan-mode turn with
             // the policy section in the request), so the rule is enforced here.
-            if let refusal = DSHPlanMode.refusal(forTool: call.block.name) {
+            //
+            // Arguments are passed in because the decision is per call, not per
+            // tool: `shell_execute` is allowed while plan mode is on when its
+            // command is mechanically classifiable as read-only, and refused
+            // otherwise. `DSHPlanMode.shellCommandVerdict` holds that classifier.
+            if let refusal = DSHPlanMode.refusal(forTool: call.block.name, arguments: call.arguments) {
                 settle(index, with: DSHToolExecutionResult.error(refusal))
                 return
             }

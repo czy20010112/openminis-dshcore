@@ -40,9 +40,13 @@
 //
 //  THE DEFAULT THAT SHIPS
 //  ---------------------------------------------------------------------------
-//  One enabled Tavily entry pointed at Tavily's own endpoint, carrying no key.
-//  A key is required before it will answer, the settings row says `needs a key`,
-//  and any user can add entries, reorder them by priority, or switch one off.
+//  Nothing. No provider is configured out of the box, because every key is the
+//  user's own and a shipped row would open the settings screen on a problem the
+//  app created (`needs a key`). An empty queue is therefore a state the tool has
+//  to explain rather than a state it can paper over: `web_search` says it has no
+//  search entries configured, and the settings screen starts on the button that
+//  adds one. From there any user can add entries, reorder them by priority, or
+//  switch one off — and clearing the list is the way back to the shipped state.
 //
 //  STORAGE
 //  ---------------------------------------------------------------------------
@@ -869,9 +873,10 @@ enum DSHWebSearchConfig {
         return true
     }
 
-    /// Back to the shipped default: one enabled Tavily entry, no key.
+    /// Back to the shipped default, which is an empty queue: there is no search
+    /// key the app could restore, so "the default" is "nothing configured".
     static func resetToDefaults() {
-        setEntries([DSHWebSearchEntry(provider: .tavily)])
+        setEntries([])
         clearLegacyKeys()
     }
 
@@ -885,7 +890,9 @@ enum DSHWebSearchConfig {
     /// because that is the one that was in force and it keeps priority 1.
     /// Providers that were never touched are skipped rather than turned into
     /// rows that ask for a key the user never had. If nothing at all was stored,
-    /// the queue is the shipped default.
+    /// there is nothing to migrate and the queue is the shipped default, which is
+    /// empty: the migration never invents an entry, because the only thing it can
+    /// invent is one asking for a key the user does not have.
     ///
     /// The legacy keys are deleted once the queue is written, so a later read
     /// cannot migrate the same values twice and the two shapes can never
@@ -907,9 +914,6 @@ enum DSHWebSearchConfig {
             let endpoint = trimmed(defaults.string(forKey: LegacyKey.endpoint(provider)))
             guard provider == selected || !key.isEmpty || !endpoint.isEmpty else { continue }
             migrated.append(DSHWebSearchEntry(provider: provider, apiKey: key, endpoint: endpoint))
-        }
-        if migrated.isEmpty {
-            migrated = [DSHWebSearchEntry(provider: .tavily)]
         }
         setEntries(migrated)
         clearLegacyKeys()
@@ -1044,10 +1048,16 @@ enum DSHWebSearchQueue {
         return text + "."
     }
 
+    /// What a call says when there is nothing to walk, or nothing switched on.
+    ///
+    /// The two cases need different messages because they need different fixes:
+    /// an EMPTY queue means no entry exists at all (the shipped state, and the
+    /// state the settings screen's clear button returns to), while a full queue
+    /// with every entry off is one switch away from working.
     static func nothingEnabled(entries: [DSHWebSearchEntry]) -> String {
         if entries.isEmpty {
-            return "web_search has no search entries configured. "
-                + "Add one in Settings → Agent Runtime → Web Search."
+            return "web_search has no search entries configured — nothing is set up "
+                + "to search with. Add one in Settings → Agent Runtime → Web Search."
         }
         return "web_search: all \(entries.count) search entries are switched off. "
             + "Enable one in Settings → Agent Runtime → Web Search."

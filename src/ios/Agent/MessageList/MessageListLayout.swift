@@ -120,6 +120,38 @@ final class MessageListLayout: UICollectionViewLayout {
     /// Vertical spacing between cells.
     var itemSpacing: CGFloat = 0
 
+    /// [T-ios-zerocell-eats-gap] Per-prepare() cursor for the run of
+    /// zero-height cells currently being walked (see `prepare()`). `start` is
+    /// -1 when no run is open; `count` is how many empty cells the open run
+    /// spans. Both are reset every pass, so nothing carries across layout
+    /// cycles and no gap can be paid twice.
+    private var zeroRunStart: Int = -1
+    private var zeroRunCount: Int = 0
+
+    /// [T-ios-zerocell-eats-gap] 1Hz-aggregated evidence counter + last flush
+    /// time for the carried-gap log line.
+    private static var carriedGapCount: Int = 0
+    private static var carriedGapLastFlush: CFTimeInterval = 0
+
+    /// [T-ios-zerocell-eats-gap] Emit ONE line per second (never per pass) when
+    /// a run of zero-height cells had to be given back the gap it was silently
+    /// eating. This is the only place that logs the condition, so a device
+    /// capture answers "did the zero-cell case fire, where, and how big was the
+    /// hole" without any per-cell noise.
+    private static func reportCarriedGap(count: Int, start: Int, gap: CGFloat,
+                                        totalBefore: CGFloat, itemCount: Int) {
+        carriedGapCount &+= 1
+        let now = CACurrentMediaTime()
+        guard now - carriedGapLastFlush > 1.0 else { return }
+        AppLogger(category: "SpacingDiag").info(
+            "[Spacing][zerocell-gap] idx \(start)…\(start + count - 1) (\(count) zero-height cell(s), "
+            + "items=\(itemCount)) ate the inter-cell gap — restored \(String(format: "%.0f", gap))pt "
+            + "before idx \(start + count) (totalH before=\(String(format: "%.0f", totalBefore)); "
+            + "carries this second=\(carriedGapCount))")
+        carriedGapCount = 0
+        carriedGapLastFlush = now
+    }
+
     /// Cached heights keyed by item index. Persists across invalidation cycles.
     private var heightCache: [Int: CGFloat] = [:]
 
@@ -222,12 +254,54 @@ final class MessageListLayout: UICollectionViewLayout {
                 && (contentKeyByIndex[i + 1]?.hasPrefix("f:") ?? false)
                 && (footerHugByIndex[i + 1] ?? true)
                 && !isStreamingCell(i + 1)
-            // Add trailing spacing unless (a) this is the last cell (no cell
-            // follows), (b) the next cell is this message's footer, or (c) this
-            // cell is zero-height (an empty text block renders nothing — its
-            // trailing gap would double the spacing between its neighbors).
-            // [T-ios-empty-textblock-gap]
-            if !isLast, !nextIsFooter, h > 0 { y += itemSpacing }
+            // Spacing is decided in exactly ONE place (here) — no cell applies
+            // any of it in its own SwiftUI body.
+            //
+            // [T-ios-empty-textblock-gap] A zero-height cell renders nothing
+            // (an empty text block draws EmptyView), so its own trailing gap is
+            // not added — otherwise a phantom empty row would double the
+            // spacing between its two visible neighbours.
+            //
+            // [T-ios-zerocell-eats-gap] …but that skip must not DELETE the gap
+            // outright. Every field report of "the tool call's completed row /
+            // capsule sits flush against the text block below it" is this
+            // branch: with the gap between the last block and its message
+            // footer already zeroed by the hug rule above (gapAfter == false),
+            // a run of zero-height cells before the footer — a trailing empty
+            // text block (streamed `""` then filled), or a block whose
+            // self-size settled at 0 — was the ONLY thing standing between the
+            // two visible cells, and it paid `0 * itemSpacing` instead of the
+            // one gap they are owed. The run is closed in the `else` branch
+            // below, where a VISIBLE cell (h > 0) actually follows, and pays
+            // its single trailing gap there.
+            //
+            // `zGap` is a per-cell value, like the frame it belongs to, so a
+            // carried gap can never leak onto a later, unrelated cell.
+            let gapAfter = !isLast && !nextIsFooter
+            let zGap = h <= 0 && gapAfter
+            if gapAfter, !zGap { y += itemSpacing }
+            if zGap {
+                // Open (or extend) a run of zero-height cells that owe exactly
+                // one trailing gap between their two visible neighbours.
+                if zeroRunStart < 0 { zeroRunStart = i }
+                zeroRunCount += 1
+            } else if zeroRunStart >= 0 {
+                // The run just ended because a VISIBLE cell started here — pay
+                // its single gap at the run's own position (shifting the empty
+                // cells and everything below), then close the run. Runs that
+                // sit at the very END of the list never reach this branch, so a
+                // trailing empty cell still collapses instead of enlarging
+                // contentSize with nothing to separate.
+                let pay = itemSpacing
+                for k in zeroRunStart..<(zeroRunStart + zeroRunCount) where k < itemAttributes.count {
+                    itemAttributes[k].frame.origin.y += pay
+                }
+                y += pay
+                Self.reportCarriedGap(count: zeroRunCount, start: zeroRunStart, gap: pay,
+                                      totalBefore: y - pay, itemCount: itemCount)
+                zeroRunStart = -1
+                zeroRunCount = 0
+            }
         }
         totalHeight = y
         lastItemCount = itemCount

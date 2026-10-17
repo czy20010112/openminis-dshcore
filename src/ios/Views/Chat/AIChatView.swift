@@ -638,6 +638,15 @@ struct AIChatView: View {
                                 // than the surface beneath it, so the bottom edge hung
                                 // over the rounded corners.
                                 .padding(.bottom, -4)
+                            // [T-tools-goal] The goal, in DSH's own slot: its
+                            // composer-context stack is todo, then goal, then the
+                            // queue, all at the same panel elevation. Draws
+                            // nothing when there is no live goal, so this costs a
+                            // composer with no goal exactly one line of layout.
+                            DSHGoalPanelView()
+                                .frame(maxWidth: maxContentWidth, alignment: .leading)
+                                .padding(.horizontal, 12)
+                                .padding(.bottom, -4)
                             #if DEBUG
                             if isReadOnly {
                                 forkBanner
@@ -1106,17 +1115,23 @@ struct AIChatView: View {
         // the token-usage sheet: both are "look at the numbers" sheets opened
         // from the same row.
         //
-        // `.medium` and not `.fraction(0.8)`: the panel's content is ~310pt, so
-        // eight tenths of the screen left a third of the sheet empty underneath
-        // (measured 349pt of whitespace on the ios15 line, which has no detents
-        // at all and could only be fixed from inside the panel). Half the screen
-        // fits the content and still drags up to `.large` for a long session.
+        // `.height(DSHContextPanel.sheetHeight)` and not `.medium`: the panel's
+        // content is 248pt (measured — see that constant), and half the screen is
+        // taller than that on every device, so `.medium` left a third of the sheet
+        // empty underneath. A detent in POINTS fits the content on any screen; a
+        // fraction of the screen cannot. `.large` stays in the set so a long
+        // session can still be dragged up.
+        //
+        // `DSHContextReading.display` and not `.latest`: the sheet must show the
+        // local estimate of the request in flight while a turn runs, and `.latest`
+        // is nil until the provider has reported once.
         .sheet(isPresented: $showContextPanel) {
-            DSHContextPanel(reading: DSHContextReading.latest(
+            DSHContextPanel(reading: DSHContextReading.display(
                 messages: cached.vm.messages,
-                window: cached.vm.currentModelContextWindow
+                window: cached.vm.currentModelContextWindow,
+                streaming: cached.vm.isProcessing
             ))
-            .presentationDetents([.medium, .large])
+            .presentationDetents([.height(DSHContextPanel.sheetHeight), .large])
         }
         // [T-tools-todo-plan] The plan review `exit_plan_mode` is suspended on.
         // Presented from the coordinator's published request, not from a flag
@@ -3438,11 +3453,19 @@ struct AIChatView: View {
     /// because SwiftUI's runtime demangler choked on its type, so new controls
     /// are added as a single opaque subview rather than as more inline
     /// modifiers.
+    ///
+    /// `DSHContextReading.display` and not `.latest`: the provider's own figure
+    /// only exists after a call has been answered, and the ring would then sit
+    /// empty for the whole first turn. `.display` falls back to the estimate of
+    /// the request that is already in flight — the same value the panel's
+    /// `Total (estimated)` row shows — and switches to the reported figure as soon
+    /// as one arrives.
     private var contextRingButton: some View {
         DSHContextRingButton(
-            reading: DSHContextReading.latest(
+            reading: DSHContextReading.display(
                 messages: vm.messages,
-                window: vm.currentModelContextWindow
+                window: vm.currentModelContextWindow,
+                streaming: vm.isProcessing
             )
         ) { showContextPanel = true }
     }

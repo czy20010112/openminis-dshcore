@@ -42,6 +42,12 @@ extension AIChatViewModel {
         // again leaves the mode, which is DSH's `/plan off` without needing a
         // second word in a composer that sends the whole line as a message.
         SlashCommand(id: "plan", icon: "list.bullet.rectangle", title: "Plan", subtitle: "Plan mode: explore and plan before changing anything (tap again to leave)"),
+        // [T-tools-goal] DSH's `/goal`, which shows the current objective and its
+        // round budget. The model creates the goal through `create_goal`, so this
+        // row reads and reports; DSH's `/goal <objective>` shorthand is not here,
+        // because matching it would mean relaxing the bare-command match that
+        // every other row in this list relies on.
+        SlashCommand(id: "goal", icon: "checklist", title: "Goal", subtitle: "Show the session goal and how many rounds it has used"),
     ]
 
     /// Show slash menu without replacing existing input text.
@@ -429,6 +435,11 @@ extension AIChatViewModel {
                     icon: "list.bullet.rectangle"
                 )
             }
+        case "goal":
+            // [T-tools-goal] A report, with no model turn behind it — the same
+            // contract as DSH's `/goal`, which reads state and prints it without
+            // spending a request.
+            appendSystemInfo(DSHGoalTools.statusReport(), icon: "checklist")
         default:
             break
         }

@@ -13,12 +13,28 @@
 //  `Views/Settings/`, but a new file there is not compiled until it is added to
 //  the pbxproj by hand, twice.
 //
-//  THE QUEUE IS THE FORM
+//  THE QUEUE IS THE FORM, ONE ENTRY PER BUBBLE
 //  ---------------------------------------------------------------------------
-//  Every row IS an entry of `DSHWebSearchConfig.entries`: switch it off, rename
+//  Every bubble IS an entry of `DSHWebSearchConfig.entries`: switch it off, rename
 //  it, change its provider, its key, its endpoint, move it up or down, delete it.
-//  Order on screen is priority order — the tool tries row 1 first. The same
-//  provider may appear in several rows, each with its own key and endpoint.
+//  Order on screen is priority order — the tool tries the first bubble first. The
+//  same provider may appear in several bubbles, each with its own key and endpoint.
+//
+//  Each entry is its OWN `Section`. That is what makes the bubble: the system
+//  draws one card per section, and inside it one hairline separator per row. The
+//  fields are one row EACH (label left, value right, one font and one weight on
+//  every row) rather than a `VStack` of controls inside a single row — a stacked
+//  block draws no separators and no two rows line up. The row shape is the one
+//  the Background permissions screen uses
+//  (`Views/Settings/EnhancedBackgroundSettingsView.swift`, `statusRow`).
+//
+//  THE SHIPPED DEFAULT IS AN EMPTY QUEUE
+//  ---------------------------------------------------------------------------
+//  No entry ships enabled, and none ships at all: a search key is the user's, so
+//  shipping a row that says `needs a key` would open the screen on a problem the
+//  app created. The screen therefore starts with just "Add Search Entry", the
+//  clear button returns to that state, and an empty queue is what `web_search`
+//  reports when it is called with nothing configured.
 //
 //  WHY THE "TEST SEARCH" BUTTON IS THE POINT OF THE SCREEN
 //  ---------------------------------------------------------------------------
@@ -26,8 +42,11 @@
 //  everything except search, an endpoint whose path is one segment off, a
 //  provider that answers 200 with an empty array. All three look identical in the
 //  settings UI and identical in a chat transcript. So the button runs the real
-//  queue — fallback and all — against a fixed query, and prints what came back,
-//  including the raw error text the model would see.
+//  queue — fallback and all — against a fixed query and reduces the run to a
+//  verdict beside it: a green check when something came back, a red exclamation
+//  when nothing did. The text behind that verdict — the source line, and the raw
+//  error the model would see — is not laid out under the form; it opens in a sheet
+//  when the verdict is tapped.
 //
 
 import SwiftUI
@@ -39,63 +58,78 @@ struct DSHWebSearchSettingsView: View {
     // MARK: - Test search state
 
     @State private var testRunning = false
+    /// The probe's text, kept so the verdict's sheet can show it. Nothing on this
+    /// screen renders these lines directly any more.
     @State private var testLines: [String] = []
     @State private var testFailed = false
+    /// The sheet the verdict opens. The result is on demand, never on the screen.
+    @State private var showTestResult = false
 
-    /// The probe query. The operator's own reproduction: a novel whose author
-    /// and title are both distinctive, so a working engine returns the novel and
-    /// a broken one returns nothing.
-    private static let testQuery = "泯冬 召唤魅魔 小说"
+    /// The entries whose key field is currently revealed. Masked is the state a
+    /// paste leaves the field in; the eye reveals one row at a time.
+    @State private var revealedKeys: Set<String> = []
+
+    /// The probe query. The operator's own reproduction: a question whose answer
+    /// is only knowable by searching, so a working engine returns current model
+    /// names and a broken one returns nothing.
+    private static let testQuery = "deepseek最新的模型是什么"
 
     var body: some View {
         List {
-            entriesSection
+            entrySections
             testSection
-            resetSection
+            clearSection
         }
         .listStyle(.insetGrouped)
         .navigationTitle("Web Search")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            // Drag to reorder, and the red delete circles, both live in edit
-            // mode. The row buttons below do the same two things without it.
-            EditButton()
+        .sheet(isPresented: $showTestResult) {
+            testResultSheet
         }
     }
 
     // MARK: - Entries
 
-    private var entriesSection: some View {
-        Section {
-            ForEach($store.entries) { $entry in
-                entryRow($entry)
-            }
-            .onMove { source, destination in
-                store.move(from: source, to: destination)
-            }
-            .onDelete { offsets in
-                store.delete(at: offsets)
-            }
+    /// One bubble per entry, then the button that makes another one.
+    @ViewBuilder
+    private var entrySections: some View {
+        ForEach($store.entries) { $entry in
+            entrySection($entry)
+        }
 
+        Section {
             Button {
                 store.addEntry()
             } label: {
                 Label("Add Search Entry", systemImage: "plus.circle.fill")
             }
-        } header: {
-            Text("Search Entries")
         }
     }
 
-    /// One row of the queue: the whole entry, editable in place.
-    private func entryRow(_ entry: Binding<DSHWebSearchEntry>) -> some View {
+    /// One entry as its own group, with where it sits in the queue as its header —
+    /// the order IS the priority the tool walks.
+    private func entrySection(_ entry: Binding<DSHWebSearchEntry>) -> some View {
         let value = entry.wrappedValue
         let index = store.entries.firstIndex(where: { $0.id == value.id }) ?? 0
-        return VStack(alignment: .leading, spacing: 6) {
+        return Section {
+            entryRows(entry)
+        } header: {
+            Text("Search Entry \(index + 1)")
+        }
+    }
+
+    /// The rows of one bubble: one field per row, so the section's own separators
+    /// fall between them. Every row is the same shape — label left, value right,
+    /// the same font and the same weight — which is what makes the fields read as
+    /// a list instead of a stack of unrelated controls.
+    private func entryRows(_ entry: Binding<DSHWebSearchEntry>) -> some View {
+        let value = entry.wrappedValue
+        let index = store.entries.firstIndex(where: { $0.id == value.id }) ?? 0
+        let revealed = revealedKeys.contains(value.id)
+        return Group {
             Toggle(isOn: entry.enabled) {
                 HStack(spacing: 8) {
                     Text(verbatim: value.title)
-                        .font(AppFont.sw(14, category: .ui))
                     if let status = value.status {
                         // A state, not a sentence: `needs a key` is a catalog key,
                         // and `String` only reaches the catalog through
@@ -108,7 +142,9 @@ struct DSHWebSearchSettingsView: View {
             }
 
             HStack(alignment: .firstTextBaseline) {
-                Text("Provider")
+                // `Search provider`, not `Provider`: the latter is the LLM-vendor
+                // label ("AI 服务商"), which is wrong for a search backend.
+                Text("Search provider")
                 Spacer(minLength: 12)
                 Picker("Provider", selection: entry.provider) {
                     ForEach(DSHWebSearchProvider.allCases) { provider in
@@ -120,7 +156,12 @@ struct DSHWebSearchSettingsView: View {
             }
 
             field("Name", text: entry.label, prompt: "")
-            field("API Key", text: entry.apiKey, prompt: "sk-…")
+
+            // The key, masked, with the eye that reveals it. Kept in its own
+            // builder because the masked/unmasked pair is two controls, and the
+            // plain `field` row above is one.
+            keyRow(entry, revealed: revealed)
+
             field(
                 "Endpoint",
                 text: entry.endpoint,
@@ -157,12 +198,13 @@ struct DSHWebSearchSettingsView: View {
             }
             .font(AppFont.sw(13, category: .ui))
         }
-        .padding(.vertical, 4)
     }
 
-    /// A labelled field on its own line. The label is a catalog key; the
-    /// placeholder is a value (a key shape, or the provider's default endpoint)
-    /// and is rendered verbatim.
+    /// A labelled field on its own row. The label is a catalog key; the placeholder
+    /// is a value (a key shape, or the provider's default endpoint) and is rendered
+    /// verbatim. The value's face — code, regular weight, trailing — is the one the
+    /// provider screens use for the same kind of text
+    /// (`Views/Providers/ProviderInstanceDetailView.swift`, the model-id row).
     private func field(
         _ label: LocalizedStringKey,
         text: Binding<String>,
@@ -173,37 +215,118 @@ struct DSHWebSearchSettingsView: View {
             Text(label)
             Spacer(minLength: 12)
             TextField(prompt, text: text)
+                .font(AppFont.sw(17, weight: .regular, category: .code))
                 .textInputAutocapitalization(.never)
-                .disableAutocorrection(true)
+                .autocorrectionDisabled()
                 .keyboardType(keyboard)
                 .multilineTextAlignment(.trailing)
-                .font(AppFont.sw(13, category: .code))
+        }
+    }
+
+    /// The key row: a `SecureField`, so a paste lands in a field that draws only
+    /// bullets, and the eye swaps it for a plain field when the user wants to read
+    /// or fix what is in there. This is the credential row of the provider screens
+    /// (`Views/Providers/AddProviderView.swift`, `apiKeySection`), down to
+    /// `.textContentType(.oneTimeCode)`: an undeclared secure field makes iOS treat
+    /// the form as a login form and hang a password AutoFill bar on the nearest
+    /// preceding text field, which on this screen is the entry's Name row.
+    private func keyRow(_ entry: Binding<DSHWebSearchEntry>, revealed: Bool) -> some View {
+        let id = entry.wrappedValue.id
+        return HStack(alignment: .firstTextBaseline) {
+            Text("API Key")
+            Spacer(minLength: 12)
+
+            if revealed {
+                TextField("sk-…", text: entry.apiKey)
+                    .font(AppFont.sw(17, weight: .regular, category: .code))
+                    .textContentType(.oneTimeCode)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .multilineTextAlignment(.trailing)
+            } else {
+                SecureField("sk-…", text: entry.apiKey)
+                    .font(AppFont.sw(17, weight: .regular, category: .code))
+                    .textContentType(.oneTimeCode)
+                    .multilineTextAlignment(.trailing)
+            }
+
+            Button {
+                if revealed {
+                    revealedKeys.remove(id)
+                } else {
+                    revealedKeys.insert(id)
+                }
+            } label: {
+                Image(systemName: revealed ? "eye.slash" : "eye")
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(Text(revealed
+                                     ? LocalizedStringKey("Hide")
+                                     : LocalizedStringKey("Show")))
         }
     }
 
     // MARK: - Test
 
+    /// One row: the button that runs the probe, and the verdict on its right. The
+    /// result is a second tap away, so the form stays the form.
     private var testSection: some View {
         Section {
-            Button {
-                runTest()
-            } label: {
-                HStack {
+            HStack {
+                Button {
+                    runTest()
+                } label: {
                     // Both branches spell out LocalizedStringKey: a plain ternary of
                     // two literals is inferred as String, and `Text(String)` does not
                     // consult the catalog, so the title would stay English in Chinese.
                     Text(testRunning
                          ? LocalizedStringKey("Testing…")
                          : LocalizedStringKey("Test Search"))
-                    if testRunning {
-                        Spacer(minLength: 8)
-                        ProgressView()
+                        // The label fills the row, so the whole free width is the
+                        // button — a tap to the right of the words runs the probe
+                        // instead of doing nothing.
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.borderless)
+                .disabled(testRunning)
+
+                if testRunning {
+                    ProgressView()
+                } else if let succeeded = testVerdict {
+                    // Tap the verdict for the run's text. Nothing else on this
+                    // screen shows it, so the row is quiet until it is asked.
+                    Button {
+                        showTestResult = true
+                    } label: {
+                        Image(systemName: succeeded
+                              ? "checkmark.circle.fill"
+                              : "exclamationmark.circle.fill")
+                            .foregroundStyle(succeeded ? Color.green : Color.red)
+                            .frame(minWidth: 24, minHeight: 24)
                     }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel(Text(succeeded
+                                             ? LocalizedStringKey("Test succeeded")
+                                             : LocalizedStringKey("Test failed")))
                 }
             }
-            .disabled(testRunning)
+        }
+    }
 
-            if !testLines.isEmpty {
+    /// What the test row shows: nothing before the probe has run, then whether it
+    /// came back with something.
+    private var testVerdict: Bool? {
+        guard !testRunning, !testLines.isEmpty else { return nil }
+        return !testFailed
+    }
+
+    /// The probe's output, in the sheet the verdict opens: the source line first,
+    /// then the raw text the model would have read, with a copy button per line so
+    /// a rejected key can be reported without retyping it.
+    private var testResultSheet: some View {
+        CompatNavigationStack {
+            List {
                 ForEach(Array(testLines.enumerated()), id: \.offset) { item in
                     HStack(alignment: .top, spacing: 8) {
                         Text(verbatim: item.element)
@@ -221,21 +344,31 @@ struct DSHWebSearchSettingsView: View {
                     }
                 }
             }
-        } header: {
-            Text("Results")
+            .navigationTitle("Results")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") {
+                        showTestResult = false
+                    }
+                }
+            }
         }
+        .compatDetents([.medium, .large])
     }
 
-    // MARK: - Reset
+    // MARK: - Clear
 
-    private var resetSection: some View {
+    /// Clearing IS the reset: the shipped default holds no entries, so there is no
+    /// key or endpoint the app could put back that the user did not type.
+    private var clearSection: some View {
         Section {
-            Button("Reset to the shipped defaults") {
-                store.resetToDefaults()
+            Button("Clear Search Entries", role: .destructive) {
+                store.clear()
                 testLines = []
                 testFailed = false
             }
-            .foregroundStyle(.red)
+            .disabled(store.entries.isEmpty)
         }
     }
 
@@ -286,16 +419,9 @@ final class DSHWebSearchStore: ObservableObject {
         entries.removeAll { $0.id == id }
     }
 
-    func delete(at offsets: IndexSet) {
-        entries.remove(atOffsets: offsets)
-    }
-
-    func move(from source: IndexSet, to destination: Int) {
-        entries.move(fromOffsets: source, toOffset: destination)
-    }
-
-    /// Step one entry past its neighbour. The row buttons move it a place; the
-    /// drag handles in edit mode move it anywhere.
+    /// Step one entry past its neighbour. The row's arrow buttons move it a place,
+    /// which is the whole reorder gesture this screen has: the entries are one
+    /// section each, so the list cannot offer a drag handle that spans them.
     func moveUp(_ id: DSHWebSearchEntry.ID) { step(id, by: -1) }
 
     func moveDown(_ id: DSHWebSearchEntry.ID) { step(id, by: 1) }
@@ -307,7 +433,8 @@ final class DSHWebSearchStore: ObservableObject {
         entries.swapAt(index, target)
     }
 
-    func resetToDefaults() {
+    /// Empty the queue — the shipped default, restored.
+    func clear() {
         DSHWebSearchConfig.resetToDefaults()
         entries = DSHWebSearchConfig.entries
     }
