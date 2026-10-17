@@ -209,6 +209,15 @@ public enum DSHToolScheduler {
                 return
             }
 
+            // [T-plan-enforce] Plan mode's refusal, applied where the call would
+            // otherwise run. The prompt says the same thing, but this model ignores
+            // it (measured: it ran a shell command 13 s into a plan-mode turn with
+            // the policy section in the request), so the rule is enforced here.
+            if let refusal = DSHPlanMode.refusal(forTool: call.block.name) {
+                settle(index, with: DSHToolExecutionResult.error(refusal))
+                return
+            }
+
             let context = DSHToolRunContext(
                 callId: call.block.id, signal: signal, turn: turn, step: step
             )
