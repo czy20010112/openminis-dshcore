@@ -113,6 +113,40 @@ public enum DSHPlanMode {
     /// Everything else — including the `todo_write` exclusion, which is how the
     /// implementation checklist stays separate from the plan — is upstream's
     /// exact sentence.
+    /// The message plan mode hands back when the model reaches for a tool that
+    /// would carry the plan out, or nil when the tool is allowed.
+    ///
+    /// DSH leaves the tool catalog identical across modes and relies on the policy
+    /// text alone — its own README calls plan mode "guidance, not enforcement".
+    /// Measured on this device that guidance does not hold: with the policy section
+    /// demonstrably in the request (30 590 characters with plan mode on against
+    /// 29 292 off) the model called `shell_execute` thirteen seconds in and ran the
+    /// operator's command, which is exactly the complaint that started this.
+    ///
+    /// So the refusal is mechanical. `shell_execute` is refused even though DSH's
+    /// text permits read-only commands: nothing here can tell a read-only command
+    /// from a destructive one without running it, and "plan, do not act" is the
+    /// whole point of the mode. Inspection that does not need a shell stays
+    /// available — `file_read`, `memory_get`, `browser_use`, `read_image`.
+    /// `todo_write` is refused because DSH's policy says the checklist tracks
+    /// implementation after approval, not the planning phase.
+    static func refusal(forTool name: String) -> String? {
+        guard DSHTodoStore.shared.planModeActive else { return nil }
+        switch name {
+        case "file_write", "file_edit", "shell_execute", "memory_write", "todo_write":
+            return """
+            Refused: `\(name)` is not available while plan mode is on. Plan mode is \
+            for producing a plan, not for carrying it out — including commands that \
+            only look read-only, because nothing here can tell the two apart without \
+            running them. Explore with `file_read`, `memory_get`, `browser_use` or \
+            `read_image`, then submit the finished plan through `exit_plan_mode`. \
+            Implementation begins only after that plan is approved.
+            """
+        default:
+            return nil
+        }
+    }
+
     static let policyText = """
     You are in plan mode. Stay in plan mode until exit_plan_mode succeeds or the user switches the session mode. Imperative language to implement changes means plan the implementation, not execute it. A user's conversational agreement — including an answer confirming something you asked — approves nothing and does not end plan mode; fold the confirmed decision into the plan and submit it through exit_plan_mode.
 
