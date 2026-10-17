@@ -600,21 +600,27 @@ struct AIChatView: View {
                             floatingToolPreview
                                 .shadow(color: Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 0, alpha: 0.25) : UIColor(white: 0, alpha: 0) }), radius: 6, x: 0, y: 4)
                             // [T-tools-todo-plan] The task list and plan state, as a
-                            // bar attached to the composer from OUTSIDE: top corners
-                            // rounded to the composer's own radius, bottom edge square,
-                            // and pulled down 8pt so it sits flush on the composer's
-                            // surface with no gap. Inside the composer it competed with
-                            // the input field for space; as a floating sibling it read
-                            // as a second card.
+                            // bar above the composer from OUTSIDE: inside the composer
+                            // it competed with the input field for space, and as a
+                            // floating sibling it read as a second card.
                             DSHTodoPanelView()
-                                .frame(maxWidth: maxContentWidth)
-                                // 2pt narrower than the composer on each side, so it
-                                // reads as a bar on top of the input box rather than a
-                                // box of its own.
-                                .padding(.horizontal, 14)
-                                // The composer applies `.padding(.vertical, 8)` outside
-                                // its surface; without this the bar floats 8pt above it.
-                                .padding(.bottom, -8)
+                                .frame(maxWidth: maxContentWidth, alignment: .leading)
+                                // The composer's own inset, so the bar's width is the
+                                // input box's width and not a second opinion about it.
+                                // It was 14 — 2pt narrower per side.
+                                .padding(.horizontal, 12)
+                                // 4pt of air, which is DSH's own dock clearance under
+                                // its panel (`conversation.input.dock: padding: 0 …
+                                // 4px`). The composer applies `.padding(.vertical, 8)`
+                                // outside its surface, so this is what puts the gap at
+                                // 4: the bar used to be pulled down 8pt (`-8`) onto
+                                // that surface, which made its straight bottom edge —
+                                // and the hairline along it — land exactly on the
+                                // composer's top edge, where the composer's corners
+                                // have already curved inward. The strip was wider there
+                                // than the surface beneath it, so the bottom edge hung
+                                // over the rounded corners.
+                                .padding(.bottom, -4)
                             #if DEBUG
                             if isReadOnly {
                                 forkBanner

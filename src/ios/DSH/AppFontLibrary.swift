@@ -119,6 +119,16 @@ struct AppFontFace: Identifiable, Equatable {
     /// pretending: this is the honest description of a single-face font.
     let singleFaceName: String?
     /// Where it came from and under which licence — shown under the picker.
+    ///
+    /// This string is a CATALOG KEY, not display text: its English value is the
+    /// key itself, and `AppFontSettingsView` renders it through a
+    /// `LocalizedStringKey`, so the sentence translates with the rest of the
+    /// screen. The FACE NAME inside it stays verbatim in every language (a proper
+    /// noun), which is why the name is written into each translation separately
+    /// rather than interpolated.
+    ///
+    /// `displayName` above is NOT a key: a proper noun has one spelling in every
+    /// language and is rendered with `Text(verbatim:)`.
     let provenance: String
     let isSystem: Bool
     let isImported: Bool
@@ -292,7 +302,7 @@ enum AppFontLibrary {
                 .semibold: "NotoSerifSC-SemiBold",
                 .bold: "NotoSerifSC-Bold",
             ],
-            provenance: "Noto Serif SC — SIL OFL 1.1 · google/fonts ofl/notoserifsc. Subset to 方正宋三简体's own character coverage (8,054 codepoints, 0 CJK ideographs dropped) so it can carry Chinese BOLD without shipping a 25 MB face."
+            provenance: "Noto Serif SC — SIL OFL 1.1 · google/fonts ofl/notoserifsc. Subset to 方正宋三简体's own character coverage (8,054 codepoints, no Chinese character dropped) so it can carry Chinese BOLD without shipping a 25 MB face."
         ),
     ]
 

@@ -898,7 +898,7 @@ struct UnifiedModelPicker: View {
                 HStack(spacing: 4) {
                     if let instanceLabel = store.instance(for: entry.providerInstanceId)?.label {
                         Text(instanceLabel)
-                            .font(.caption2.weight(.medium))
+                            .font(AppFont.sw(11, weight: .medium, category: .ui))
                             .foregroundStyle(.secondary)
                         Text("·")
                             .font(AppFont.sw(11, weight: .regular, category: .ui))

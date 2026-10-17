@@ -17,6 +17,15 @@
 //      (from the UI, against the surface) would describe a different request
 //      than the one that was sent.
 //
+//  ON SCREEN, that difference is carried by ONE short line under the rows
+//  ("Estimated from character count at 3.6 characters per token. The top figure
+//  is the provider's own count, so these rows may sum a few percent above or
+//  below it.") plus the "measured by the provider" caption under the header
+//  figure. It used to carry a "WHO MEASURED WHAT" section with a full paragraph
+//  of argument; the operator asked for that to go, so the panel now says the
+//  least that still keeps the two figures from reading as one number. Do not
+//  restore the essay: the long form of it is this comment.
+//
 //  The denominator is the model's WINDOW (`AIChatViewModel
 //  .currentModelContextWindow`), not the compaction pressure threshold. The
 //  threshold is a policy of ours — 80% of the window on the iOS 26 line — and a
@@ -288,9 +297,11 @@ struct DSHContextRingButton: View {
     }
 
     private var accessibilityLabel: String {
-        guard let reading else { return "Context: no usage reported yet" }
-        return "Context \(reading.percent)% used — "
-            + DSHContextFormat.ratio(used: reading.usedTokens, window: reading.windowTokens)
+        guard let reading else { return AppLocalized("Context: no usage reported yet") }
+        let ratio = DSHContextFormat.ratio(used: reading.usedTokens, window: reading.windowTokens)
+        // One key with two arguments, the same shape the iOS 26 line already uses
+        // for the reading of this ring.
+        return String(format: AppLocalized("Context %lld%% used — %@"), reading.percent, ratio)
     }
 }
 
@@ -322,6 +333,9 @@ struct DSHContextPanel: View {
 
     // MARK: Header
 
+    /// The top-right figure: `~296K / 1M`. Two numbers and a separator, so it is
+    /// not a catalog key; it is set in the CODE face so the digits are tabular
+    /// and line up with the value column of the rows underneath.
     private var ratioText: String {
         guard let reading else { return "—" }
         return DSHContextFormat.ratio(used: reading.usedTokens, window: reading.windowTokens)
@@ -337,16 +351,24 @@ struct DSHContextPanel: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Context")
                     .font(Font(AppFont.ui(17, weight: .semibold, category: .body)))
-                Text(subtitle)
+                Text(headerSubtitle)
                     .font(Font(AppFont.ui(12, category: .ui)))
                     .foregroundStyle(.secondary)
+                    .lineLimit(2)
             }
             Spacer(minLength: 8)
             // The provider's figure, and the window it is measured against. This
-            // is the measured number; everything below it is our estimate.
-            Text(ratioText)
-                .font(.system(size: 15, weight: .semibold).monospacedDigit())
-                .foregroundStyle(.primary)
+            // is the measured number; everything below it is our estimate, and
+            // the subtitle says so — a "via <provider>" caption under it was
+            // dropped as the third statement of the same fact.
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(ratioText)
+                    .font(AppFont.sw(15, weight: .semibold, category: .code))
+                    .foregroundStyle(.primary)
+                Text("measured by the provider")
+                    .font(Font(AppFont.ui(11, category: .ui)))
+                    .foregroundStyle(.secondary)
+            }
 
             Button("Done") { dismiss() }
                 .font(Font(AppFont.ui(15, category: .body)))
@@ -355,17 +377,26 @@ struct DSHContextPanel: View {
         .padding(.vertical, 14)
     }
 
-    private var subtitle: String {
-        guard let reading else { return "No usage reported yet" }
-        guard reading.hasWindow else { return "The model's window is unknown" }
-        return "\(reading.percent)% of the window"
+    /// The one line under "Context": how full the window is, and whose number
+    /// the figure on the right is. The provider's attribution lives HERE, in
+    /// place of the old "WHO MEASURED WHAT" paragraph — a reader who needs the
+    /// long version has the comment at the top of this file.
+    ///
+    /// Built as a `String` through `AppLocalized`/`String(format:)` rather than as
+    /// a `LocalizedStringKey`: the sentence is assembled from a format and a name,
+    /// and `LocalizedStringKey` does not convert to `String` on the iOS 15 line,
+    /// so a composed key could not be handed to `AppLocalized` there.
+    private var headerSubtitle: String {
+        guard let reading else { return AppLocalized("No usage reported yet") }
+        guard reading.hasWindow else { return AppLocalized("The model's window is unknown") }
+        return String(format: AppLocalized("%lld%% of the window"), reading.percent)
     }
 
     // MARK: Rows
 
     private var components: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("THIS REQUEST, MEASURED AT ASSEMBLY")
+            Text("This request, estimated")
                 .font(Font(AppFont.ui(11, weight: .semibold, category: .ui)))
                 .foregroundStyle(.secondary)
 
@@ -373,17 +404,17 @@ struct DSHContextPanel: View {
                 ContextRow(
                     label: "System prompt",
                     value: DSHContextFormat.approx(b.systemPromptTokens),
-                    detail: "\(count(b.systemPromptChars, "char")) · \(count(b.sectionNames.count, "section"))"
+                    detail: "\(count(b.systemPromptChars, .char)) · \(count(b.sectionNames.count, .section))"
                 )
                 ContextRow(
                     label: "Tool definitions",
                     value: DSHContextFormat.approx(b.toolTokens),
-                    detail: count(b.toolCount, "tool")
+                    detail: count(b.toolCount, .tool)
                 )
                 ContextRow(
                     label: "Conversation",
                     value: DSHContextFormat.approx(b.surfaceTokens),
-                    detail: count(b.surfaceMessageCount, "entry")
+                    detail: count(b.surfaceMessageCount, .entry)
                 )
                 Divider()
                 ContextRow(
@@ -392,11 +423,19 @@ struct DSHContextPanel: View {
                     detail: nil,
                     emphasised: true
                 )
+                // Replaces the old "WHO MEASURED WHAT" paragraph: the same
+                // information — these figures are ours, the header's is the
+                // provider's — in the one line a reader needs for it.
+                Text("Estimated from character count at 3.6 characters per token. The top figure is the provider's own count, so these rows may sum a few percent above or below it.")
+                    .font(Font(AppFont.ui(11, category: .ui)))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 2)
             } else {
                 // Nothing has been assembled in this session, or the app has not
                 // driven a turn since launch. Saying so beats three rows of
                 // zeroes that read as "the context is empty".
-                Text("No request has been assembled yet in this session. Send a message and the three components will be measured as it goes out.")
+                Text("No request has been assembled yet in this session.")
                     .font(Font(AppFont.ui(13, category: .body)))
                     .foregroundStyle(.secondary)
             }
@@ -405,29 +444,19 @@ struct DSHContextPanel: View {
 
     // MARK: Provenance
 
-    /// Why the header and the rows do not add up, in the panel rather than only
-    /// in a commit message: the two figures have different owners, and a reader
-    /// who sees them disagree will otherwise assume one of them is broken.
+    /// When the request was measured, and where it went. The attribution of the
+    /// two figures used to sit here as a paragraph; it is now the one-line note
+    /// under the rows and the subtitle under the ring.
     private var provenance: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("WHO MEASURED WHAT")
-                .font(Font(AppFont.ui(11, weight: .semibold, category: .ui)))
-                .foregroundStyle(.secondary)
-
-            Text("The top-right figure is the provider's own count for its last call — the only measured number here, and the one the next request starts from. The rows are this app's estimate of the request it assembled, at 3.6 characters per token; the provider's count additionally carries request framing, cache accounting and its own tokenizer. The rows are therefore shares of one request, not a decomposition of the header — their sum lands a few percent above or below it, and neither side is adjusted to make them match.")
-                .font(Font(AppFont.ui(12, category: .ui)))
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
             if let b = breakdowns.latest {
-                Divider()
                 ContextRow(
-                    label: "Assembled",
+                    label: "Measured",
                     value: relativeTime(b.capturedAt),
                     detail: nil
                 )
                 ContextRow(
-                    label: "Route",
+                    label: "Provider",
                     value: b.provider,
                     detail: b.model.isEmpty ? nil : b.model
                 )
@@ -435,8 +464,11 @@ struct DSHContextPanel: View {
                     // The evidence for "which sections reached the request", shown
                     // rather than only logged: this is the same list the
                     // `[DSH] prompt sections=[…]` line carries.
-                    Text("Prompt sections: " + b.sectionNames.joined(separator: " · "))
-                        .font(.system(size: 11, design: .monospaced))
+                    // One catalog lookup for the label (the entry already exists
+                    // on both lines: "Prompt sections:") plus the section names,
+                    // which are identifiers and stay verbatim in every language.
+                    Text(AppLocalized("Prompt sections:") + " " + b.sectionNames.joined(separator: " · "))
+                        .font(AppFont.sw(11, category: .code))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -444,16 +476,43 @@ struct DSHContextPanel: View {
         }
     }
 
-    private func count(_ n: Int, _ noun: String) -> String {
-        n == 1 ? "1 \(noun)" : "\(n) \(noun)s"
+    /// "1 char" · "812 chars" — through `AppLocalized`, because a key built from
+    /// a variable cannot go through `Text`'s `LocalizedStringKey` initialiser and
+    /// would render English on every device.
+    private func count(_ n: Int, _ noun: CountUnit) -> String {
+        String(format: AppLocalized(noun.key(for: n)), n)
     }
 
     private func relativeTime(_ date: Date) -> String {
         let seconds = Int(max(Date().timeIntervalSince(date), 0))
-        if seconds < 5 { return "just now" }
-        if seconds < 60 { return "\(seconds)s ago" }
+        if seconds < 5 { return AppLocalized("just now") }
+        if seconds < 60 { return String(format: AppLocalized("%llds ago"), seconds) }
         let minutes = seconds / 60
-        return minutes < 60 ? "\(minutes)m ago" : "\(minutes / 60)h ago"
+        if minutes < 60 { return String(format: AppLocalized("%lldm ago"), minutes) }
+        return String(format: AppLocalized("%lldh ago"), minutes / 60)
+    }
+}
+
+/// The count units the panel names, each carrying its OWN singular and plural
+/// catalog key.
+///
+/// Not a noun the code appends an "s" to: "entry" would become "entrys", which is
+/// not a word, and the two forms are already separate keys in the catalog (it has
+/// no plural variations). Spelling both out is also what keeps the key names
+/// greppable when someone audits the table.
+enum CountUnit {
+    case char
+    case section
+    case tool
+    case entry
+
+    func key(for n: Int) -> String {
+        switch self {
+        case .char: return n == 1 ? "%lld char" : "%lld chars"
+        case .section: return n == 1 ? "%lld section" : "%lld sections"
+        case .tool: return n == 1 ? "%lld tool" : "%lld tools"
+        case .entry: return n == 1 ? "%lld entry" : "%lld entries"
+        }
     }
 }
 
@@ -474,13 +533,16 @@ private struct ContextRow: View {
                 .font(Font(AppFont.ui(14, weight: emphasised ? .semibold : .regular, category: .body)))
             if let detail {
                 Text(detail)
-                    .font(Font(AppFont.ui(12, category: .ui)))
+                    .font(AppFont.sw(12, category: .code))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
             Spacer(minLength: 8)
+            // The numbers are the point of this panel, so they are set in the CODE
+            // face — the same one the composer's other numeric readouts use — which
+            // also makes every digit tabular and the column line up.
             Text(value)
-                .font(.system(size: 14, weight: emphasised ? .semibold : .regular).monospacedDigit())
+                .font(AppFont.sw(14, weight: emphasised ? .semibold : .regular, category: .code))
                 .foregroundStyle(emphasised ? .primary : .secondary)
         }
     }

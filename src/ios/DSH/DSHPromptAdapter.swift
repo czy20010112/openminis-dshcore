@@ -49,6 +49,17 @@ extension AIChatViewModel {
 
         disposers.append(contentsOf: DSHMinisPrompt.registerBase(into: prompt))
 
+        // Plan mode's policy section, like the DSH turn registers it.
+        //
+        // This path did not have it: `runDSHTurn` registers it
+        // (`DSHTurnDriverRun.swift`), and this assembly — which the legacy loop
+        // reaches through `baseSystemPrompt`/`dshSystemPrompt` — did not, so with
+        // `minis.useDSHAgentLoop` off the mode flipped its switch and changed
+        // nothing about the request. The section renders empty while the mode is
+        // off, so registering it on both paths costs nothing and removes the one
+        // way for plan mode to be silently inert.
+        disposers.append(prompt.section(DSHPlanMode.policySection()))
+
         // Dynamic runtime context: the facts the model would otherwise guess
         // at. Folded in as a snapshot of the state at request-build time.
         disposers.append(prompt.section(DSHMinisPrompt.runtimeContextSection(

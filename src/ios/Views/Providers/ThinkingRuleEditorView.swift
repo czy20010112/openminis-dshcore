@@ -117,7 +117,7 @@ struct ThinkingRuleEditorView: View {
                         }
                     }
                     Text(choice.explanation)
-                        .font(.caption)
+                        .font(AppFont.sw(12, weight: .regular, category: .ui))
                         .foregroundStyle(.secondary)
                     formatFields
                 } header: {

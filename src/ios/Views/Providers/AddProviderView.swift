@@ -699,6 +699,20 @@ struct AddProviderView: View {
             // API Format picker for OpenAI provider (hidden for voice-only templates)
             if !enteredViaVoiceTemplate, selectedType == .openAI || selectedType == .openAIResponses {
                 Section {
+                    // [T-font-picker-value] DIAGNOSIS ONLY — the control is left
+                    // as a `Picker` on purpose. The operator's guess was right:
+                    // the row's VALUE is a UIKit control's title, and `.font(...)`
+                    // on a `Form` `Picker` does not reach it (it only styles the
+                    // popover list, which UIKit draws too). Two rewrites would
+                    // work, and both need a device check before shipping:
+                    //   a) NOT AVAILABLE: `Menu` has no `selection:` initializer
+                    //      (checked against Apple's own docs index for `Menu` —
+                    //      only `init(content:label:)` and friends exist), so the
+                    //      menu-based fix found in blog posts does not apply.
+                    //   b) two plain `Button` rows with a checkmark — works on
+                    //      15, but changes the control the user sees.
+                    // Rather than ship an unverifiable change to a working
+                    // control, the row keeps its behaviour and this is reported.
                     Picker("API Format", selection: $useResponsesAPI) {
                         Text("Chat Completions").tag(false)
                         Text("Responses API").tag(true)
@@ -792,7 +806,13 @@ struct AddProviderView: View {
         // Manual OAuth entry — available for all providers (supports proxy services, Coding Plan tokens, etc.)
         if selectedType != .antigravity && !pendingOAuthDone {
             Section {
-                TextField(defaultBaseURL, text: $customBaseURLInput)
+                // [T-font-textfield-placeholder] Same prompt-vs-placeholder
+                // reason as `customBaseURLSection`: the label form's string is
+                // drawn by UIKit with the system font.
+                TextField(text: $customBaseURLInput, prompt: Text(defaultBaseURL)
+                    .font(AppFont.sw(17, weight: .regular, category: .code))) {
+                    Text("Custom API Base")
+                }
                     .font(AppFont.sw(17, weight: .regular, category: .code))
                     .foregroundStyle(.secondary)
                     .textInputAutocapitalization(.never)
@@ -845,7 +865,18 @@ struct AddProviderView: View {
 
     private var customBaseURLSection: some View {
         Section {
-            TextField(defaultBaseURL, text: $customBaseURLInput)
+            // [T-font-textfield-placeholder] The prompt is its OWN `Text`, not
+            // the `TextField(_:text:)` label form: that form hands the string to
+            // UIKit as the field's `placeholder`, which is drawn with the
+            // system font and IGNORES the `.font(...)` on the field — so the
+            // grey default URL the user sees before typing was the one piece of
+            // text in this screen still in SF. An explicit prompt is laid out by
+            // SwiftUI with the environment font, and the category font below
+            // makes it the code face like the value line.
+            TextField(text: $customBaseURLInput, prompt: Text(defaultBaseURL)
+                .font(AppFont.sw(17, weight: .regular, category: .code))) {
+                Text("Custom API Base")
+            }
                 .font(AppFont.sw(17, weight: .regular, category: .code))
                 .foregroundStyle(.secondary)
                 .textInputAutocapitalization(.never)

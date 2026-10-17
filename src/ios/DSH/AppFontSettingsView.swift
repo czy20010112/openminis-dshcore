@@ -101,7 +101,10 @@ struct AppFontSettingsView: View {
                     .font(AppFont.sw(12, category: .ui))
                     .foregroundStyle(.secondary)
             }
-            Text(verbatim: face.provenance)
+            // Through the catalog, not `Text(verbatim:)`: `provenance` is a key
+            // (see `AppFontFace.provenance`), and rendered verbatim it stayed
+            // English on a Chinese device while the rest of this row translated.
+            Text(LocalizedStringKey(face.provenance))
                 .font(AppFont.sw(11, category: .ui))
                 .foregroundStyle(.secondary)
             if !face.hasWeightVariants && !face.isSystem {

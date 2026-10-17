@@ -381,12 +381,124 @@ Do not create extraneous files: README.md, INSTALLATION_GUIDE.md, CHANGELOG.md, 
 """
 
     private func installBundledSkills() {
-        let bundledId = "skill-creator"
-        if let existing = skills.first(where: { $0.id == bundledId }) {
-            // Upgrade if the bundled version is newer
-            guard existing.version < Self.skillCreatorVersion else { return }
+        installBundledSkill(id: "skill-creator",
+                            version: Self.skillCreatorVersion,
+                            content: Self.skillCreatorContent)
+        // The id passed here must equal Self.slugify(frontmatter `name`): that
+        // slug is the id importSkill derives, so it is the row the version gate
+        // looks up. These three carry no `version:` frontmatter, so an installed
+        // row records 1.0.0 and a bump of DSHBundledSkills.setVersion re-imports it.
+        installBundledSkill(id: "dsh-code-review",
+                            version: DSHBundledSkills.setVersion,
+                            content: DSHBundledSkills.codeReview)
+        installBundledSkill(id: "dsh-pre-push-checks",
+                            version: DSHBundledSkills.setVersion,
+                            content: DSHBundledSkills.prePushChecks)
+        installBundledSkill(id: "dsh-doc",
+                            version: DSHBundledSkills.setVersion,
+                            content: DSHBundledSkills.doc,
+                            files: DSHBundledSkills.docFiles)
+    }
+
+    /// Install one shipped skill, or upgrade it when the bundled version is newer.
+    /// A skill already at `version` is left alone, so a launch never overwrites a
+    /// copy the user edited. Each skill needs its own call: while this logic was
+    /// inlined, its `guard … else { return }` returned from the whole installer,
+    /// so one up-to-date skill silently skipped every skill after it.
+    ///
+    /// `files` are this skill's additional shipped files. They are reconciled on
+    /// every launch, not only on install: the SKILL.md import below is version
+    /// gated, so a device that already holds the current row would otherwise
+    /// never pick up a file added to a later build. Idempotent — a file whose
+    /// stored bytes already match is not rewritten.
+    private func installBundledSkill(id: String, version: String, content: String,
+                                    files: [DSHBundledSkills.DSHBundledFile] = []) {
+        if let existing = skills.first(where: { $0.id == id }) {
+            guard existing.version < version else {
+                installBundledFiles(id: id, files: files)
+                return
+            }
         }
-        _ = try? importSkill(content: Self.skillCreatorContent, source: .bundled)
+        // Plain `try` with a logged failure, not `try?`: `importSkill` writes
+        // `<skills>/<id>/SKILL.md`, and a silent failure here is exactly the
+        // class of bug this installer exists to surface (the skill would show
+        // up in Settings while /var/minis/skills/<id>/SKILL.md never appears).
+        do {
+            _ = try importSkill(content: content, source: .bundled)
+        } catch {
+            AppLogger(category: "SkillBundle").error(
+                "[INSTALL] bundled skill '\(id)' failed to install: \(error.localizedDescription)")
+            return
+        }
+        installBundledFiles(id: id, files: files)
+    }
+
+    /// Write the files that ship beside a bundled skill's SKILL.md.
+    ///
+    /// `dsh-doc` is the reason this exists: its body links to
+    /// `references/<name>.md` and `templates/<name>.md` relatively, and on device
+    /// the body lives at /var/minis/skills/dsh-doc/SKILL.md, so without these
+    /// files every one of those links is dead — there is no repository tree to
+    /// walk out to. `writeSkillFile` puts each one in the skill directory (the
+    /// path iSH bind-mounts at /var/minis/skills) and mirrors it into the rootfs
+    /// copy under alpine-rootfs/data, matching how an imported skill's own
+    /// bundled files land.
+    ///
+    /// Writing is not the evidence — reading back is. `writeSkillFile` is also
+    /// the API the Files browser and the ZIP importer use, so it stays
+    /// non-throwing; the copies are verified here and every failure is logged
+    /// loudly instead of being swallowed, because a half-installed skill is
+    /// indistinguishable from a working one until a link is tapped.
+    private func installBundledFiles(id: String, files: [DSHBundledSkills.DSHBundledFile]) {
+        guard !files.isEmpty else { return }
+        var installed = 0
+        var failed: [String] = []
+        for file in files {
+            // Compile-time guard on the literal: if a bundled file is ever edited
+            // in Swift instead of regenerated, its declared byte count stops
+            // matching and this stops compiling. The sha256 of each source file
+            // is checked off-device by _tools/verify-dsh-bundled-files.cjs.
+            _ = file.bytes
+            // Already stored in both places: leave the files and the row's
+            // updatedAt alone. Without this the launch-time reconciliation would
+            // re-write the files and re-queue the skill for iCloud upload on
+            // every launch.
+            if bundledFileMatches(id: id, file: file) {
+                installed += 1
+                continue
+            }
+            do {
+                try writeSkillFile(id, relativePath: file.path, content: file.content)
+            } catch {
+                failed.append("\(file.path) (write: \(error.localizedDescription))")
+                continue
+            }
+            if bundledFileMatches(id: id, file: file) {
+                installed += 1
+            } else {
+                failed.append("\(file.path) (read-back mismatch)")
+            }
+        }
+        if failed.isEmpty {
+            AppLogger(category: "SkillBundle").info(
+                "[INSTALL] bundled skill '\(id)' files: \(installed)/\(files.count) installed")
+        } else {
+            AppLogger(category: "SkillBundle").error(
+                "[INSTALL-PARTIAL] bundled skill '\(id)': \(failed.count)/\(files.count) file(s) failed — \(failed.joined(separator: "; "))")
+        }
+    }
+
+    /// True when both stored copies of a bundled file hold exactly `file.content`.
+    /// The app-group copy is the one the skill's own relative links resolve
+    /// through; the rootfs copy is the mirror the rest of the skill pipeline
+    /// keeps in step with `SKILL.md`.
+    private func bundledFileMatches(id: String, file: DSHBundledSkills.DSHBundledFile) -> Bool {
+        let libraryFile = skillDirectoryURL(for: id).appendingPathComponent(file.path)
+        guard let libraryText = try? String(contentsOf: libraryFile, encoding: .utf8),
+              libraryText == file.content else { return false }
+        let rootfsFile = rootfsSkillsDir.appendingPathComponent(id).appendingPathComponent(file.path)
+        guard let rootfsText = try? String(contentsOf: rootfsFile, encoding: .utf8) else { return false }
+        return rootfsText == file.content
     }
 
     // MARK: - One-time Migration: re-sync skills with bundled files
