@@ -159,6 +159,9 @@ struct DSHContextReading: Equatable {
     /// that row are one number in all three places. A receipt wins outright: as
     /// soon as an assistant row carries usage the estimate is dropped, never
     /// averaged with the reported figure.
+    /// - Note: `@MainActor` because it reads `DSHContextBreakdownStore.shared`,
+    ///   which is main-actor isolated. Every caller is a view body.
+    @MainActor
     static func display(messages: [ChatMessage], window: Int?, streaming: Bool = false) -> DSHContextReading? {
         // While a turn runs, the provider's last figure describes the PREVIOUS
         // request, not the one being streamed — so it answers the wrong question and
@@ -177,6 +180,7 @@ struct DSHContextReading: Equatable {
     /// nil until this process has assembled one request. A session whose
     /// conversation was loaded from the database after a relaunch has messages
     /// but no breakdown, and the panel has a line that says exactly that.
+    @MainActor
     static func estimated(window: Int?) -> DSHContextReading? {
         guard let breakdown = DSHContextBreakdownStore.shared.latest,
               breakdown.estimatedTotal > 0 else { return nil }
