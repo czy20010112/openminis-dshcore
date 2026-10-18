@@ -460,17 +460,20 @@ struct DSHContextBreakdown: Equatable {
     /// Derived from the store's own record of what it measured — never inferred
     /// from how close two numbers are — so the row's label and the header's
     /// figure cannot disagree about the request they describe.
+@MainActor
     var isMeasured: Bool {
         guard let measured = DSHContextUsageStore.shared.measured else { return false }
         return measured.sessionKey == sessionKey && measured.envelopeTokens == estimatedTotal
     }
 
     /// "This request, estimated" · "This request, measured".
+@MainActor
     var sectionTitle: String {
         isMeasured ? "This request, measured" : "This request, estimated"
     }
 
     /// "Total (estimated)" · "Total (measured)".
+@MainActor
     var totalLabel: String {
         isMeasured ? "Total (measured)" : "Total (estimated)"
     }
