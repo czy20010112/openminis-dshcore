@@ -464,7 +464,10 @@ struct MessageListTestView: View {
                     onCompact: nil,
                     maxContentWidth: 0,
                     floatingBarHeight: 60,
-                    inputBarHeight: 50
+                    inputBarHeight: 50,
+                    // [T-panel-bottom-inset] No composer-context bars in this
+                    // harness, and this argument is required positionally.
+                    panelHeights: 0
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .accessibilityIdentifier("messageListCollectionView")

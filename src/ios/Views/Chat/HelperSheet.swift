@@ -423,7 +423,10 @@ private struct HelperTranscript: View {
                 onTakeoverDone: { vm.resumeFromBrowserTakeover() },
                 maxContentWidth: geo.size.width,
                 floatingBarHeight: 0,
-                inputBarHeight: 0
+                inputBarHeight: 0,
+                // [T-panel-bottom-inset] This mirror has no composer stack of
+                // its own, so it reserves nothing for the bars.
+                panelHeights: 0
             )
         }
     }

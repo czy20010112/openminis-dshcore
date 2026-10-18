@@ -116,27 +116,59 @@ public enum DSHMinisPrompt {
     }
 
     /// The runtime context snapshot folded into every request.
+    ///
+    /// P1-2: registered as a VOLATILE section (`minis:volatile/runtime-context`),
+    /// so `renderPrompt(excludingVolatileSectionsOf:)` keeps it out of the system
+    /// prompt and the request carries it as its own message instead. The
+    /// registration is retained because it is the declared edit site and because
+    /// `assemble` still reports it as a section of the request.
     public static func runtimeContextSection(
         sandboxRoot: String,
         sessionId: String?,
         memoryEnabled: Bool
     ) -> DSHPromptSection {
         DSHPromptSection(
-            name: "minis:runtime-context",
+            name: DSHSystemPrompt.volatileSectionPrefix + "runtime-context",
             order: DSHSectionOrder.runtimeContext.rawValue,
             dynamic: { context in
-                var lines: [String] = []
-                if let model = context.model { lines.append("Model: \(model)") }
-                if let cwd = context.cwd { lines.append("Working directory: \(cwd)") }
-                lines.append("Sandbox root: \(sandboxRoot)")
-                if let sessionId { lines.append("Session: \(sessionId)") }
-                lines.append("Memory: \(memoryEnabled ? "enabled" : "disabled")")
-                if !context.toolNames.isEmpty {
-                    lines.append("Tools this turn: \(context.toolNames.joined(separator: ", "))")
-                }
-                guard !lines.isEmpty else { return "" }
-                return lines.joined(separator: "\n")
+                runtimeContextText(
+                    model: context.model,
+                    cwd: context.cwd,
+                    sandboxRoot: sandboxRoot,
+                    sessionId: sessionId,
+                    memoryEnabled: memoryEnabled,
+                    toolNames: context.toolNames
+                ).joined(separator: "\n")
             }
         )
+    }
+
+    /// The runtime facts, one per line, in a fixed order.
+    ///
+    /// Extracted so the section form and the message form cannot drift apart —
+    /// there is exactly one list of facts and exactly one order for them. Note
+    /// that `toolNames` is used as given: `DSHToolRegistry.schemas()`
+    /// (`packages/.../DSHToolRegistry.swift`, `order` array) and
+    /// `AIChatViewModel.makeAgentTools()` both build their list by appending in
+    /// declared order, so this line only changes when the roster itself changes —
+    /// the same event that changes the `tools` array on the wire.
+    public static func runtimeContextText(
+        model: String?,
+        cwd: String?,
+        sandboxRoot: String,
+        sessionId: String?,
+        memoryEnabled: Bool,
+        toolNames: [String]
+    ) -> [String] {
+        var lines: [String] = []
+        if let model { lines.append("Model: \(model)") }
+        if let cwd { lines.append("Working directory: \(cwd)") }
+        lines.append("Sandbox root: \(sandboxRoot)")
+        if let sessionId { lines.append("Session: \(sessionId)") }
+        lines.append("Memory: \(memoryEnabled ? "enabled" : "disabled")")
+        if !toolNames.isEmpty {
+            lines.append("Tools this turn: \(toolNames.joined(separator: ", "))")
+        }
+        return lines
     }
 }

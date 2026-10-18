@@ -168,41 +168,113 @@ public enum DSHPlanMode {
         guard DSHTodoStore.shared.planModeActive else { return nil }
         switch name {
         case "file_write":
-            return denied(name, "it writes a file, which would carry the plan out rather than produce it") +
-                inspectionFooter
+            return refused(
+                name, rule: "mutating-tool",
+                message: denied(name, "it writes a file, which would carry the plan out rather than produce it")
+                    + inspectionFooter
+            )
         case "file_edit":
-            return denied(name, "it edits a file on disk, which would carry the plan out rather than produce it") +
-                inspectionFooter
+            return refused(
+                name, rule: "mutating-tool",
+                message: denied(name, "it edits a file on disk, which would carry the plan out rather than produce it")
+                    + inspectionFooter
+            )
         case "memory_write":
-            return denied(name, "it would persist a change to memory instead of reading it") +
-                inspectionFooter
+            return refused(
+                name, rule: "mutating-tool",
+                message: denied(name, "it would persist a change to memory instead of reading it")
+                    + inspectionFooter
+            )
         case "todo_write":
-            return """
-            Refused: `todo_write` is not available while plan mode is on. DSH's plan \
-            policy reserves it for the implementation checklist after an approved \
-            plan; the plan itself belongs in `exit_plan_mode`. Keep the steps you are \
-            weighing in the plan text.
-            """
+            return refused(
+                name, rule: "mutating-tool",
+                message: """
+                Refused: `todo_write` is not available while plan mode is on. DSH's plan \
+                policy reserves it for the implementation checklist after an approved \
+                plan; the plan itself belongs in `exit_plan_mode`. Keep the steps you are \
+                weighing in the plan text.
+                """
+            )
         case "shell_execute":
             guard let command = planCommand(from: arguments) else {
-                return denied(
-                    name,
-                    "this call carries no `command` string to check, so it cannot be shown to be read-only"
-                ) + inspectionFooter
+                return refused(
+                    name, rule: "no-command",
+                    message: denied(
+                        name,
+                        "this call carries no `command` string to check, so it cannot be shown to be read-only"
+                    ) + inspectionFooter
+                )
             }
             let verdict = shellCommandVerdict(command)
             guard verdict.allowed else {
-                return "Refused: `shell_execute` is not available while plan mode is on — "
-                    + verdict.reason
-                    + ". Only read-only inspection commands are allowed during planning: "
-                    + "\(readOnlyCommandSummary). Re-run the inspection with one of those, "
-                    + "or without chaining, and leave the changing command out of the plan "
-                    + "— describe it in the plan instead."
+                return refused(
+                    name, rule: verdict.rule, command: command,
+                    message: "Refused: `shell_execute` is not available while plan mode is on — "
+                        + verdict.reason
+                        + ". Only read-only inspection commands are allowed during planning: "
+                        + "\(readOnlyCommandSummary). Re-run the inspection with one of those, "
+                        + "or without chaining, and leave the changing command out of the plan "
+                        + "— describe it in the plan instead."
+                )
             }
+            AppLogger(category: "PlanMode").info(
+                logDecision("allowed", tool: name, rule: verdict.rule, command: command)
+            )
             return nil
         default:
             return nil
         }
+    }
+
+    /// The plan-mode refusal for a tool that has no read-only form, logged on the
+    /// way out so the decision leaves a trace (see `logDecision`).
+    private static func refused(
+        _ tool: String,
+        rule: String,
+        command: String? = nil,
+        message: String
+    ) -> String {
+        AppLogger(category: "PlanMode").warning(
+            logDecision("refused", tool: tool, rule: rule, command: command)
+        )
+        return message
+    }
+
+    /// One line per plan-mode decision, at the point the decision is made.
+    ///
+    /// The mode is a refusal the model experiences as "the tool broke": the tool
+    /// call comes back with an error and nothing else happens. Without this line
+    /// the app log shows nothing at all — measured 2026-10-18, a plan-mode turn
+    /// spent 3.5 minutes on 22 counter-factual refusals while the log carried zero
+    /// `Refused:`, zero `plan mode is on`, zero `[ToolPreflight]` and zero
+    /// `BLOCKED tool=` lines, so the post-mortem could not tell a plan-mode refusal
+    /// from a tool that never ran. Refusals are `warning` (that level reaches the
+    /// app's log file, not only the device console) and allows are `info`:
+    /// `debug()` is compiled out of the Release build the device runs, and that is
+    /// the build whose log a report is read from.
+    ///
+    /// `rule` is the rule id the verdict carries, so one grep answers "why was this
+    /// refused" without reproducing the command.
+    private static func logDecision(
+        _ decision: String,
+        tool: String,
+        rule: String,
+        command: String? = nil
+    ) -> String {
+        var line = "[PlanMode] \(decision) tool=\(tool) rule=\(rule)"
+        if let command { line += " command=<\(shortCommand(command))>" }
+        return line
+    }
+
+    /// Command text as one log-safe line: newlines escaped so a pasted script
+    /// cannot turn one decision into twenty log lines, and capped so it cannot
+    /// become the log.
+    static func shortCommand(_ command: String, limit: Int = 200) -> String {
+        let single = command
+            .replacingOccurrences(of: "\r", with: "\\r")
+            .replacingOccurrences(of: "\n", with: "\\n")
+        guard single.count > limit else { return single }
+        return String(single.prefix(limit)) + "…(\(single.count) chars)"
     }
 
     /// The plan-mode refusal for a tool that has no read-only form, with the
@@ -236,16 +308,20 @@ public enum DSHPlanMode {
     // Two branches, both required to be data — a reviewer can check the tables
     // without reading the algorithm:
     //
-    //   1. Split the command into sub-commands at `;`, `&`, `|` and newlines,
-    //      keeping quoting and backslash escapes intact, then take each
-    //      sub-command's argv (wrapper programs peeled, see `wrapperCommands`).
-    //      Flags are collected from every position, and a banned word, a banned
-    //      flag, a redirect or a substitution refuses the whole command wherever
-    //      it appears. Otherwise *every* sub-command's program must be in
-    //      `allowedCommands` — that is the allowlist branch, and it is what makes
-    //      the rule fail closed: `python -c …`, `sed -i …` and `curl … | sh` are
-    //      refused because they are not on the list, not because a blacklist
-    //      happened to name them.
+    //   1. Split the command into sub-commands at `;`, `&`, `|`, newlines and
+    //      `find`'s execution flags, keeping quoting and backslash escapes
+    //      intact, then take each sub-command's argv (wrapper programs peeled,
+    //      see `wrapperCommands`). A banned word refuses the command only when it
+    //      is a sub-command's PROGRAM — `argv[0]`, after any wrapper — and never
+    //      when it is an operand: that is the difference between `rm -rf /` and
+    //      `ls /etc/apk/`, and treating the two alike is what made plan mode
+    //      refuse plain reads by "installing software packages". Flags are
+    //      collected from every position, and a banned flag, a redirect or a
+    //      substitution refuses the whole command wherever it appears. Otherwise
+    //      *every* sub-command's program must be in `allowedCommands` — that is
+    //      the allowlist branch, and it is what makes the rule fail closed:
+    //      `python -c …`, `sed -i …` and `curl … | sh` are refused because they
+    //      are not on the list, not because a blacklist happened to name them.
     //   2. `git` gets a narrower second check, because its program is read-only
     //      for some sub-commands and mutating for others. The sub-command is
     //      resolved first: a word in `gitReadOnlySubcommands` is accepted (with
@@ -291,10 +367,21 @@ public enum DSHPlanMode {
         "sudo", "doas", "env", "nice", "ionice", "command", "nohup", "time",
     ]
 
-    /// Shell words that refuse the whole command wherever they appear, i.e. in any
-    /// position: as a program (`rm x`), as the program of a later sub-command
-    /// (`ls && rm x`), or as an operand (`which rm`). Each is matched as a whole
-    /// word, so `rm` does not fire on `confirm` and `tee` does not fire on `teeth`.
+    /// Shell words that refuse the command when they are a sub-command's PROGRAM.
+    ///
+    /// A program position is `argv[0]` of a sub-command after wrapper peeling
+    /// (`rm x`, `ls && rm x` — `rm` heads the second sub-command, `sudo apk add x`
+    /// — the wrapper is peeled off first), plus the word after `find`'s execution
+    /// flags (`find . -exec rm {} +`). An OPERAND is not a program position: it
+    /// runs nothing, so a banned word there is a name, not a command —
+    /// `ls /etc/apk/` lists a path, `cat /var/cache/apk/repositories` reads a
+    /// file and `find / -name '*.pkg'` matches a name pattern. Matching every argv
+    /// word instead is what refused those three as "installing or removing
+    /// packages", the false positive this split exists to remove.
+    ///
+    /// Each is matched as a whole word, so `rm` fires for `/bin/rm` (a program
+    /// with a path, still a program) but not for `confirm` or `rm.log`.
+    ///
     /// The redirects and chaining characters are not here: the scan turns those
     /// into their own words (`>`, `>>`, `&&`, `|`, `;`, backticks, brackets) and
     /// the gate matches them literally.
@@ -316,11 +403,36 @@ public enum DSHPlanMode {
     ]
 
 
+    /// Words that separate one sub-command from the next inside a segment the
+    /// tokeniser produced. `;` and a newline end a segment outright; `&&`, `||`,
+    /// `&` and `|` are glued into a word of their own, so they are split here.
+    /// Splitting on them is what makes the word after a chain a program position
+    /// (`ls && rm x` runs `rm`) instead of an anonymous word.
+    static let chainOperatorWords: [String] = [
+        ";", "&&", "||", "&", "|",
+    ]
+
+    /// `find` flags whose NEXT word is a program the command runs, so it is a
+    /// program position as well. Without them `find . -exec rm {} +` runs `rm`
+    /// while this check sees only `find`: `+` is not a chain word, and the
+    /// `\;`-terminated spelling is one escaped word rather than a `;`, so neither
+    /// the chain gate nor the allowlist would catch either form.
+    static let executorFlags: [String] = [
+        "-exec", "-execdir", "-ok", "-okdir",
+    ]
+
     /// Flag words that mean "write" in the tools that take them, checked as whole
     /// arguments. `--watch` is here because it re-runs the command.
+    ///
+    /// The `find` spellings that write a file (`-fls`, `-fprint`, `-fprint0`,
+    /// `-fprintf`) and the one that removes entries (`-delete`) are here too.
+    /// They were allowed before this line was added — `find . -delete` and
+    /// `find . -fls list.txt` were judged as plain `find`, i.e. two writes let
+    /// through by an allowlist that exists to keep writes out.
     static let dangerousFlags: [String] = [
         "--write", "--write=", "--amend", "--hard", "--force", "--in-place",
         "--watch", "--watch=", "--update", "--update=",
+        "-delete", "-fls", "-fprint", "-fprint0", "-fprintf",
     ]
 
     /// `git` sub-commands that only read. A `git` call whose first argument is one
@@ -493,9 +605,9 @@ public enum DSHPlanMode {
 
         // Every word the command will run, in order, with `programs[i]` being the
         // word sub-command `i` runs — after any wrapper, and the word the allowlist
-        // decides on. Keeping both means a banned word is caught wherever it sits:
-        // as a program (`rm x`), as the program of a later sub-command (`ls && rm x`
-        // — `rm` is that sub-command's program), or as an operand (`which rm`).
+        // decides on. Keeping both means a construct is caught wherever it sits:
+        // as a program (`rm x`) or anywhere else in a sub-command (`ls && rm x` —
+        // `&&` is a word in that segment, so the chain gate reads it there).
         var programs: [String] = []
         var allWords: [String] = []
         for argv in argvPerSegment {
@@ -504,12 +616,37 @@ public enum DSHPlanMode {
         }
         let firstWord = programs.first
 
-        // --- 2. The ban list. A hit refuses the whole command, in any position.
+        // The sub-commands, as lists of words. A chain word or a `find` execution
+        // flag starts a new one; everything else stays where it is. This is what
+        // separates a PROGRAM from an OPERAND, and the ban list below is applied
+        // to this list's heads only.
+        var subcommandArgvs: [[String]] = []
+        for argv in argvPerSegment {
+            var pending: [String] = []
+            for word in argv {
+                if chainOperatorWords.contains(word) || executorFlags.contains(word) {
+                    if !pending.isEmpty { subcommandArgvs.append(pending) }
+                    pending = []
+                    continue
+                }
+                pending.append(word)
+            }
+            if !pending.isEmpty { subcommandArgvs.append(pending) }
+        }
+
+        // --- 2. The ban list, applied to the programs the command runs.
+        //
+        // Only a program position is judged: `argv[0]` of each sub-command (the
+        // wrapper already peeled) and the word after a `find` execution flag. An
+        // operand runs nothing, so a path or a file name that contains a banned
+        // word is not one — see `dangerousWords`.
         for (pattern, why) in dangerousWords {
-            for candidate in allWords where hasWord(candidate, pattern) {
+            for argv in subcommandArgvs {
+                guard let program = argv.first else { continue }
+                guard hasWord(program, pattern) else { continue }
                 return ShellCommandVerdict(
                     allowed: false,
-                    reason: "`\(candidate)` appears in the command and \(why)",
+                    reason: "`\(program)` is a program this command runs, and \(why)",
                     rule: "banned-word:\(pattern)",
                     words: allWords,
                     firstWord: firstWord
@@ -698,7 +835,7 @@ public enum DSHPlanMode {
 
     When ready, call exit_plan_mode with the complete plan markdown, starting with a # title. Make exit_plan_mode the only and final tool call in that assistant response: it presents the plan for approval, and implementation begins only in a later step after approval. Do not paste the final plan as a plain reply or ask "should I proceed?" through prose. If review rejects it, incorporate the feedback and present again. If the review channel is unavailable or aborted, stay in plan mode and ask the user to switch modes manually; do not proceed with implementation.
 
-    In this app, plan mode still reads, because a plan cannot be made without the facts. Available while plan mode is on: web_search for information that is not in this repository; file_read, memory_get, read_image and browser_use for material on the device or on a page; and shell_execute for \(readOnlyCommandSentence). A read-only command is checked before it runs and refused when it is not on that list, or when it redirects or writes (>, >>), chains or pipes (&&, ;, |), substitutes a command ($(…), backticks), or uses a mutating git sub-command (git add, commit, push, checkout, reset, clean). A refusal names the rule it hit: treat it as a signal to plan a different inspection, never as something to work around. Still off limits, and refused before running: file_write, file_edit, memory_write and todo_write. When the plan is ready, exit_plan_mode is the only and final tool call in that response.
+    In this app, plan mode still reads, because a plan cannot be made without the facts. Available while plan mode is on: web_search for information that is not in this repository; file_read, memory_get, read_image and browser_use for material on the device or on a page; and shell_execute for \(readOnlyCommandSentence). A read-only command is checked before it runs and refused when it is not on that list, or when it redirects or writes (>, >>), chains or pipes (&&, ;, |), substitutes a command ($(…), backticks), or uses a mutating git sub-command (git add, commit, push, checkout, reset, clean). The program ban is on the PROGRAM, not on the word: rm, mv, cp, chmod, chown, dd, tee, truncate, kill, pkill, killall, apk, pkg and opkg are refused as the program a sub-command runs — including behind a wrapper (sudo apk add x, env FOO=1 apk add x) or behind a find -exec (find . -exec rm {} +) — while the same word as an argument is only a name, so ls /etc/apk/, cat /var/cache/apk/repositories and find / -name '*.pkg' are reads and are allowed. A refusal names the rule it hit: treat it as a signal to plan a different inspection, never as something to work around. Still off limits, and refused before running: file_write, file_edit, memory_write and todo_write. When the plan is ready, exit_plan_mode is the only and final tool call in that response.
     """
 
     // MARK: - Transition

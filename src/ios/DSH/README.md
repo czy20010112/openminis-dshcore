@@ -119,6 +119,44 @@ characters; the budget splits evenly between head and tail; an image is
 indivisible and is dropped whole when it does not fit; `\n\n[...]\n\n` marks the
 elision; and the notice wording is fixed.
 
+**Two provenance sentences, because spill is not the only truncation.** The tool
+layer caps a result at `kMaxToolResultChars`, writes the complete output under
+`/var/minis/offloads/` and appends `[OUTPUT TRUNCATED] … saved to: <path>`. When a
+result that ALREADY carries that marker reaches this pass, the pass still bounds
+it (its 15 000 characters are what the budget is arguing with) but the file it
+writes holds the first cut, not the original — so the notice says so and names
+the tool layer's file as the home of the complete output:
+
+```
+(Omitted 55279 bytes. The tool layer had already truncated this result; the
+complete output is stored at: /var/minis/offloads/shell_execute_…_call_ab.txt.
+This preview is stored at:
+/var/minis/offloads/dsh-spill/session-1a2b3c4d5e6f/9f3c1a2b-shell_execute.txt.
+Use file_read with offset/limit, or a shell_execute grep on this path to search
+within it.)
+```
+
+Before this, the notice claimed the spill file held the "full formatted result"
+while it held a preview: the model read a file that was still truncated, or
+re-ran the command, and the turn did not move. The recovery sentence after the
+locator is byte-identical in both forms and `hasNotice` keys on it, so a preview
+written by either form is still recognised as a preview and is not re-spilled.
+
+**Every shortening is logged, in one shape.** `DSHSpill.truncationLogLine` is the
+single formatter; the tool layer's cap and this pass both write it:
+
+```
+[ToolResult] truncated tool=shell_execute id=call_ab by=spill original=48000
+kept=964 locator=/var/minis/offloads/dsh-spill/… notified=yes
+```
+
+`by=` is `tool-cap`, `tool-cap-readback` (the offload read-back branch, which
+truncates without writing a second copy) or `spill`. `notified=` is the field
+that matters: a shortening with no model-visible marker is the failure this line
+exists to expose, so it is always written, not only when a marker was added. The
+`[DSH][Spill]` line keeps its DSH shape and gains `kept=`, `notified=yes` and
+`prior=` (the tool layer's path, when this spill sat on top of an earlier cut).
+
 **Where the file goes.** The session's existing offload bucket:
 `/var/minis/offloads/dsh-spill/session-<sha256(sessionId)[0:12]>/<random>-<tool>.txt`.
 That path is what makes the notice's "use file_read with offset/limit, or a

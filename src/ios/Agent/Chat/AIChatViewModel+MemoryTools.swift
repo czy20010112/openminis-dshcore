@@ -60,6 +60,143 @@ extension AIChatViewModel {
         return result
     }
 
+    // MARK: - Volatile turn context (P1-2)
+
+    /// Per-turn block carrying everything that can change *between* requests.
+    ///
+    /// P1-2: the memory fragments and the runtime facts used to be registered as
+    /// system-prompt sections, so any change in them rewrote bytes at the head of
+    /// the request. An engine caching the KV prefix by longest common prefix then
+    /// re-prefilled the entire conversation — measured on this project's engine,
+    /// `cache` fell from 99.5% to **0.0%** (not even the first token matched) on
+    /// exactly the turn after one that had written a memory.
+    ///
+    /// Upstream DSH never puts durable state in the system prompt: its system
+    /// prompt node is frozen and the dynamic snapshot travels as its own `user`
+    /// message right before the turn's own user message
+    /// (`packages/core/agent-loop/src/runtime-context.ts`,
+    /// `RuntimeContextProjection.project()`, admitted in
+    /// `packages/core/agent-loop/src/agent.ts` as
+    /// `{ kind: 'enter', messages: [...claimed, context] }`).
+    ///
+    /// This is the same move, in the same place. The model reads the same text it
+    /// read before; only the message that carries it changed, so the system
+    /// prompt — and with it every cached earlier turn — stays byte-identical.
+    ///
+    /// Rebuilt per turn rather than persisted, so it can never go stale.
+    ///
+    /// Three callers compose it, in declared order:
+    ///
+    ///  1. the DSH path's registered volatile sections (`extraParts`, already
+    ///     rendered in section order);
+    ///  2. `runtimeFacts`, the same list of facts as plain lines — the legacy
+    ///     path, which has no assembly;
+    ///  3. the memory fragments.
+    ///
+    /// Parts 1 and 2 are alternatives, never both: the DSH path passes the
+    /// rendered section and an empty fact list, the legacy path the other way
+    /// round. So no sentence is ever emitted twice.
+    ///
+    /// - Returns: the block, or nil when this conversation has nothing volatile
+    ///   to say (no memory fragments, no runtime facts).
+    nonisolated static func volatileTurnContextSuffix(
+        runtimeFacts: [String],
+        memoryEnabled: Bool,
+        extraParts: [String] = [],
+        label: String = volatileTurnContextLabel
+    ) -> String? {
+        var parts: [String] = []
+
+        // DSH's rendered volatile sections first (see `extraParts` above).
+        parts.append(contentsOf: extraParts.filter { !$0.isEmpty })
+
+        // Then the plain runtime facts: they describe the turn itself, and they
+        // are the same facts the DSH path would have registered as
+        // `minis:volatile/runtime-context`.
+        if !runtimeFacts.isEmpty {
+            parts.append(runtimeFacts.joined(separator: "\n"))
+        }
+
+        // The two memory fragments, under the same per-session gate the system
+        // prompt used (see T-memory-toggle-gates-injection-and-tools-ios).
+        // `minis:memory-status` deliberately stays in the system prompt: it only
+        // moves when the user flips the toggle, and it must precede the block it
+        // describes.
+        if memoryEnabled {
+            if let global = loadGlobalMemoryFragment(), !global.isEmpty {
+                parts.append(global)
+            }
+            if let daily = loadRecentDailyMemoryFragment(), !daily.isEmpty {
+                parts.append(daily)
+            }
+        }
+
+        parts = parts.filter { !$0.isEmpty }
+        guard !parts.isEmpty else { return nil }
+
+        // The label is new text, not moved text, so it is a constant: the block
+        // needs to say what it is, and "runtime context" is DSH's own word for
+        // exactly this (`renderContextSnapshot`).
+        return label + "\n\n" + parts.joined(separator: "\n\n")
+    }
+
+    /// The block's own one-line label. DSH's wording
+    /// (`DSHSystemPrompt.renderContextSnapshot`) without its supersede sentence:
+    /// this block is rebuilt per turn, so it describes the current turn rather
+    /// than replacing anything the model read earlier in the same conversation.
+    nonisolated static let volatileTurnContextLabel = "Memory and runtime context:"
+
+    /// `history` with `suffix` inserted so it becomes the LAST message of the
+    /// request — i.e. immediately before the most recent non-tool-result user
+    /// message, the exact position upstream DSH admits its runtime-context
+    /// snapshot to.
+    ///
+    /// Why that position, and not the tail:
+    ///
+    ///  * **Adjacency.** OpenAI Chat Completions requires every
+    ///    `assistant.tool_calls` be answered immediately. Inserting at the very
+    ///    tail during a tool loop would land the block between
+    ///    `assistant(tool_use)` and its `user(tool_result)` batch. Inserting
+    ///    *before* the user turn that opened this round cannot: the message after
+    ///    the insertion point is either that user message (a normal turn), or the
+    ///    assistant turn it triggered (a mid-turn iteration, where the assistant
+    ///    replies to it). Either way the block never sits inside a pair.
+    ///    Anthropic's `mergeConsecutiveSameRole` collapses the block into the
+    ///    adjacent user turn, which is the same shape DSH's own projection
+    ///    produces.
+    ///  * **Cache.** The block's position relative to the conversation is fixed
+    ///    for a given turn: one new user message per turn, inserted at the same
+    ///    offset from that message. So re-emitting it each turn grows the request
+    ///    at the tail — which is what a KV-prefix cache needs.
+    ///
+    /// - Returns: `history` unchanged when there is no suffix and no genuine
+    ///   user message to anchor it to.
+    nonisolated static func historyWithVolatileTurnContext(
+        _ history: [AgentMessage],
+        suffix: String?
+    ) -> [AgentMessage] {
+        guard let suffix, !suffix.isEmpty else { return history }
+        guard let anchor = history.lastIndex(where: { AIChatViewModel.isGenuineUserMessage($0) }) else {
+            return history
+        }
+        var out = history
+        out.insert(AgentMessage(role: .user, parts: [.text(suffix)]), at: anchor)
+        return out
+    }
+
+    /// Whether a message is a real user turn rather than a batch of tool results.
+    ///
+    /// The legacy loop carries tool results as `.user` messages, so "the last
+    /// user message" is not the same as "the user's request".
+    nonisolated static func isGenuineUserMessage(_ message: AgentMessage) -> Bool {
+        guard message.role == .user else { return false }
+        guard !message.parts.isEmpty else { return false }
+        return !message.parts.allSatisfy { part in
+            if case .toolResult = part { return true }
+            return false
+        }
+    }
+
     /// Execute a memory_write tool call: prepend a timestamped entry to today's daily log.
     func executeMemoryWrite(from json: String) -> FileToolResult {
         guard memoryEnabled else {

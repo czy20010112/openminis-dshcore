@@ -233,6 +233,14 @@ struct AIChatView: View {
     @ObservedObject private var configStore = ProviderConfigStore.shared
     @ObservedObject private var fontSettings = FontSettings.shared
     @ObservedObject private var deepLink = DeepLinkCoordinator.shared
+    // [T-panel-bottom-inset] The two composer-context bars, observed ONLY for
+    // their visibility predicates (`todoPanelVisible` / `goalPanelVisible`): the
+    // message list must re-run `updateUIViewController` — the sole writer of its
+    // bottom inset — on the same edge that mounts or unmounts a bar. Without
+    // this, a bar appearing while the list is idle would leave the inset, and
+    // the last message would sit under it until some unrelated re-render.
+    @ObservedObject private var todoStore = DSHTodoStore.shared
+    @ObservedObject private var goalStore = DSHGoalStore.shared
     @Environment(\.dismiss) private var dismiss
     @State private var inputFocused: Bool = false
     @State private var inputHasSelection: Bool = false
@@ -321,6 +329,34 @@ struct AIChatView: View {
     }
 
     @State private var floatingBarHeight: CGFloat = 0
+    /// [T-panel-bottom-inset] The two composer-context bars, MEASURED.
+    ///
+    /// They sit in the same VStack as `floatingToolPreview` and the composer, so
+    /// they do take layout space inside that VStack — but the VStack is an
+    /// `.overlay(alignment: .bottom)` on the message list, and the ONLY thing
+    /// that gives the list room for it is `CollectionViewMessageListV3`'s
+    /// `bottomPad = inputBarHeight + floatingBarHeight + 8`. The floater reports
+    /// its height (below); these two reported nothing, so every point they
+    /// occupied was a point the list still drew messages into: with a todo bar
+    /// and a goal bar up, the last one or two messages were covered by them and
+    /// could not be scrolled clear (operator report 2026-10-18).
+    ///
+    /// Written by `measuredPanelHeight` in the composer stack. 0 whenever the
+    /// bar draws nothing, so the reservation falls back to zero with the bar.
+    @State private var todoPanelHeight: CGFloat = 0
+    @State private var goalPanelHeight: CGFloat = 0
+    /// The FRESHEST height each bar's geometry callback reported. The debounced
+    /// commit reads this rather than the value that armed its timer — the same
+    /// correction `latestInputBarFrameH` makes for the composer, for the same
+    /// reason: a bar that expands (the todo list opening its chevron) animates
+    /// for 180ms, so whatever sample arms the timer is a mid-animation one, and
+    /// committing it would leave the list reserved against a half-open bar.
+    ///
+    /// One debounce + one `latest` per bar: they settle independently.
+    @State private var latestTodoPanelH: CGFloat = 0
+    @State private var latestGoalPanelH: CGFloat = 0
+    @State private var todoPanelHeightDebounce: Task<Void, Never>?
+    @State private var goalPanelHeightDebounce: Task<Void, Never>?
     // [T-p2-agent-in-toolbar] Agent blocks now live in the floating tool bar
     // like every other tool; this sheet target only serves the notification-
     // tap / debug-RPC `openHelperSheet` route.
@@ -616,6 +652,18 @@ struct AIChatView: View {
                         VStack(spacing: 0) {
                             floatingToolPreview
                                 .shadow(color: Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 0, alpha: 0.25) : UIColor(white: 0, alpha: 0) }), radius: 6, x: 0, y: 4)
+                                // [T-panel-bottom-inset] The same -4 dock
+                                // clearance the two panels below carry. The list
+                                // reserves `floatingBarHeight` 1:1, and this view
+                                // reports through a measurement placed at the END
+                                // of its chain (inside `floatingToolPreview`), so
+                                // without this the reservation counted 4pt of air
+                                // that the VStack then removed — 4pt of the last
+                                // message left under the tool bar. With it, the
+                                // measured number is exactly what the VStack
+                                // consumes, and the bar-to-bar gap is the same 4pt
+                                // the panels use instead of 8.
+                                .padding(.bottom, -4)
                             // [T-tools-todo-plan] The task list and plan state, as a
                             // bar above the composer from OUTSIDE: inside the composer
                             // it competed with the input field for space, and as a
@@ -638,6 +686,13 @@ struct AIChatView: View {
                                 // than the surface beneath it, so the bottom edge hung
                                 // over the rounded corners.
                                 .padding(.bottom, -4)
+                                // [T-panel-bottom-inset] Measured AFTER the -4,
+                                // so the number the list reserves is the number
+                                // this VStack actually gives the bar.
+                                .measuredPanelHeight($todoPanelHeight,
+                                                     latest: $latestTodoPanelH,
+                                                     contentVisible: todoPanelVisible,
+                                                     debounce: $todoPanelHeightDebounce)
                             // [T-tools-goal] The goal, in DSH's own slot: its
                             // composer-context stack is todo, then goal, then the
                             // queue, all at the same panel elevation. Draws
@@ -647,6 +702,10 @@ struct AIChatView: View {
                                 .frame(maxWidth: maxContentWidth, alignment: .leading)
                                 .padding(.horizontal, 12)
                                 .padding(.bottom, -4)
+                                .measuredPanelHeight($goalPanelHeight,
+                                                     latest: $latestGoalPanelH,
+                                                     contentVisible: goalPanelVisible,
+                                                     debounce: $goalPanelHeightDebounce)
                             #if DEBUG
                             if isReadOnly {
                                 forkBanner
@@ -2877,7 +2936,12 @@ struct AIChatView: View {
                 },
                 maxContentWidth: maxContentWidth ?? 0,
                 floatingBarHeight: floatingBarHeight,
-                inputBarHeight: inputBarHeight
+                inputBarHeight: inputBarHeight,
+                // [T-panel-bottom-inset] The todo/goal bars' measured heights.
+                // Part of the list's bottom reservation for the same reason
+                // `floatingBarHeight` is: the composer stack is an overlay and
+                // the inset is the list's only knowledge of it.
+                panelHeights: panelHeightsForLayout
             )
             // Empty/loading overlay for tap-to-dismiss-keyboard.
             // Placed BEFORE the directory timeline in the ZStack so the
@@ -5072,6 +5136,121 @@ struct AIChatView: View {
     /// Whether the floating tool preview is visible.
     private var hasFloatingPreview: Bool {
         hasAnyToolBlocks
+    }
+
+    // MARK: - Composer-context bars (todo / goal) — measured heights
+
+    // [T-panel-bottom-inset] Mirrors `DSHTodoPanelView.body`'s own condition for
+    // "draws a bar": plan mode on, or a list. `DSHTodoStore.planModeActive` and
+    // `todos` are the same two reads the panel makes.
+    private var todoPanelVisible: Bool {
+        todoStore.planModeActive || !todoStore.todos.isEmpty
+    }
+
+    /// Mirrors `DSHGoalPanelView.body`'s condition: a goal in a live phase. A
+    /// completed or cleared goal draws nothing (DSH's `ui-goal` rule).
+    private var goalPanelVisible: Bool {
+        guard let goal = goalStore.goal else { return false }
+        return goal.phase.isLive
+    }
+
+    /// Whether the todo bar occupies a slot in the composer stack right now.
+    ///
+    /// Same expression as `todoPanelVisible`, and it stays that way: the bars
+    /// are siblings of both branches of the `#if DEBUG` read-only fork, so a
+    /// read-only session reserves for them exactly like a normal one. Named
+    /// separately only so the list-facing property reads as what it is.
+    private var todoPanelForLayout: Bool {
+        todoPanelVisible
+    }
+
+    private var goalPanelForLayout: Bool {
+        goalPanelVisible
+    }
+
+    /// [T-panel-bottom-inset] Points the message list must leave free at its
+    /// bottom for the two composer-context bars: their measured heights, or 0
+    /// when the bar is not drawing.
+    ///
+    /// Read by BOTH the geometry registrations and
+    /// `CollectionViewMessageListV3.panelHeights`, so the reservation and the
+    /// measurement can never disagree about which bars are up.
+    private var panelHeightsForLayout: CGFloat {
+        (todoPanelForLayout ? todoPanelHeight : 0)
+            + (goalPanelForLayout ? goalPanelHeight : 0)
+    }
+
+    /// Measure a composer-context bar's height and hand it to `height`.
+    ///
+    /// `latest` is the freshest sample the callback reported; the debounced
+    /// commit reads IT rather than the value that armed the timer, the same
+    /// correction `latestInputBarFrameH` makes for the composer and for the same
+    /// reason: a bar that expands (the todo list opening its chevron) animates
+    /// for 180ms, so whatever sample arms the timer is a mid-animation one and
+    /// committing it would leave the list reserved against a half-open bar.
+    ///
+    /// Same mechanism as the floating tool bar's own registration a few hundred
+    /// lines up — `.onGeometryChange` (this tree's floor is iOS 16, which is
+    /// where that modifier lands, so the compat shim the iOS 15 tree uses is not
+    /// needed here), trailing-edge debounced past the bars' show/hide and
+    /// expand/collapse animations, `onDisappear` clearing the field — because
+    /// that is the mechanism already proven against this composer's animation
+    /// timings. Two deliberate departures, both because this bar shares the
+    /// composer's own view:
+    ///
+    ///  * Nothing is written into state while `contentVisible` is false, nor
+    ///    when the value is unchanged. The float beside it writes its height
+    ///    from inside layout and that is documented to re-drive layout; with two
+    ///    more such fields, an unconditional state write on every layout pass
+    ///    would keep the composer perpetually dirty. Only the state write is
+    ///    gated — the callback itself still runs every pass.
+    ///  * The debounced commit re-reads `contentVisible`, so a bar that hid or
+    ///    unmounted while the timer slept hands its points back instead of
+    ///    reserving them forever. `onDisappear` is the other half of that.
+    private func measuredPanelHeight(_ height: Binding<CGFloat>,
+                                     latest: Binding<CGFloat>,
+                                     contentVisible: Bool,
+                                     debounce: Binding<Task<Void, Never>?>) -> some View {
+        onGeometryChange(for: CGFloat.self) { proxy in
+            proxy.size.height
+        } action: { newH in
+            guard contentVisible else { return }
+            // The -4pt bottom padding is INSIDE the measured frame (the
+            // measurement is the last modifier in the chain), so `newH` already
+            // is the height this VStack consumed. `max(0,…)` only guards a
+            // mid-animation sample.
+            let wanted = max(newH, 0)
+            // Same height as the last sample: this is an animation frame, not a
+            // resize. Long-lived bars sit inside live tool cards whose glyphs
+            // pulse while a command runs, so without this guard every pulse
+            // would arm a state write — the re-drive hazard the composer next
+            // door is annotated for. Do nothing and leave the pending timer
+            // alone; it is already going to commit this exact value.
+            guard abs(latest.wrappedValue - wanted) > 0.5 else { return }
+            latest.wrappedValue = wanted
+            debounce.wrappedValue?.cancel()
+            debounce.wrappedValue = Task { @MainActor in
+                // 380ms: the bars transition at 0.18s and the composer surface
+                // around them animates at 0.28s. Same window as the composer's
+                // own commit, for the same reason (a mid-animation sample must
+                // never be what the list reserves against).
+                try? await Task.sleep(nanoseconds: 380_000_000)
+                guard !Task.isCancelled else { return }
+                // The bar went away while we slept.
+                guard contentVisible else { return }
+                let settled = latest.wrappedValue
+                guard settled > 0, abs(height.wrappedValue - settled) > 0.5 else { return }
+                height.wrappedValue = settled
+            }
+        }
+        .onDisappear {
+            // A view that has left the hierarchy must never write a stale
+            // height; cancelling first wins the race against the sleeping task.
+            debounce.wrappedValue?.cancel()
+            debounce.wrappedValue = nil
+            latest.wrappedValue = 0
+            height.wrappedValue = 0
+        }
     }
 
     /// Max content width — unconstrained in compact (portrait iPhone),
