@@ -1501,11 +1501,13 @@ extension AIChatViewModel {
         // builder goes through, so all four request sites and the empty-response
         // retry carry it identically.
         //
-        // It is inserted before the most recent non-tool-result user message, not
-        // appended: appending would put it between `assistant(tool_use)` and its
-        // tool results mid-turn. Same text, same order relative to the user's own
-        // message, and the system prompt keeps its bytes — see
-        // `historyWithVolatileTurnContext`.
+        // It is inserted at the head of the conversation, before its first genuine
+        // user turn — an index the conversation's own growth cannot move. That
+        // position is load-bearing, not cosmetic: the engine's KV cache reuses a
+        // prompt only while the request extends one the engine still holds, so a
+        // block whose index advanced by one message per turn re-prefilled the whole
+        // conversation on every turn. See `historyWithVolatileTurnContext` for the
+        // measurements.
         //
         // Injected on this view, never into `agentHistory`, so nothing here is
         // persisted, rendered, or counted twice on the next turn.

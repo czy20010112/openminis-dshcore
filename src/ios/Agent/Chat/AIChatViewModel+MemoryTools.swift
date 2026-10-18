@@ -146,28 +146,52 @@ extension AIChatViewModel {
     /// than replacing anything the model read earlier in the same conversation.
     nonisolated static let volatileTurnContextLabel = "Memory and runtime context:"
 
-    /// `history` with `suffix` inserted so it becomes the LAST message of the
-    /// request — i.e. immediately before the most recent non-tool-result user
-    /// message, the exact position upstream DSH admits its runtime-context
-    /// snapshot to.
+    /// `history` with `suffix` admitted as the request's FIRST message — the head
+    /// of the conversation, immediately before its first genuine user turn.
     ///
-    /// Why that position, and not the tail:
+    /// The position is what the engine's KV cache is actually sensitive to, and
+    /// that sensitivity is measured, not assumed: this project's engine (ninfer,
+    /// `docker logs … | grep 'req#.*done'`) reuses a prompt only while the new
+    /// request is a **strict extension** of one it still holds. Replacing a single
+    /// *middle* message took `cache` from 27,698 to 650 tokens — the head, i.e.
+    /// system prompt plus tool definitions — and re-prefilled the other 27,048
+    /// (80.5% → 2.3% for one unchanged tail). A request whose only difference was
+    /// that the block had *moved* matched 0. There is no rollback to a middle
+    /// prefix: one byte before the tail costs the whole conversation, so "the same
+    /// text, one message later" is never cheap.
     ///
-    ///  * **Adjacency.** OpenAI Chat Completions requires every
-    ///    `assistant.tool_calls` be answered immediately. Inserting at the very
-    ///    tail during a tool loop would land the block between
-    ///    `assistant(tool_use)` and its `user(tool_result)` batch. Inserting
-    ///    *before* the user turn that opened this round cannot: the message after
-    ///    the insertion point is either that user message (a normal turn), or the
-    ///    assistant turn it triggered (a mid-turn iteration, where the assistant
-    ///    replies to it). Either way the block never sits inside a pair.
-    ///    Anthropic's `mergeConsecutiveSameRole` collapses the block into the
-    ///    adjacent user turn, which is the same shape DSH's own projection
-    ///    produces.
-    ///  * **Cache.** The block's position relative to the conversation is fixed
-    ///    for a given turn: one new user message per turn, inserted at the same
-    ///    offset from that message. So re-emitting it each turn grows the request
-    ///    at the tail — which is what a KV-prefix cache needs.
+    /// That is why the block is anchored to an index tail-only growth cannot move.
+    /// Anchored to "the newest non-tool-result user message" — where it used to be
+    /// — its index advances by one message per turn, so *every* turn opened by
+    /// re-prefilling: two consecutive turns measured `cache 13,443 / 57,329` and
+    /// `13,443 / 57,347` (23.4% — the head only), recovering to 99.7% on the
+    /// second request of a turn, where the block's index is stable again. The head
+    /// index is stable for exactly the reason those within-turn requests were:
+    /// nothing is ever inserted before the conversation's first user turn.
+    ///
+    /// The head is also where this text already was on both paths:
+    ///
+    ///  * Minis read the memory fragments and the runtime facts at the head of the
+    ///    request before P1-2 (they were system-prompt sections). The same text now
+    ///    travels as the request's first message, immediately after the system
+    ///    prompt — the same place the model used to read it.
+    ///  * Upstream DSH admits its runtime-context snapshot once and never moves it:
+    ///    `RuntimeContextProjection.project` returns a snapshot only when the text
+    ///    differs from the retained one
+    ///    (`packages/core/agent-loop/src/runtime-context.ts:152-163` at tag
+    ///    `dsh-v0.2.1-rc.2`), and `agent.ts` admits it as a `user` message —
+    ///    `messages: [...claimed, context]`, `agent.ts:281` — and commits it to the
+    ///    surface with `{ surfaceOp: 'append' }`, `agent.ts:426-435`. Every later
+    ///    request therefore only grows *after* it. Minis cannot persist the block —
+    ///    its history is the user-visible transcript — so the same "once admitted,
+    ///    never moved" invariant is obtained structurally, not durably.
+    ///
+    /// A genuine content change (a `memory_write`, a date rollover, a tool toggle)
+    /// still moves the block, and that one request then re-prefills: the text is
+    /// new, not drifted, and it is the same cost the block already had on every
+    /// turn before this. Repeating the block instead — DSH's own accumulation, with
+    /// its supersede sentence — is the only way to avoid even that, and it changes
+    /// what the model reads, so it stays out of scope here.
     ///
     /// - Returns: `history` unchanged when there is no suffix and no genuine
     ///   user message to anchor it to.
@@ -176,7 +200,7 @@ extension AIChatViewModel {
         suffix: String?
     ) -> [AgentMessage] {
         guard let suffix, !suffix.isEmpty else { return history }
-        guard let anchor = history.lastIndex(where: { AIChatViewModel.isGenuineUserMessage($0) }) else {
+        guard let anchor = history.firstIndex(where: { AIChatViewModel.isGenuineUserMessage($0) }) else {
             return history
         }
         var out = history
@@ -186,8 +210,8 @@ extension AIChatViewModel {
 
     /// Whether a message is a real user turn rather than a batch of tool results.
     ///
-    /// The legacy loop carries tool results as `.user` messages, so "the last
-    /// user message" is not the same as "the user's request".
+    /// The legacy loop carries tool results as `.user` messages, so "a user
+    /// message" is not the same as "the user's request".
     nonisolated static func isGenuineUserMessage(_ message: AgentMessage) -> Bool {
         guard message.role == .user else { return false }
         guard !message.parts.isEmpty else { return false }
