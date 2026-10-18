@@ -39,6 +39,67 @@ final class BrowserUseManager: NSObject, ObservableObject {
     /// Called when a child window calls window.close() — the pool should close this tab.
     var closeHandler: ((_ webView: WKWebView) -> Void)?
 
+    // MARK: - Off-window presentation recovery
+    // [T-ios-browser-offwindow-load] The agent's WKWebView is created with a
+    // viewport-sized frame but has NO superview until `BrowserSheetView` mounts
+    // it (`BrowserWebView.makeUIView`). Every load used to be issued at that
+    // moment regardless — i.e. possibly while the webView is attached to no
+    // window at all. WebKit does not reliably commit a navigation for a webView
+    // that is not in a view hierarchy (Chromium carries an explicit workaround:
+    // "On iOS 11 WKWebView load is broken if view is not a part of the
+    // hierarchy…"), which surfaces as a page that never paints — the user's
+    // "browser opens but stays stuck". The runner-up path that DOES work
+    // (presenting a second, fresh sheet) works precisely because that mounts the
+    // webView into a window before the load is (re)issued.
+    //
+    // So: keep issuing the load immediately (never delay the agent), but arm a
+    // one-shot retry that `BrowserSheetView` / `BrowserWebView` fire the moment
+    // the webView lands in a window. `Sibling: WebViewHolder.startIfNeeded()`
+    // solves the same hazard by waiting for `webView.window != nil`; this is the
+    // same rule applied at the manager so the agent path gets it too.
+    /// URL whose load was issued while the webView had no window — reissued once
+    /// it attaches. Nil means nothing to recover.
+    private var pendingOffWindowURL: URL?
+    /// Retries left, so a genuinely failing page can't reload in a loop.
+    private var offWindowRetriesLeft: Int = 2
+    private static let offWindowMaxRetries = 2
+
+    /// Diagnostic: does this tab's webView currently render on-screen?
+    /// False = the window-less state every stuck-load report reduces to.
+    var isWebViewOnWindow: Bool { webView.window != nil }
+    /// One-line state fingerprint for the `[Browser]` log family.
+    var presentationState: String {
+        let frame = webView.frame
+        return "win=\(webView.window != nil ? 1 : 0)"
+            + " hidden=\(webView.isHidden ? 1 : 0)"
+            + " size=\(Int(frame.width))x\(Int(frame.height))"
+            + " super=\(webView.superview != nil ? 1 : 0)"
+    }
+
+    /// Reissue a navigation that was issued while the webView had no window.
+    /// Idempotent and safe to call from any layout/presentation hook.
+    /// [T-ios-browser-offwindow-load]
+    func retryPendingNavigationIfOffWindow() {
+        guard let url = pendingOffWindowURL,
+              webView.window != nil,
+              !isLoading else { return }
+        pendingOffWindowURL = nil
+        logger.info("[Browser] recovering_offwindow_load url=\(url.absoluteString.prefix(120)) \(self.presentationState) retriesLeft=\(self.offWindowRetriesLeft)")
+        loadRequest(URLRequest(url: url), requestedURL: url)
+    }
+
+    /// Arm the one-shot recovery for a load issued off-window.
+    private func armOffWindowRetryIfNeeded(requestedURL: URL) {
+        guard webView.window == nil else { return }
+        guard offWindowRetriesLeft > 0 else {
+            logger.warning("[Browser] offwindow_retries_exhausted url=\(requestedURL.absoluteString.prefix(120)) \(self.presentationState)")
+            return
+        }
+        offWindowRetriesLeft -= 1
+        pendingOffWindowURL = requestedURL
+        logger.warning("[Browser] load_offwindow url=\(requestedURL.absoluteString.prefix(120)) \(self.presentationState) — recovering when the preview attaches to a window")
+    }
+
     // MARK: - Downloads
 
     /// BrowserDownloadCenter entry ids for this tab's in-flight WKDownloads.
@@ -754,10 +815,12 @@ final class BrowserUseManager: NSObject, ObservableObject {
         }
 
         let request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: Self.navigationTimeout)
-        lastRequestedURL = url          // [T-ios-webview-error-ui]
-        loadError = nil                 // clear any prior failure overlay
-        webView.load(request)
-        isLoading = true
+        // [T-ios-browser-offwindow-load] Remember whether we are issuing this
+        // load with the webView attached to a window: if navigation never
+        // commits, that flag is the difference between "the site is slow" and
+        // "nothing ever presented this tab", and it becomes the timeout's text.
+        let loadedOffWindow = (webView.window == nil)
+        loadRequest(request, requestedURL: url)
 
         // Wait for navigation to complete
         // [T-browser-navigate-timeout-reports-success-ios] GH#234. Track whether
@@ -792,7 +855,11 @@ final class BrowserUseManager: NSObject, ObservableObject {
                         // leaves the wait: this WARN = timed out (didFinish/didFail
                         // never came — network stall or the load never completed);
                         // absence of it = the delegate fired normally.
-                        logger.warning("[NavTiming] navigate_TIMEOUT after \(Int(Self.navigationTimeout))s — no didFinish/didFail; url=\(url.absoluteString.prefix(80))")
+                        // [T-ios-browser-offwindow-load] `offwindow` records whether
+                        // the load was issued with the webView attached to no window —
+                        // the one condition under which WebKit is documented to
+                        // never commit the navigation at all.
+                        logger.warning("[NavTiming] navigate_TIMEOUT after \(Int(Self.navigationTimeout))s — no didFinish/didFail; offwindow=\(loadedOffWindow ? 1 : 0) \(self.presentationState) url=\(url.absoluteString.prefix(80))")
                     }
                 }
             }
@@ -816,7 +883,13 @@ final class BrowserUseManager: NSObject, ObservableObject {
         // says the load did not complete, so a script can decide whether to
         // retry or re-read rather than silently operating on a stale DOM.
         if timedOut {
-            return BrowserActionResult(text: "Navigation did not complete within \(Int(Self.navigationTimeout))s — the page may be partially loaded or the renderer may be stalled. Content below reflects the current (possibly stale) state.\n\n\(meta)")
+            // [T-ios-browser-offwindow-load] When the load was issued off-window,
+            // say so instead of blaming the site: it is the actionable case (open
+            // the browser panel, or the tab was never presented at all).
+            let offWindowNote = loadedOffWindow
+                ? " The load was issued while this tab had no on-screen preview (offwindow=1) — open the browser panel or retry so it can attach and commit."
+                : ""
+            return BrowserActionResult(text: "Navigation did not complete within \(Int(Self.navigationTimeout))s — the page may be partially loaded or the renderer may be stalled. Content below reflects the current (possibly stale) state.\(offWindowNote)\n\n\(meta)")
         }
         return BrowserActionResult(text: meta)
     }
@@ -1834,9 +1907,15 @@ final class BrowserUseManager: NSObject, ObservableObject {
         let oldURL = webView.url
 
         webView = newView
+        // [T-ios-browser-stale-webview] The instance the panel is displaying is
+        // now ORPHANED: `BrowserWebView.makeUIView` runs once, so an on-screen
+        // panel keeps showing `newView`'s predecessor (blank, never loading)
+        // while the agent drives `newView`. `BrowserWebView.updateUIView` swaps
+        // it in; this line makes the swap visible in the device log.
+        logger.info("[Browser] webview_instance_replaced reason=setUserAgent newInstance=\(ObjectIdentifier(newView)) oldURL=\(oldURL?.absoluteString.prefix(120) ?? "nil")")
 
         if let url = oldURL {
-            webView.load(URLRequest(url: url))
+            loadRequest(URLRequest(url: url), requestedURL: url)
         }
 
         return BrowserActionResult(text: "Switched to \(newProfile.rawValue) (\(vp.width)x\(vp.height))")
@@ -1858,8 +1937,12 @@ final class BrowserUseManager: NSObject, ObservableObject {
 
         let oldURL = webView.url
         webView = newView
+        // [T-ios-browser-stale-webview] Same orphan hazard as setUserAgent: the
+        // panel keeps displaying the replaced instance until `BrowserWebView`
+        // reconciles. Logged so the two events can be correlated on device.
+        logger.info("[Browser] webview_instance_replaced reason=setViewport newInstance=\(ObjectIdentifier(newView)) size=\(width)x\(height) oldURL=\(oldURL?.absoluteString.prefix(120) ?? "nil")")
         if let url = oldURL {
-            webView.load(URLRequest(url: url))
+            loadRequest(URLRequest(url: url), requestedURL: url)
         }
     }
 
@@ -1936,6 +2019,12 @@ final class BrowserUseManager: NSObject, ObservableObject {
     }
 
     func reload() {
+        logger.info("[Browser] reload url=\(self.webView.url?.absoluteString.prefix(140) ?? "nil") \(self.presentationState)")
+        loadError = nil
+        isLoading = true
+        if let retryURL = webView.url ?? lastRequestedURL {
+            armOffWindowRetryIfNeeded(requestedURL: retryURL)
+        }
         webView.reload()
     }
 
@@ -1951,10 +2040,23 @@ final class BrowserUseManager: NSObject, ObservableObject {
         }
         guard let url = URL(string: normalized) else { return }
         let request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: Self.navigationTimeout)
-        lastRequestedURL = url          // [T-ios-webview-error-ui]
+        loadRequest(request, requestedURL: url)
+    }
+
+    /// The single place a page load is issued from, so every entry point (agent
+    /// `navigate`, user address bar, saved-URL restore, error-overlay retry)
+    /// shares one set of log lines and one off-window recovery rule.
+    /// [T-ios-browser-offwindow-load] [T-ios-browser-load-log]
+    private func loadRequest(_ request: URLRequest, requestedURL: URL?) {
+        let url = requestedURL ?? request.url
+        lastRequestedURL = url       // [T-ios-webview-error-ui]
         loadError = nil
-        webView.load(request)
         isLoading = true
+        logger.info("[Browser] load url=\(url?.absoluteString.prefix(160) ?? "nil") \(self.presentationState)")
+        if let retryURL = url {
+            armOffWindowRetryIfNeeded(requestedURL: retryURL)
+        }
+        webView.load(request)
     }
 
     /// [T-ios-webview-error-ui] Retry the last requested URL after a failure.
@@ -1962,8 +2064,7 @@ final class BrowserUseManager: NSObject, ObservableObject {
         loadError = nil
         if let url = lastRequestedURL {
             let request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: Self.navigationTimeout)
-            webView.load(request)
-            isLoading = true
+            loadRequest(request, requestedURL: url)
         } else {
             webView.reload()
         }
@@ -2301,8 +2402,22 @@ final class BrowserUseManager: NSObject, ObservableObject {
 // MARK: - WKNavigationDelegate
 
 extension BrowserUseManager: WKNavigationDelegate {
+    // [T-ios-browser-load-log] The browser had no didStart/didFinish/didFail
+    // logging at all — "the page never loaded" and "the page loaded and then
+    // went blank" were indistinguishable in the device log. These three lines
+    // are the whole diagnostic surface for that class of report.
+    nonisolated func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        MainActor.assumeIsolated {
+            logger.info("[Browser] didStart url=\(webView.url?.absoluteString.prefix(140) ?? "nil") \(self.presentationState)")
+        }
+    }
+
     nonisolated func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         Task { @MainActor in
+            let finishedURL = String(webView.url?.absoluteString.prefix(140) ?? Substring(self.currentURL))
+            logger.info("[Browser] didFinish url=\(finishedURL.prefix(140)) \(self.presentationState)")
+            // The page painted — nothing left to recover for the off-window load.
+            self.pendingOffWindowURL = nil
             self.isLoading = false
             self.loadError = nil  // [T-ios-webview-error-ui]
             self.currentURL = webView.url?.absoluteString ?? self.currentURL
@@ -2322,6 +2437,8 @@ extension BrowserUseManager: WKNavigationDelegate {
 
     nonisolated func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
         Task { @MainActor in
+            logger.error("[Browser] didFail url=\(webView.url?.absoluteString.prefix(140) ?? "nil") error=\(error.localizedDescription) \((error as NSError).domain)/\((error as NSError).code) \(self.presentationState)")
+            self.pendingOffWindowURL = nil
             self.isLoading = false
             // [T-ios-webview-error-ui] Show a Safari-style overlay in the
             // browser sheet instead of a blank page. Still thrown to the agent.
@@ -2337,6 +2454,8 @@ extension BrowserUseManager: WKNavigationDelegate {
 
     nonisolated func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         Task { @MainActor in
+            logger.error("[Browser] didFailProvisional url=\(webView.url?.absoluteString.prefix(140) ?? "nil") error=\(error.localizedDescription) \((error as NSError).domain)/\((error as NSError).code) \(self.presentationState)")
+            self.pendingOffWindowURL = nil
             self.isLoading = false
             // [T-ios-webview-error-ui] see didFail above.
             self.loadError = WebLoadError(error: error, failedURL: self.lastRequestedURL)
@@ -2461,6 +2580,16 @@ extension BrowserUseManager: WKNavigationDelegate {
             let tabId = self.tabIdProvider?()
             BrowserResourceMonitor.shared.webContentProcessDidTerminate(tabId: tabId, url: url)
 
+            // [T-ios-browser-webcontent-reload] A killed WebContent leaves the
+            // webView blank with its URL still set — the exact "opens but shows
+            // nothing" symptom, and the page never came back on its own. Reload
+            // once the tab is on-screen so the user sees the page rather than a
+            // blank panel; off-window tabs are left alone (the off-window retry
+            // in `retryPendingNavigationIfOffWindow` covers them when the panel
+            // is presented).
+            let onWindow = (self.webView.window != nil)
+            logger.warning("[Browser] webContentProcessDidTerminate tab=\(tabId.map(String.init) ?? "nil") onwindow=\(onWindow ? 1 : 0) url=\((url ?? "").prefix(120))")
+
             self.isLoading = false
             let error = NSError(
                 domain: "BrowserUse",
@@ -2473,6 +2602,13 @@ extension BrowserUseManager: WKNavigationDelegate {
             if let cont = self.navigationContinuation {
                 self.navigationContinuation = nil
                 cont.resume(throwing: error)
+            }
+            if onWindow, let url {
+                logger.info("[Browser] reload_after_webcontent_terminate url=\(url.absoluteString.prefix(120)) \(self.presentationState)")
+                self.loadRequest(
+                    URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData,
+                               timeoutInterval: Self.navigationTimeout),
+                    requestedURL: url)
             }
         }
     }

@@ -208,6 +208,21 @@ struct BrowserSheetView: View {
                     pool.ensureTabForUI()
                 }
                 addressText = manager?.currentURL ?? ""
+                // [T-ios-browser-offwindow-load] `ensureTabForUI()` above can
+                // create the tab we are about to show, and `BrowserWebView` only
+                // gets a superview on the NEXT SwiftUI pass — i.e. the tab can be
+                // driven before it has ever been attached to a window. Recover
+                // any navigation that was issued in that window-less state, and
+                // log the presentation so the device log shows which entry the
+                // panel was opened from. `hook` is filled in by the caller
+                // (`BrowserSheetView` is presented from the chat menu, the
+                // settings panel, and the tool sheet's takeover button).
+                if let manager {
+                    BrowserLoadLog.present(manager: manager, hook: "sheet-appear")
+                    manager.retryPendingNavigationIfOffWindow()
+                } else {
+                    BrowserLoadLog.presentMissingManager(pool: pool, hook: "sheet-appear")
+                }
             }
             .onDisappear {
                 // The sheet stretched each tab's offscreen WKWebView to the

@@ -377,6 +377,9 @@ public enum DSHSpill {
     ///   - omittedBytes: UTF-8 text bytes removed by the retention pass.
     ///   - images: whole images removed alongside the text.
     ///   - locator: path the full result was written to.
+    ///   - priorLocator: path the TOOL LAYER already wrote the complete output to,
+    ///     present only when the result this pass shortened had itself been
+    ///     truncated before it arrived (see `toolTruncationMarker`).
     /// - Returns: the notice sentence, without a leading separator.
     ///
     /// The two recovery tools are named as this app spells them: DSH says "read"
@@ -385,16 +388,82 @@ public enum DSHSpill {
     /// than no instruction: the model is told how to recover and then finds the
     /// tool missing. `hasNotice` matches this string literally, so the two move
     /// together or the idempotence guard stops recognising its own notices.
-    public static func noticeText(omittedBytes: Int, images: Int, locator: String) -> String {
+    ///
+    /// WHY THERE ARE TWO PROVENANCE SENTENCES.
+    ///
+    /// "Full formatted result stored at: {locator}" is a promise about the FILE,
+    /// and this pass can only keep it when the content it was handed was the
+    /// whole result. It is not: `MAX_TOOL_RESULT_CHARS` runs before this hook, so
+    /// a 48 KB command output reaches here already cut to 15 KB plus the tool
+    /// layer's own offload notice. Spilling THAT writes the preview to
+    /// `{locator}` — so the old sentence pointed the model at a file holding the
+    /// preview while claiming it held the result, and the tool layer's own
+    /// pointer to the 48 KB original survived only if it happened to fall inside
+    /// the retained tail. The model then either re-read a file that was still
+    /// truncated or re-ran the command, which is the "result looks short, turn
+    /// does not move" report.
+    ///
+    /// So the notice states which of the two it is: the locator holds the result
+    /// (nothing was shortened before this pass), or the locator holds the retained
+    /// head and tail of an ALREADY-truncated result and the complete output is at
+    /// the path the tool layer named. The recovery sentence after the locator is
+    /// byte-identical in both forms, and `hasNotice` keys on it, so a preview
+    /// written by either form is still recognised as a preview.
+    public static func noticeText(
+        omittedBytes: Int,
+        images: Int,
+        locator: String,
+        priorLocator: String? = nil,
+        priorTruncated: Bool = false
+    ) -> String {
         let imageNotice = images > 0 ? " Omitted \(images) images." : ""
-        return "(Omitted \(omittedBytes) bytes.\(imageNotice) Full formatted result stored at: "
-            + "\(locator). Use file_read with offset/limit, or a shell_execute grep on this path"
-            + " to search within it.)"
+        // Explicitly branched rather than `map`/`??`: the forms differ in what they
+        // claim about the file, so the choice is worth reading as one.
+        let provenance: String
+        if !priorTruncated {
+            provenance = fullResultProvenance
+        } else if let priorLocator {
+            provenance = priorTruncationProvenance + priorTruncationCompleteClause
+                + priorLocator + ". This preview is stored at: "
+        } else {
+            provenance = priorTruncationProvenance + priorTruncationNoCopyClause
+                + " This preview is stored at: "
+        }
+        return "(Omitted \(omittedBytes) bytes.\(imageNotice)\(provenance)"
+            + "\(locator)\(recoveryTail)"
     }
 
     /// The separator between a retained tail and the notice: the notice is its
     /// own paragraph, matching DSH's `"\n\n" + notice`.
     public static let noticeSeparator = "\n\n"
+
+    /// The sentence that tells the model how to read the whole thing back. Both
+    /// notice forms end with it, `hasNotice` matches it literally, and the two
+    /// therefore cannot drift apart.
+    public static let recoveryTail =
+        ". Use file_read with offset/limit, or a shell_execute grep on this path to search within it.)"
+
+    /// Provenance sentence for a result this pass shortened from the original.
+    public static let fullResultProvenance = " Full formatted result stored at: "
+
+    /// Provenance sentence for a result the TOOL LAYER had already shortened
+    /// before this pass saw it. A different claim from the sentence above: what
+    /// sits at the locator after it is a preview, not the result.
+    ///
+    /// Split in three so the sentence can finish honestly in both cases: the tool
+    /// layer's own notice usually names the file holding the complete output (its
+    /// `… saved to: <path>` clause), but not always — the offload read-back branch
+    /// truncates in place and names no new file. `hasNotice` keys on the shared
+    /// prefix, so all three forms are recognised as previews.
+    public static let priorTruncationProvenance =
+        " The tool layer had already truncated this result; "
+
+    /// Completion of that sentence when the tool layer named a file.
+    public static let priorTruncationCompleteClause = "the complete output is stored at: "
+
+    /// Completion of that sentence when it did not.
+    public static let priorTruncationNoCopyClause =
+        "no complete copy of it is addressable from here."
 
     /// Whether a result carries a spill notice at its end.
     ///
@@ -408,13 +477,19 @@ public enum DSHSpill {
     /// bound form carries a locator that can itself contain `\n\n(` — a spilled
     /// result whose own text ended in a parenthesis is exactly that — and
     /// requiring the separator before it made a real notice unrecognisable.
+    ///
+    /// The provenance sentence is checked as well as the recovery tail: the tail
+    /// alone would also match the tool layer's own offload notice, whose point is
+    /// the opposite (it is bounded, not a spill preview, and must still be
+    /// spillable when the budget asks for it).
     public static func hasNotice(_ text: String) -> Bool {
         guard text.hasSuffix(")") else { return false }
         guard let open = text.range(of: "(", options: .backwards) else { return false }
         let candidate = text[open.upperBound...]
         guard candidate.hasPrefix("Omitted ") else { return false }
-        guard candidate.contains(" Full formatted result stored at: ") else { return false }
-        return candidate.contains(". Use file_read with offset/limit, or a shell_execute grep on this path to search within it.)")
+        guard candidate.contains(recoveryTail) else { return false }
+        return candidate.contains(fullResultProvenance)
+            || candidate.contains(priorTruncationProvenance)
     }
 }
 
@@ -431,6 +506,10 @@ public struct DSHSpillDecision: Sendable {
     /// image blob is then dropped with it, so the model is not handed pixels its
     /// text no longer accounts for.
     public let imageDropped: Bool
+    /// The tool layer's own offload path, when the result this pass shortened had
+    /// already been truncated before the spill saw it. Carried so the caller can
+    /// log which of the two cuts a `[DSH][Spill]` line is describing.
+    public let priorLocator: String?
 
     /// The model-facing text, blocks joined with nothing between them (text runs
     /// were merged by construction).
@@ -438,6 +517,20 @@ public struct DSHSpillDecision: Sendable {
         blocks.reduce(into: "") { accumulated, block in
             if block.kind == .text { accumulated += block.text }
         }
+    }
+
+    public init(
+        blocks: [DSHSpillContent],
+        omittedBytes: Int,
+        omittedImages: Int,
+        imageDropped: Bool,
+        priorLocator: String? = nil
+    ) {
+        self.blocks = blocks
+        self.omittedBytes = omittedBytes
+        self.omittedImages = omittedImages
+        self.imageDropped = imageDropped
+        self.priorLocator = priorLocator
     }
 }
 
@@ -585,6 +678,77 @@ extension DSHSpill {
     /// turn reading spill files instead of answering.
     public static let exemptTools: Set<String> = ["file_read", "read_image"]
 
+    /// What the TOOL LAYER writes into a result it shortened itself.
+    ///
+    /// `AIChatViewModel.executeSingleToolUse` caps a tool result at
+    /// `kMaxToolResultChars`, writes the complete output under `/var/minis/offloads/`
+    /// and appends `[OUTPUT TRUNCATED]` followed by that path. `file_read` marks its
+    /// own, different cut with a `truncated at N chars` header instead.
+    ///
+    /// The spill policy did not know about either marker, which made it treat an
+    /// already-bounded result as an unbounded one and spill it a second time. That
+    /// is not merely redundant: the second pass writes what it was GIVEN, so the
+    /// file it names holds the first cut, and the notice's "full result" claim was
+    /// false. Both markers are therefore recognised here.
+    public static let toolTruncationMarker = "[OUTPUT TRUNCATED]"
+
+    /// Whether a result was already shortened by the tool layer.
+    ///
+    /// `file_read`'s header form is deliberately NOT included: it is a paging
+    /// header on a bounded read (`truncated at N chars, next_offset=…`) with no
+    /// second file behind it, so there is nothing to point a notice at, and the
+    /// spill budget still has to be able to bound that result.
+    public static func hasToolTruncationMarker(_ text: String) -> Bool {
+        text.contains(toolTruncationMarker)
+    }
+
+    /// The path the tool layer named as holding the complete output, when it
+    /// shortened this result.
+    ///
+    /// Read out of the marker's own sentence — `… saved to: <path>` — and stopped
+    /// at the first line break, so the `minis_url:` line that follows it and the
+    /// "Use file_read tool to read the complete output." line after that are not
+    /// swallowed into the path. Returns nil rather than an empty or partial path
+    /// when the sentence is not there: a notice pointing at nothing is worse than
+    /// a notice that does not mention a second file.
+    public static func toolTruncationLocator(in text: String) -> String? {
+        guard hasToolTruncationMarker(text) else { return nil }
+        guard let range = text.range(of: "saved to: ", options: .backwards) else { return nil }
+        let rest = text[range.upperBound...]
+        let line = rest.prefix { $0 != "\n" && $0 != "\r" }
+        let path = line.trimmingCharacters(in: .whitespaces)
+        return path.isEmpty ? nil : path
+    }
+
+    /// The one-line record a SHORTENED tool result leaves in the app log.
+    ///
+    /// One shape for every site that shortens one — the tool layer's character cap
+    /// and this spill — so a device log can be read for "was anything shortened,
+    /// and was the model told" without knowing which mechanism did it. `notified`
+    /// is the field that matters and it is always written: a shortening with no
+    /// model-visible marker is the failure mode this line exists to expose, and it
+    /// cannot be reported by a line that is only emitted when a marker was added.
+    ///
+    /// - Parameters:
+    ///   - mechanism: `tool-cap` for `kMaxToolResultChars`, `spill` for this pass.
+    ///   - originalChars: the result's length before it was shortened.
+    ///   - keptChars: what the model received, notice included.
+    ///   - locator: where the complete text went, when there is one.
+    ///   - notified: whether the model's copy names the cut and its locator.
+    public static func truncationLogLine(
+        toolName: String,
+        callId: String,
+        mechanism: String,
+        originalChars: Int,
+        keptChars: Int,
+        locator: String?,
+        notified: Bool
+    ) -> String {
+        "[ToolResult] truncated tool=\(toolName) id=\(callId) by=\(mechanism)"
+            + " original=\(originalChars) kept=\(keptChars)"
+            + " locator=\(locator ?? "-") notified=\(notified ? "yes" : "no")"
+    }
+
     /// Decide whether one tool result must be spilled, and if so what the model
     /// sees instead.
     ///
@@ -634,8 +798,23 @@ extension DSHSpill {
         // would point the model at a file holding the preview, not the original.
         guard !hasNotice(combinedText) else { return nil }
 
+        // A result the TOOL LAYER already bounded is the same hazard one step
+        // earlier, so it gets the same treatment with the difference stated: this
+        // pass still bounds it (its 15 000 characters are what the budget is
+        // arguing with), but the notice names the tool layer's own file as the
+        // home of the complete output instead of claiming the spill file is —
+        // and says so plainly when the tool layer's notice names no file at all.
+        let priorTruncated = hasToolTruncationMarker(combinedText)
+        let priorLocator = toolTruncationLocator(in: combinedText)
+
         let totalBytes = combinedText.utf8.count
-        let worstNotice = noticeText(omittedBytes: totalBytes, images: imageCount, locator: locatorPlaceholder)
+        let worstNotice = noticeText(
+            omittedBytes: totalBytes,
+            images: imageCount,
+            locator: locatorPlaceholder,
+            priorLocator: priorLocator,
+            priorTruncated: priorTruncated
+        )
 
         // DSH reserves the gap and the notice before retaining, and sizes the
         // rest of the result against what is left. A 2% margin is added on top:
@@ -652,7 +831,9 @@ extension DSHSpill {
         let notice = noticeText(
             omittedBytes: retained.omittedBytes,
             images: retained.omittedImages,
-            locator: locatorPlaceholder
+            locator: locatorPlaceholder,
+            priorLocator: priorLocator,
+            priorTruncated: priorTruncated
         )
 
         var blocks: [DSHSpillContent] = retained.head
@@ -685,7 +866,8 @@ extension DSHSpill {
             blocks: merged,
             omittedBytes: retained.omittedBytes,
             omittedImages: retained.omittedImages,
-            imageDropped: hasImages && retained.omittedImages > 0
+            imageDropped: hasImages && retained.omittedImages > 0,
+            priorLocator: priorLocator
         )
     }
 
@@ -704,7 +886,8 @@ extension DSHSpill {
             blocks: rebound,
             omittedBytes: decision.omittedBytes,
             omittedImages: decision.omittedImages,
-            imageDropped: decision.imageDropped
+            imageDropped: decision.imageDropped,
+            priorLocator: decision.priorLocator
         )
     }
 
@@ -713,15 +896,39 @@ extension DSHSpill {
 
     /// The one-line record a spilled result leaves in the app log.
     ///
+    /// The shape is DSH's and the fields already parsed elsewhere are unchanged at
+    /// the front; the three appended ones are what a truncation post-mortem needs
+    /// and what the older line could not answer — how much the model actually
+    /// received, whether it was told, and whether this spill was sitting on top of
+    /// an earlier cut. `notified=yes` is unconditional here because this line is
+    /// only emitted after the notice has been bound into the result.
+    ///
     /// - Parameters:
     ///   - toolName: the tool whose result was spilled.
     ///   - callId: the provider-side call id.
     ///   - tokens: estimated tokens in the original result.
     ///   - omittedBytes: UTF-8 bytes the model did not receive.
     ///   - locator: where the full result was written.
+    ///   - keptChars: characters the model received, notice included. Zero means
+    ///     the caller did not measure it, and the field is then omitted.
+    ///   - priorLocator: the tool layer's own offload path, when this result had
+    ///     already been truncated before the spill saw it.
     /// - Returns: the log line.
-    public static func logLine(toolName: String, callId: String, tokens: Int, omittedBytes: Int, locator: String) -> String {
-        "[DSH][Spill] tool=\(toolName) id=\(callId) tokens=\(tokens) omitting=\(omittedBytes) locator=\(locator)"
+    public static func logLine(
+        toolName: String,
+        callId: String,
+        tokens: Int,
+        omittedBytes: Int,
+        locator: String,
+        keptChars: Int = 0,
+        priorLocator: String? = nil
+    ) -> String {
+        var line = "[DSH][Spill] tool=\(toolName) id=\(callId) tokens=\(tokens)"
+            + " omitting=\(omittedBytes) locator=\(locator)"
+        if keptChars > 0 { line += " kept=\(keptChars)" }
+        line += " notified=yes"
+        if let priorLocator { line += " prior=\(priorLocator)" }
+        return line
     }
 }
 
