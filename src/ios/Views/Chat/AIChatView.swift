@@ -5218,53 +5218,6 @@ struct AIChatView: View {
                                  debounce: $goalPanelHeightDebounce)
     }
 
-    ///    reserving them forever. `onDisappear` is the other half of that.
-    private func measuredPanelHeight(_ height: Binding<CGFloat>,
-                                     latest: Binding<CGFloat>,
-                                     contentVisible: Bool,
-                                     debounce: Binding<Task<Void, Never>?>) -> some View {
-        onGeometryChange(for: CGFloat.self) { proxy in
-            proxy.size.height
-        } action: { newH in
-            guard contentVisible else { return }
-            // The -4pt bottom padding is INSIDE the measured frame (the
-            // measurement is the last modifier in the chain), so `newH` already
-            // is the height this VStack consumed. `max(0,…)` only guards a
-            // mid-animation sample.
-            let wanted = max(newH, 0)
-            // Same height as the last sample: this is an animation frame, not a
-            // resize. Long-lived bars sit inside live tool cards whose glyphs
-            // pulse while a command runs, so without this guard every pulse
-            // would arm a state write — the re-drive hazard the composer next
-            // door is annotated for. Do nothing and leave the pending timer
-            // alone; it is already going to commit this exact value.
-            guard abs(latest.wrappedValue - wanted) > 0.5 else { return }
-            latest.wrappedValue = wanted
-            debounce.wrappedValue?.cancel()
-            debounce.wrappedValue = Task { @MainActor in
-                // 380ms: the bars transition at 0.18s and the composer surface
-                // around them animates at 0.28s. Same window as the composer's
-                // own commit, for the same reason (a mid-animation sample must
-                // never be what the list reserves against).
-                try? await Task.sleep(nanoseconds: 380_000_000)
-                guard !Task.isCancelled else { return }
-                // The bar went away while we slept.
-                guard contentVisible else { return }
-                let settled = latest.wrappedValue
-                guard settled > 0, abs(height.wrappedValue - settled) > 0.5 else { return }
-                height.wrappedValue = settled
-            }
-        }
-        .onDisappear {
-            // A view that has left the hierarchy must never write a stale
-            // height; cancelling first wins the race against the sleeping task.
-            debounce.wrappedValue?.cancel()
-            debounce.wrappedValue = nil
-            latest.wrappedValue = 0
-            height.wrappedValue = 0
-        }
-    }
-
     /// Max content width — unconstrained in compact (portrait iPhone),
     /// capped in regular (landscape / iPad) for readability.
     private var maxContentWidth: CGFloat? {
@@ -7411,4 +7364,57 @@ private struct AttachmentDocumentPicker: UIViewControllerRepresentable {
             onPick([])
         }
     }
+}
+
+// MARK: - Measured panel height
+
+/// The chains that use this call it with dot syntax on a `View`, so it has to
+/// be a `View` extension rather than a member of the view struct.
+private extension View {
+///    reserving them forever. `onDisappear` is the other half of that.
+private func measuredPanelHeight(_ height: Binding<CGFloat>,
+                                 latest: Binding<CGFloat>,
+                                 contentVisible: Bool,
+                                 debounce: Binding<Task<Void, Never>?>) -> some View {
+    onGeometryChange(for: CGFloat.self) { proxy in
+        proxy.size.height
+    } action: { newH in
+        guard contentVisible else { return }
+        // The -4pt bottom padding is INSIDE the measured frame (the
+        // measurement is the last modifier in the chain), so `newH` already
+        // is the height this VStack consumed. `max(0,…)` only guards a
+        // mid-animation sample.
+        let wanted = max(newH, 0)
+        // Same height as the last sample: this is an animation frame, not a
+        // resize. Long-lived bars sit inside live tool cards whose glyphs
+        // pulse while a command runs, so without this guard every pulse
+        // would arm a state write — the re-drive hazard the composer next
+        // door is annotated for. Do nothing and leave the pending timer
+        // alone; it is already going to commit this exact value.
+        guard abs(latest.wrappedValue - wanted) > 0.5 else { return }
+        latest.wrappedValue = wanted
+        debounce.wrappedValue?.cancel()
+        debounce.wrappedValue = Task { @MainActor in
+            // 380ms: the bars transition at 0.18s and the composer surface
+            // around them animates at 0.28s. Same window as the composer's
+            // own commit, for the same reason (a mid-animation sample must
+            // never be what the list reserves against).
+            try? await Task.sleep(nanoseconds: 380_000_000)
+            guard !Task.isCancelled else { return }
+            // The bar went away while we slept.
+            guard contentVisible else { return }
+            let settled = latest.wrappedValue
+            guard settled > 0, abs(height.wrappedValue - settled) > 0.5 else { return }
+            height.wrappedValue = settled
+        }
+    }
+    .onDisappear {
+        // A view that has left the hierarchy must never write a stale
+        // height; cancelling first wins the race against the sleeping task.
+        debounce.wrappedValue?.cancel()
+        debounce.wrappedValue = nil
+        latest.wrappedValue = 0
+        height.wrappedValue = 0
+    }
+}
 }
