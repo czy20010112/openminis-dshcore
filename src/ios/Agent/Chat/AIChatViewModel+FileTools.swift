@@ -269,11 +269,25 @@ extension AIChatViewModel {
         let sampleSize = min(fileData.count, 512)
         let sample = fileData.prefix(sampleSize)
         if sample.contains(0) {
-            let hexPreview = fileData.prefix(64).map { String(format: "%02x", $0) }.joined(separator: " ")
-            return FileToolResult(
-                output: "[\(path) | \(fileData.count) bytes | binary file]\nHex preview: \(hexPreview)",
-                success: true
-            )
+            // [T-binary-preview-honest] This used to answer
+            // "[path | N bytes | binary file]\nHex preview: <64 bytes>" — the size and
+            // a real 64-byte preview, but nothing saying the preview IS everything the
+            // model got. Every other short result in this app says what was left out
+            // (the tool cap names the file holding the rest, file_read's paging header
+            // names `next_offset`, the spill notice calls itself a preview); this was
+            // the one that was silently short, so a model could read 64 bytes as the
+            // whole file. It now states the cut and names the ways to get the bytes.
+            let previewBytes = min(64, fileData.count)
+            let hexPreview = fileData.prefix(previewBytes).map { String(format: "%02x", $0) }.joined(separator: " ")
+            var output = "[\(path) | \(fileData.count) bytes | binary file — cannot display contents]"
+            output += "\nHex preview: the first \(previewBytes) of \(fileData.count) bytes. That is a preview, "
+            output += "not the file's contents: \(hexPreview)"
+            output += "\nTo work with the file itself, use shell_execute (`file`, `xxd`, `base64`, `strings`, or a "
+            output += "converter), or download the file."
+            if let minisURL = linuxPathToMinisURL(path) {
+                output += "\nminis_url: \(minisURL)"
+            }
+            return FileToolResult(output: output, success: true)
         }
 
         guard let fullText = String(data: fileData, encoding: .utf8) else {

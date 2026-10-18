@@ -1011,11 +1011,32 @@ public final class DSHTurnDriver {
             toolOrder: config.toolOrder
         )
 
-        var systemPrompt = DSHSystemPrompt.renderPrompt(assembly)
+        var systemPrompt = DSHSystemPrompt.renderPrompt(excludingVolatileSectionsOf: assembly)
         let snapshot = DSHSystemPrompt.renderContextSnapshot(assembly)
         if !snapshot.isEmpty {
             systemPrompt += "\n\n" + snapshot
         }
+
+        // [P1-2] The volatile half of the assembly — memory fragments and the
+        // runtime facts — must NOT reach the system prompt: it is the prefix the
+        // engine's KV cache matches on, and a turn that wrote a memory used to
+        // rewrite bytes at the head of the next request, dropping cache from
+        // 99.5% to 0.0%. It rides as a message instead, placed before the turn's
+        // own user message, which is where upstream DSH admits its
+        // runtime-context snapshot
+        // (`packages/core/agent-loop/src/runtime-context.ts`,
+        // `RuntimeContextProjection.project`). Same text, different message — the
+        // model's view is unchanged, the cached prefix is not.
+        //
+        // This is recomputed every step from the same assembly, so a mid-turn
+        // `memory_write` shows up in the next step's request rather than being
+        // frozen for the whole turn.
+        let volatileSections = DSHSystemPrompt.renderVolatileSections(assembly)
+        let tailContext = Self.volatileTurnContextSuffix(
+            runtimeFacts: [],
+            memoryEnabled: memoryEnabled,
+            extraParts: volatileSections.isEmpty ? [] : [volatileSections]
+        )
 
         // [T-tools-todo-plan] Which sections actually made it into this request.
         //
@@ -1028,9 +1049,13 @@ public final class DSHTurnDriver {
         // registry never got it) and the two are indistinguishable from the reply.
         // One line makes them distinguishable, and names the section so a rename
         // cannot quietly break the check.
+        //
+        // `volatileChars` is the other half of the same question: it says how much
+        // of the assembly moved out of the prompt and into the tail message.
         AppLogger(category: "DSHLoop").info(
             "[DSH] prompt sections=[\(assembly.sections.map(\.name).joined(separator: ","))] "
-            + "chars=\(systemPrompt.count) tools=\(schemas.count) planMode=\(DSHTodoStore.shared.planModeActive)"
+            + "chars=\(systemPrompt.count) volatileChars=\(tailContext?.count ?? 0) "
+            + "tools=\(schemas.count) planMode=\(DSHTodoStore.shared.planModeActive)"
         )
 
         // [T-ctx-breakdown] Measure the request HERE, where all three inputs are
@@ -1045,7 +1070,12 @@ public final class DSHTurnDriver {
         // panel lists what actually reached the prompt: `plan:policy` is
         // registered on every turn but renders empty while plan mode is off, and
         // `renderPrompt` drops empty sections.
-        let requestMessages = projectMessages(session.surfaceMessages())
+        //
+        // The tail message is a fourth component and is counted into the surface
+        // figure below, so the panel's total still prices the whole request rather
+        // than the prompt alone.
+        let projected = projectMessages(session.surfaceMessages())
+        let requestMessages = Self.historyWithVolatileTurnContext(projected, suffix: tailContext)
         DSHContextBreakdownStore.shared.record(
             systemPrompt: systemPrompt,
             tools: schemas,
@@ -1060,7 +1090,12 @@ public final class DSHTurnDriver {
         // messages are projected from. DSH prices the latest durable routed
         // request; building one is the moment this driver knows what that request
         // holds, and the next step's pressure check reads exactly this figure.
+        //
+        // `tailContext` is added to the surface figure because it is a message and
+        // not prompt text — leaving it out would under-price every request on the
+        // one path that has to decide whether the next one still fits.
         let pricedSurface = DSHTokenEstimate.total(session.surface())
+            + DSHTokenEstimate.tokens(forText: tailContext ?? "")
         lastPricedRequest = PricedRequest(
             promptTokens: DSHTokenEstimate.tokens(forText: systemPrompt)
                 + DSHTokenEstimate.tokens(forToolSchemas: schemas)

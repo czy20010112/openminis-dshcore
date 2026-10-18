@@ -4989,12 +4989,16 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
         // global default.
         AppLogger(category: "MemDiag").info("[MemDiag] inject-decision sid=\(self.sessionId?.prefix(8) ?? "nil") vm.memoryEnabled=\(self.memoryEnabled)")
         if memoryEnabled {
-            if let memoryFragment = Self.loadGlobalMemoryFragment() {
-                userSystemPrompt += "\n\n" + memoryFragment
-            }
-            if let dailyFragment = Self.loadRecentDailyMemoryFragment() {
-                userSystemPrompt += "\n\n" + dailyFragment
-            }
+            // [P1-2] The files themselves are NOT part of the system prompt any
+            // more. GLOBAL.md and the daily logs change the moment the agent
+            // writes a memory, and a system prompt that changes invalidates the
+            // engine's whole cached prefix (`cache` 99.5% → 0.0%, measured).
+            // The text is unchanged; it now travels as a per-turn message ahead
+            // of the user's own message, added in `effectiveAgentHistory()` the
+            // way upstream DSH admits its runtime-context snapshot.
+            //
+            // Leaving the fragments here would send every memory twice, once as
+            // prompt and once as message.
         }
         // Authoritative memory-status footer (overrides any earlier
         // baseSystemPrompt mentions when memory is disabled).
@@ -5457,14 +5461,10 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
                 // the gate from the first injection site — fallback to a
                 // new provider must respect the per-session memoryEnabled
                 // toggle the same way the initial system prompt did.
-                if memoryEnabled {
-                    if let memoryFragment = Self.loadGlobalMemoryFragment() {
-                        userSystemPrompt += "\n\n" + memoryFragment
-                    }
-                    if let dailyFragment = Self.loadRecentDailyMemoryFragment() {
-                        userSystemPrompt += "\n\n" + dailyFragment
-                    }
-                }
+                // [P1-2] See the first injection site: the memory files moved out
+                // of the system prompt and travel as a per-turn message now, so a
+                // fallback that switched providers must not re-add them here — it
+                // would both duplicate them and re-freeze the prompt head.
                 userSystemPrompt += memoryStatusFragment
                 fallbackTrigger += 1
                 if !fallbackReasons.isEmpty {

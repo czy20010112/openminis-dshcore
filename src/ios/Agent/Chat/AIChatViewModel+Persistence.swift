@@ -1495,10 +1495,35 @@ extension AIChatViewModel {
     }
 
     func effectiveAgentHistory() -> [AgentMessage] {
-        let result = Self.dropOrphanedToolParts(effectiveAgentHistoryUncounted(), logger: logger)
+        let base = Self.dropOrphanedToolParts(effectiveAgentHistoryUncounted(), logger: logger)
+        // [P1-2] The volatile per-turn block — memory fragments and the runtime
+        // facts — is admitted HERE, at the single entry point every LLM context
+        // builder goes through, so all four request sites and the empty-response
+        // retry carry it identically.
+        //
+        // It is inserted before the most recent non-tool-result user message, not
+        // appended: appending would put it between `assistant(tool_use)` and its
+        // tool results mid-turn. Same text, same order relative to the user's own
+        // message, and the system prompt keeps its bytes — see
+        // `historyWithVolatileTurnContext`.
+        //
+        // Injected on this view, never into `agentHistory`, so nothing here is
+        // persisted, rendered, or counted twice on the next turn.
+        let suffix = Self.volatileTurnContextSuffix(
+            runtimeFacts: DSHMinisPrompt.runtimeContextText(
+                model: selectedModel.id,
+                cwd: nil,
+                sandboxRoot: Self.dshSandboxRoot,
+                sessionId: sessionId,
+                memoryEnabled: memoryEnabled,
+                toolNames: makeAgentTools().map(\.name)
+            ),
+            memoryEnabled: memoryEnabled
+        )
+        let result = Self.historyWithVolatileTurnContext(base, suffix: suffix)
         // One-line breadcrumb on every inference call so a "summary-only"
         // regression is visible in logs without scraping agent traces.
-        logger.info("[Compact] effectiveAgentHistory: returning \(result.count) msg(s) from agentHistory.count=\(self.agentHistory.count) markerId=\(self.cachedLatestMarker?.id.prefix(8) ?? "nil")")
+        logger.info("[Compact] effectiveAgentHistory: returning \(result.count) msg(s) from agentHistory.count=\(self.agentHistory.count) markerId=\(self.cachedLatestMarker?.id.prefix(8) ?? "nil") tailContext=\(suffix?.count ?? 0) chars")
         return result
     }
 

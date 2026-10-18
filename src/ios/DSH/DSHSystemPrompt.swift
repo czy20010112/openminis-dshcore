@@ -331,10 +331,67 @@ public final class DSHSystemPrompt: @unchecked Sendable {
     /// Malformed or unknown references throw rather than rendering literal
     /// braces: a silent typo would ship a broken instruction to the model.
     public static func renderPrompt(_ assembly: DSHPromptAssembly) -> String {
-        assembly.sections
+        render(assembly.sections, variables: assembly.variables)
+    }
+
+    /// The system prompt without the sections whose text varies between turns.
+    ///
+    /// P1-2. Everything a request sends before its messages is the prefix a
+    /// KV-prefix cache matches on, so a single byte of drift anywhere in the
+    /// system prompt makes the engine re-prefill the whole conversation — the
+    /// measured symptom was `cache` falling from 99.5% to 0.0% on the turn after
+    /// a `memory_write`. A deployment therefore declares which of its sections
+    /// carry volatile state and hands the same assembly to both callers: the
+    /// volatile text goes into `renderVolatileSections`, which the agent loop
+    /// admits as a message *before the turn's own user message*, exactly where
+    /// upstream DSH admits its runtime-context snapshot
+    /// (`packages/core/agent-loop/src/runtime-context.ts`). The model reads the
+    /// same text; only the message carrying it changed.
+    public static func renderPrompt(excludingVolatileSectionsOf assembly: DSHPromptAssembly) -> String {
+        let split = volatileSplit(of: assembly)
+        return render(split.frozen, variables: assembly.variables)
+    }
+
+    /// The volatile sections' own rendered text, in declared order.
+    public static func renderVolatileSections(_ assembly: DSHPromptAssembly) -> String {
+        let split = volatileSplit(of: assembly)
+        return render(split.volatile, variables: assembly.variables)
+    }
+
+    /// Split an assembly's sections into (frozen, volatile), each keeping its
+    /// declared order. `complete` sections are never split — they are the whole
+    /// prompt by definition, so excluding part of one is meaningless.
+    ///
+    /// A volatile section is named with `DSHSystemPrompt.volatileSectionPrefix`.
+    private static func volatileSplit(
+        of assembly: DSHPromptAssembly
+    ) -> (frozen: [DSHAssembledSection], volatile: [DSHAssembledSection]) {
+        var frozen: [DSHAssembledSection] = []
+        var volatileSections: [DSHAssembledSection] = []
+        for section in assembly.sections {
+            if section.name.hasPrefix(volatileSectionPrefix) {
+                volatileSections.append(section)
+            } else {
+                frozen.append(section)
+            }
+        }
+        return (frozen, volatileSections)
+    }
+
+    /// Marks a section as carrying per-turn state, so it is rendered by
+    /// `renderVolatileSections` and excluded from the system prompt.
+    ///
+    /// The prefix is also the section's edit site: a reviewer scrolling the
+    /// registration reads the name. The rendered text keeps no trace of it, and
+    /// the diagnostics that report which sections the request carried stay
+    /// truthful about which one moved out.
+    public static let volatileSectionPrefix = "minis:volatile/"
+
+    private static func render(_ sections: [DSHAssembledSection], variables: [String: String]) -> String {
+        sections
             .map { section in
                 section.interpolate
-                    ? interpolate(section.text, variables: assembly.variables, sectionName: section.name)
+                    ? interpolate(section.text, variables: variables, sectionName: section.name)
                     : section.text
             }
             .filter { !$0.isEmpty }
