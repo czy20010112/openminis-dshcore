@@ -383,20 +383,51 @@ extension AIChatViewModel {
     /// Uses ~3.5 chars/token for mixed English/CJK/code content (conservative).
     /// Also accounts for image data tokens (~85 tokens per 1KB of base64).
     ///
-    /// Estimates against `effectiveAgentHistory()` — the slice that actually
-    /// reaches the model — not the raw `agentHistory`. After compact-v2
-    /// (90ac63e8), the raw history is preserved while marker overlay trims
-    /// what's sent; estimating against the raw log made post-compact usage
-    /// look unchanged and fired the "near capacity" prompt before every send.
-    func estimateContextTokens(_ caller: String = #function) -> Int {
+    /// **This is a fallback, not the context's occupancy.** Since 2026-10-18 the
+    /// measured figure — the provider's own `usage.promptTokens`, which the app
+    /// already receives for every response — is the first answer this returns
+    /// (`DSHContextUsageStore`). The estimator only answers while no provider
+    /// count covers the request, and callers must render it as an estimate.
+    ///
+    /// Why the fallback may be far too LOW, measured on the 2026-10-18 device log
+    /// rather than reasoned about: with `prompt=189546` reported by the engine for
+    /// the same turn, this function returned 77,655 — a factor of 2.44. Three
+    /// properties of the estimate account for it, and none of them is fixable by
+    /// tuning the constant:
+    ///
+    ///   1. the density constant (3.5 chars/token here, 3.6 in `DSHTokenEstimate`)
+    ///      is a claim about the corpus, and the same log refutes it — the census
+    ///      `115750chars+9905imgTok → 42976tok` cannot be reconciled with 3.5
+    ///      chars/token once the engine's own `prompt` is taken as the truth for
+    ///      that request. Tool JSON, CLIs' box-drawing output, CJK prose and
+    ///      base64 payloads are all far denser than "mixed prose and code";
+    ///   2. images are priced by a per-image constant (`countImageTokens`, 85 to
+    ///      ~2,000 by pixel area) where a vision model charges by its own tile
+    ///      rule;
+    ///   3. it prices ONLY content strings. Role tags, per-message framing, the
+    ///      per-block JSON structure and the tool-result envelope — everything an
+    ///      adapter adds around the text — are invisible to it, and on a
+    ///      conversation of many small messages that overhead is a large share.
+    ///
+    /// So the number this returns is a lower bound used to bound a budget, never
+    /// evidence about how full the window is. `dynamicMaxTokens` may use it to
+    /// leave room; the context readouts may not use it as "used".
+    ///
+    /// - Parameter source: what asked. Logged verbatim, and used to label the
+    ///   figure so a log reader can tell a live budget from a re-measure.
+    /// - Returns: the measured occupancy when one exists for this session,
+    ///   otherwise the estimator's lower bound.
+    @discardableResult
+    func estimateContextTokens(_ source: String = #function) -> Int {
         var totalChars = 0
         var imageTokens = 0
         let slice = effectiveAgentHistory()
-        // DIAG: per-message breakdown so we can see EXACTLY what occupies the
-        // post-compact context. Logs every message's role + part summary +
-        // token estimate; lets us tell whether bloat comes from the injected
-        // summary, pre-anchor warm-up turns, or post-anchor tool results.
-        var perMsg: [String] = []
+        // DIAG: per-message breakdown (largest first, bounded) so we can see
+        // EXACTLY what occupies the post-compact context. Bounded because the raw
+        // form printed one line per message — 232 of them on the 2026-10-18 log —
+        // which buried the turn's other diagnostics and made the log unusable for
+        // the one question it was written to answer.
+        var perMsg: [(idx: Int, role: String, tok: Int, chars: Int, tags: String)] = []
         var biggest: [(kind: String, chars: Int, msgIdx: Int)] = []
         for (idx, msg) in slice.enumerated() {
             var msgChars = 0
@@ -437,15 +468,33 @@ extension AIChatViewModel {
                 }
             }
             let msgTok = Int(Double(msgChars) / 3.5) + msgImgTok
-            let dbId = msg.dbMessageId?.prefix(8) ?? "----"
-            perMsg.append("[\(idx) \(msg.role.rawValue) db=\(dbId) ~\(msgTok)tok | \(partTags.joined(separator: ","))]")
+            perMsg.append((idx, msg.role.rawValue, msgTok, msgChars, partTags.joined(separator: ",")))
         }
-        let totalTokens = Int(Double(totalChars) / 3.5) + imageTokens
+        let envelope = Int(Double(totalChars) / 3.5) + imageTokens
         biggest.sort { $0.chars > $1.chars }
         let top = biggest.prefix(5).map { "[\($0.msgIdx)\($0.kind)=\($0.chars)c]" }.joined(separator: " ")
-        logger.verbose("[CompactDiag] estimate caller=\(caller) slice=\(slice.count) total=\(totalTokens)tok (\(totalChars)chars+\(imageTokens)imgTok) bigParts(≥2kc): \(top)")
-        logger.verbose("[CompactDiag] estimate perMsg: \(perMsg.joined(separator: " "))")
-        return totalTokens
+        logger.verbose("[CompactDiag] estimate source=\(source) slice=\(slice.count) envelopeEst=\(envelope)tok (\(totalChars)chars+\(imageTokens)imgTok) bigParts(≥2kc): \(top)")
+        // The largest messages, not all of them: the full census was one line per
+        // message (232 of them on the 2026-10-18 log) and buried the turn's other
+        // diagnostics. The largest ten answer the question the census existed for
+        // — what occupies the post-compact context — and the count says what was
+        // left out, so the log stays bounded by construction.
+        let ranked = perMsg.sorted { $0.chars > $1.chars }.prefix(10)
+        logger.verbose("[CompactDiag] estimate perMsg(top \(ranked.count) of \(perMsg.count) by chars) [idx role ~tok chars | parts]: "
+            + ranked.map { "[\($0.idx) \($0.role) ~\($0.tok)tok \($0.chars)c | \($0.tags)]" }.joined(separator: " "))
+        // The measured figure wins whenever one exists: it is the provider's own
+        // count, and it is what the context readouts must publish. Read VERBATIM
+        // rather than through `occupancy`: this function measures the CONVERSATION,
+        // and a measured record's baseline is a whole ENVELOPE, so projecting one
+        // through the other would subtract the system prompt and tool roster and
+        // report an occupancy thousands of tokens below what the engine charged.
+        // The bounded growth projection belongs to the callers that hold the whole
+        // envelope — the context sheet and `dynamicMaxTokens`.
+        if let measured = DSHContextUsageStore.shared.measured?.promptTokens, measured > 0 {
+            logger.verbose("[CompactDiag] estimate source=\(source) occupancy=\(measured)tok (the provider's own count for this session; `envelopeEst=\(envelope)` is what this estimator would have claimed)")
+            return measured
+        }
+        return envelope
     }
 
     /// - `force`: When true, skip the threshold check and offload all eligible candidates
@@ -469,15 +518,15 @@ extension AIChatViewModel {
         // use a fast char-based estimate to avoid sending an oversized prompt.
         var effectiveTokens = lastContextTokens
         if lastContextTokens == 0 {
-            effectiveTokens = estimateContextTokens()
+            effectiveTokens = estimateContextTokens("offloadContextIfNeeded")
             if !force {
                 if effectiveTokens < policy.offloadThreshold {
                     let remaining = contextWindow - effectiveTokens
-                    logger.debug("Context offload: skipped (estimate \(effectiveTokens)/\(contextWindow), remaining ~\(remaining) tokens)")
+                    logger.debug("Context offload: skipped (\(effectiveTokens)/\(contextWindow) by fallback estimate, remaining ~\(remaining) tokens)")
                     return
                 }
             }
-            logger.info("Context offload: no API baseline — using char estimate: ~\(effectiveTokens) tokens")
+            logger.info("Context offload: no provider count for this session — occupancy read from the fallback estimator: ~\(effectiveTokens) tokens (an estimate; the provider's own `usage.promptTokens` supersedes it as soon as one response lands)")
         }
 
         let pct = Int(Double(effectiveTokens) / Double(contextWindow) * 100)

@@ -333,7 +333,35 @@ extension AIChatViewModel {
         let contextWindow = effectiveContextWindow(for: model)
         guard contextWindow > 0 else { return upperBound }
 
-        let inputTokens = lastContextTokens > 0 ? lastContextTokens : estimateContextTokens()
+        // The occupancy this request will be charged, in priority order:
+        //
+        //   1. what the caller passed — the reminder/retry paths already hold the
+        //      last provider count and hand it in;
+        //   2. the session's measured context occupancy, projected onto the
+        //      request being built (`DSHContextUsageStore`), which is the same
+        //      figure the composer's ring shows and the same one the compaction
+        //      gate compares;
+        //   3. the fallback estimator, `estimateContextTokens()` — which itself
+        //      prefers the measured figure and only computes a character-based
+        //      lower bound when no provider has reported one for this session.
+        //
+        // The distinction matters for the ONE decision this function makes: how
+        // much output the request may reserve. A character estimate 2.4× below the
+        // engine's own count (measured on the 2026-10-18 device log: 77,655
+        // estimated against `prompt=189546`) reserves correspondingly too much,
+        // so the reservation is the last place this app should be guessing.
+        let breakdown = DSHContextBreakdownStore.shared.latest
+        let envelopeNow = breakdown?.estimatedTotal ?? 0
+        let measuredOccupancy = DSHContextUsageStore.shared.occupancy(envelopeTokensNow: envelopeNow)
+        let inputTokens: Int
+        if lastContextTokens > 0 {
+            inputTokens = lastContextTokens
+        } else if let measuredOccupancy {
+            inputTokens = measuredOccupancy
+            logger.info("📐 dynamicMaxTokens: occupancy \(measuredOccupancy) is the measured context count (envelope estimate was \(envelopeNow))")
+        } else {
+            inputTokens = estimateContextTokens("dynamicMaxTokens(provider:model:lastContextTokens:)")
+        }
         let remaining = contextWindow - inputTokens
 
         // [T-ctx-overflow-hard-stop] The input ALREADY does not fit. The floor

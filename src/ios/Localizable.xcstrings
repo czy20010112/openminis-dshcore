@@ -265062,6 +265062,119 @@
         }
       }
     },
+                          "Total (measured)" : {
+                            "extractionState" : "manual",
+                            "localizations" : {
+                              "en" : {
+                                "stringUnit" : {
+                                  "state" : "translated",
+                                  "value" : "Total (measured)"
+                                }
+                              },
+                              "de" : {
+                                "stringUnit" : {
+                                  "state" : "translated",
+                                  "value" : "Gesamt (gemessen)"
+                                }
+                              },
+                              "es" : {
+                                "stringUnit" : {
+                                  "state" : "translated",
+                                  "value" : "Total (medido)"
+                                }
+                              },
+                              "fil" : {
+                                "stringUnit" : {
+                                  "state" : "translated",
+                                  "value" : "Kabuuan (sinukat)"
+                                }
+                              },
+                              "fr" : {
+                                "stringUnit" : {
+                                  "state" : "translated",
+                                  "value" : "Total (mesuré)"
+                                }
+                              },
+                              "hr" : {
+                                "stringUnit" : {
+                                  "state" : "translated",
+                                  "value" : "Ukupno (izmjereno)"
+                                }
+                              },
+                              "id" : {
+                                "stringUnit" : {
+                                  "state" : "translated",
+                                  "value" : "Total (terukur)"
+                                }
+                              },
+                              "ja" : {
+                                "stringUnit" : {
+                                  "state" : "translated",
+                                  "value" : "合計（実測）"
+                                }
+                              },
+                              "ko" : {
+                                "stringUnit" : {
+                                  "state" : "translated",
+                                  "value" : "합계 (측정됨)"
+                                }
+                              },
+                              "ms" : {
+                                "stringUnit" : {
+                                  "state" : "translated",
+                                  "value" : "Jumlah (diukur)"
+                                }
+                              },
+                              "pl" : {
+                                "stringUnit" : {
+                                  "state" : "translated",
+                                  "value" : "Razem (zmierzone)"
+                                }
+                              },
+                              "pt-BR" : {
+                                "stringUnit" : {
+                                  "state" : "translated",
+                                  "value" : "Total (medido)"
+                                }
+                              },
+                              "ro" : {
+                                "stringUnit" : {
+                                  "state" : "translated",
+                                  "value" : "Total (măsurat)"
+                                }
+                              },
+                              "ru" : {
+                                "stringUnit" : {
+                                  "state" : "translated",
+                                  "value" : "Итого (измерено)"
+                                }
+                              },
+                              "th" : {
+                                "stringUnit" : {
+                                  "state" : "translated",
+                                  "value" : "รวม (วัดจริง)"
+                                }
+                              },
+                              "tr" : {
+                                "stringUnit" : {
+                                  "state" : "translated",
+                                  "value" : "Toplam (ölçülen)"
+                                }
+                              },
+                              "zh-Hans" : {
+                                "stringUnit" : {
+                                  "state" : "translated",
+                                  "value" : "总计（实测）"
+                                }
+                              },
+                              "zh-Hant" : {
+                                "stringUnit" : {
+                                  "state" : "translated",
+                                  "value" : "總計（實測）"
+                                }
+                              }
+                            }
+                          },
     "This request, estimated" : {
       "extractionState": "manual",
       "localizations": {
@@ -265175,6 +265288,232 @@
         }
       }
     },
+                                "estimated request envelope" : {
+                                  "extractionState" : "manual",
+                                  "localizations" : {
+                                    "en" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "estimated request envelope"
+                                      }
+                                    },
+                                    "de" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "geschätzte Anfragehülle"
+                                      }
+                                    },
+                                    "es" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "envoltura de solicitud estimada"
+                                      }
+                                    },
+                                    "fil" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "tinatayang balot ng kahilingan"
+                                      }
+                                    },
+                                    "fr" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "enveloppe de requête estimée"
+                                      }
+                                    },
+                                    "hr" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "procijenjena omotnica zahtjeva"
+                                      }
+                                    },
+                                    "id" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "estimasi envelope permintaan"
+                                      }
+                                    },
+                                    "ja" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "リクエスト全体（推定）"
+                                      }
+                                    },
+                                    "ko" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "요청 전체 (추정)"
+                                      }
+                                    },
+                                    "ms" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "anggaran sampul permintaan"
+                                      }
+                                    },
+                                    "pl" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "szacowana otoczka żądania"
+                                      }
+                                    },
+                                    "pt-BR" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "envelope de solicitação estimado"
+                                      }
+                                    },
+                                    "ro" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "plic solicitare estimat"
+                                      }
+                                    },
+                                    "ru" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "оценка объёма запроса"
+                                      }
+                                    },
+                                    "th" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "ขอบเขตคำขอ (ประมาณ)"
+                                      }
+                                    },
+                                    "tr" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "tahmini istek zarfı"
+                                      }
+                                    },
+                                    "zh-Hans" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "请求包络（估算）"
+                                      }
+                                    },
+                                    "zh-Hant" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "請求包絡（估算）"
+                                      }
+                                    }
+                                  }
+                                },
+                                "This request, measured" : {
+                                  "extractionState" : "manual",
+                                  "localizations" : {
+                                    "en" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "This request, measured"
+                                      }
+                                    },
+                                    "de" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "Diese Anfrage, gemessen"
+                                      }
+                                    },
+                                    "es" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "Esta solicitud, medida"
+                                      }
+                                    },
+                                    "fil" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "Ang kahilingang ito, sinukat"
+                                      }
+                                    },
+                                    "fr" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "Cette requête, mesurée"
+                                      }
+                                    },
+                                    "hr" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "Ovaj zahtjev, izmjereno"
+                                      }
+                                    },
+                                    "id" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "Permintaan ini, terukur"
+                                      }
+                                    },
+                                    "ja" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "このリクエスト（実測）"
+                                      }
+                                    },
+                                    "ko" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "이 요청 (측정됨)"
+                                      }
+                                    },
+                                    "ms" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "Permintaan ini, diukur"
+                                      }
+                                    },
+                                    "pl" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "To żądanie, zmierzone"
+                                      }
+                                    },
+                                    "pt-BR" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "Esta solicitação, medido"
+                                      }
+                                    },
+                                    "ro" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "Această cerere, măsurat"
+                                      }
+                                    },
+                                    "ru" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "Этот запрос, измерено"
+                                      }
+                                    },
+                                    "th" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "คำขอนี้ วัดจริง"
+                                      }
+                                    },
+                                    "tr" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "Bu istek, ölçülen"
+                                      }
+                                    },
+                                    "zh-Hans" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "本次请求（实测）"
+                                      }
+                                    },
+                                    "zh-Hant" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "本次請求（實測）"
+                                      }
+                                    }
+                                  }
+                                },
     "Measured" : {
       "extractionState": "manual",
       "localizations": {
