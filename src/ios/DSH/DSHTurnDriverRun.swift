@@ -322,6 +322,7 @@ extension AIChatViewModel {
             compactionPressureTokensOverride: Self.dshCompactionPressureOverride,
             compactionRetainTokensOverride: Self.dshCompactionRetainOverride,
             autoCompactionEnabled: true,
+            memoryEnabled: memoryEnabled,
             // The same backoff the legacy loop waits out on a retryable stream
             // failure, so the two paths recover from a network blip alike.
             streamRetryDelays: Self.retryDelays
