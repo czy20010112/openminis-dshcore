@@ -1033,9 +1033,12 @@ public final class DSHTurnDriver {
         // runtime facts — must NOT reach the system prompt: it is the prefix the
         // engine's KV cache matches on, and a turn that wrote a memory used to
         // rewrite bytes at the head of the next request, dropping cache from
-        // 99.5% to 0.0%. It rides as a message instead, placed before the turn's
-        // own user message, which is where upstream DSH admits its
-        // runtime-context snapshot
+        // 99.5% to 0.0%. It rides as a message instead, admitted at the head of the
+        // conversation (`historyWithVolatileTurnContext`) — an index the
+        // conversation's own growth cannot move, which is the one property this
+        // engine's cache actually needs: it reuses a prompt only while the request
+        // extends one it still holds. Upstream DSH keeps the same invariant by
+        // admitting its runtime-context snapshot once and never moving it
         // (`packages/core/agent-loop/src/runtime-context.ts`,
         // `RuntimeContextProjection.project`). Same text, different message — the
         // model's view is unchanged, the cached prefix is not.
