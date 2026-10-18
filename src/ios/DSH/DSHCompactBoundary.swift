@@ -30,6 +30,24 @@
 //  inputs; this file only decides positions, and it takes them as plain values
 //  so it compiles without UIKit, SwiftUI, or the store.
 //
+//  THREE RULES THIS FILE NOW ENFORCES (F3, 2026-10-18)
+//  ---------------------------------------------------
+//  1. A DEGRADED anchor is never trusted. A marker whose anchor is a position
+//     rather than a store row (`anchorIsDegraded`) resolves on the kept tail, not
+//     through a clock-based guess — see branch 0 below.
+//  2. A clock-based heal NEVER names the transcript's last row. That heal used to
+//     fire for every degraded marker (the marker's `createdAt` is later than every
+//     row it covers, so "the newest row older than the marker" is the newest row,
+//     always), which put the divider at the bottom and greyed the WHOLE transcript
+//     — live rows included. It looked like a correct restore in the log.
+//  3. The block answer is EXACT, the greyed answer is CONSERVATIVE. A UI row is a
+//     merged run of raw rows (`AIChatViewModel+Persistence` Phase 2), so the
+//     anchor routinely lands in the middle of one bubble. Greying is
+//     message-granular in the view layer, so the caller can only grey a whole
+//     bubble; when the anchor is mid-bubble this resolver refuses to grey that
+//     bubble at all (fewer rows greyed than the marker covers — never more), and
+//     reports both numbers so the difference is visible instead of guessed.
+//
 //  Both trees carry this file byte-identically (it is under `src/ios/DSH/`), so
 //  the ios15 and ios26 builds cannot drift in where the divider lands.
 //
@@ -78,17 +96,41 @@ public struct DSHCompactUIRow: Equatable {
     public let lastSortOrder: Int?
     public let role: String
     public let hasText: Bool
+    /// The `sortOrder` of the raw row that produced each block, in block order.
+    ///
+    /// A UI row is a MERGE of one or more raw rows, so `first...last` says which
+    /// raw rows a bubble covers but not which BLOCK came from which. Without that
+    /// the question "how much of this bubble is at or below the anchor" can only
+    /// be answered as "the whole bubble or none of it", which is the over-claim
+    /// the block-level accounting exists to expose: on a device session Phase 2
+    /// folded 231 database rows into 15 UI rows, so a mid-run anchor is the norm,
+    /// not the exception.
+    ///
+    /// Empty means "the caller has no per-block information" (a live row, or a
+    /// caller not yet taught to fill it): the row is then treated as one opaque
+    /// unit and none of it is ever claimed as compacted.
+    public let blockSortOrders: [Int]
 
     public init(
         firstSortOrder: Int?,
         lastSortOrder: Int?,
         role: String,
-        hasText: Bool
+        hasText: Bool,
+        blockSortOrders: [Int] = []
     ) {
         self.firstSortOrder = firstSortOrder
         self.lastSortOrder = lastSortOrder
         self.role = role
         self.hasText = hasText
+        self.blockSortOrders = blockSortOrders
+    }
+
+    /// Blocks this row renders.
+    public var blockCount: Int { blockSortOrders.count }
+
+    /// Blocks at or below `sortOrder` — the exact count, from per-block data.
+    public func blocksAtOrBelow(_ sortOrder: Int) -> Int {
+        blockSortOrders.reduce(0) { $0 + ($1 <= sortOrder ? 1 : 0) }
     }
 }
 
@@ -96,7 +138,9 @@ public struct DSHCompactUIRow: Equatable {
 ///
 /// `version` matters: a v2 marker resolves ONLY through `lastCompactedMessageId`
 /// (the legacy sort-order fields were written as past-end sentinels and reading
-/// them back as real boundaries points at a coincidental row).
+/// them back as real boundaries points at a coincidental row). A v3 marker
+/// records the same id-only shape but with an anchor that is a POSITION rather
+/// than a store row — see `isDegradedAnchor`.
 public struct DSHCompactMarkerFacts: Equatable {
     public let version: Int
     public let firstKeptMessageId: String?
@@ -124,6 +168,23 @@ public struct DSHCompactMarkerFacts: Equatable {
         self.createdAt = createdAt
     }
 
+    /// Marker version at which `lastCompactedMessageId` stops naming a store row.
+    ///
+    /// A DSH compaction whose shadowed range reaches into rows the turn has not
+    /// persisted yet has no database id to anchor on. The record must still be
+    /// written (a lost record is unrecoverable, see `dshWriteCompactionMarker`),
+    /// so it is written as a POSITION and marked with this version. The value
+    /// shares `lastCompactedMessageId` with v2 on purpose — one column, no
+    /// migration — and any id left in it keeps whatever was known at write time,
+    /// for diagnostics. NOTHING on such a marker is a position: the forward
+    /// boundary fields are ignored too, because the version means "no anchor".
+    public static let degradedAnchorVersion = 3
+
+    /// True when this marker's anchor is a position, not a store row.
+    public var isDegradedAnchor: Bool {
+        version >= DSHCompactMarkerFacts.degradedAnchorVersion
+    }
+
     /// The shape every DSH compaction writes (`dshWriteCompactionMarker`): no
     /// forward boundary, so the marker is anchored by `lastCompactedMessageId`
     /// alone. Named because the legacy sort-order fallback must be SKIPPED for
@@ -136,11 +197,15 @@ public struct DSHCompactMarkerFacts: Equatable {
     /// Whether the marker carries a usable forward boundary at all. A marker
     /// with neither a forward boundary nor a backward anchor describes no
     /// range, and no position can be derived from it.
+    ///
+    /// A degraded marker DOES describe a range — it just cannot name its right
+    /// edge — so it must not take the "describes no range" branch.
     public var describesARange: Bool {
         firstKeptMessageId != nil
             || boundaryMessageId != nil
             || lastCompactedMessageId != nil
             || version < 2
+            || isDegradedAnchor
     }
 }
 
@@ -157,21 +222,61 @@ public struct DSHCompactBoundaryDecision: Equatable {
     public let resolvedAnchorId: String?
     /// True when the marker was rewritten and has to be written back.
     public let healedMarkerAnchorId: String?
+    /// True when the position did NOT come from the marker's own anchor.
+    ///
+    /// This is the flag the reload path warns on. Before it existed, a marker
+    /// whose anchor named no store row resolved through a clock-based guess to
+    /// the transcript's LAST row — divider at the bottom, every row greyed — and
+    /// because that state greys something it was reported as a correct restore.
+    public let degradedAnchor: Bool
+    /// Blocks the marker says are compacted (exact, from per-block data).
+    public let grayedBlockCount: Int
+    /// Blocks the caller's message-granular greying loop will actually grey.
+    ///
+    /// Always `<= grayedBlockCount`: when the anchor lands inside a merged
+    /// bubble, that bubble is left active rather than greyed whole. The two
+    /// numbers are reported so "the tail the model still sees was dimmed" is a
+    /// measurement rather than an inference.
+    public let uiGrayedBlockCount: Int
 
     public init(
         insertIndex: Int,
         resolutionPath: String,
         resolvedAnchorId: String?,
-        healedMarkerAnchorId: String? = nil
+        healedMarkerAnchorId: String? = nil,
+        degradedAnchor: Bool = false,
+        grayedBlockCount: Int = 0,
+        uiGrayedBlockCount: Int = 0
     ) {
         self.insertIndex = insertIndex
         self.resolutionPath = resolutionPath
         self.resolvedAnchorId = resolvedAnchorId
         self.healedMarkerAnchorId = healedMarkerAnchorId
+        self.degradedAnchor = degradedAnchor
+        self.grayedBlockCount = grayedBlockCount
+        self.uiGrayedBlockCount = uiGrayedBlockCount
     }
 
     /// Whether any row is greyed by this decision.
     public var greysAnything: Bool { insertIndex > 0 }
+
+    /// Blocks greyed that the marker does NOT cover. Must stay 0: dimming rows
+    /// the model still sees is the failure this decision refuses to make.
+    public var overClaimedBlockCount: Int {
+        max(0, uiGrayedBlockCount - grayedBlockCount)
+    }
+
+    /// Compacted blocks the caller shows as live because the anchor landed in
+    /// the middle of a merged bubble.
+    public var deferredBlockCount: Int {
+        max(0, grayedBlockCount - uiGrayedBlockCount)
+    }
+
+    /// True when the divider sits at the end of the transcript, i.e. every row is
+    /// inside the greyed region.
+    public func greysEverything(uiRowCount: Int) -> Bool {
+        uiRowCount > 0 && insertIndex >= uiRowCount
+    }
 }
 
 // MARK: - Resolver
@@ -189,18 +294,26 @@ public struct DSHCompactBoundaryDecision: Equatable {
 ///
 /// Order, and why:
 ///
+///   0. **Degraded marker** (`anchorIsDegraded`, version 3): the compaction
+///      happened and the record must be restored, but its anchor names a
+///      position rather than a row, so there is nothing to look up. Go straight
+///      to the kept tail — a clock-based guess would name the newest row (the
+///      marker is written after it) and grey everything.
 ///   1. **Forward boundary** (`firstKeptMessageId` → `boundaryMessageId`), when
 ///      it is a row the transcript really holds. A marker that names the first
 ///      row it KEPT is exact: the divider goes immediately before it. This is
 ///      the shape `compactBefore` writes.
 ///   2. **v2 anchor** (`lastCompactedMessageId`): the divider goes immediately
-///      AFTER the UI row whose inclusive sort-order range contains the anchor
-///      row. That is the `compactAll` shape the DSH path writes.
+///      AFTER the anchor row — or immediately BEFORE its UI row when the anchor
+///      is mid-bubble, because a bubble is the smallest thing the view can grey.
+///      That is the `compactAll` shape the DSH path writes.
 ///   3. **Anchor by `createdAt`**: the newest raw row that predates the marker
 ///      — the same self-heal `anchorByCreatedAt` performs, and the only repair
 ///      available when the anchor's row was deleted or re-indexed. Applied to
 ///      v2/compactAll markers only; a legacy marker with a readable sort-order
-///      boundary is not rewritten.
+///      boundary is not rewritten. REFUSED when it names the transcript's last
+///      row: that is the shape of a guess, not of a repair (see rule 2 at the
+///      top of this file).
 ///   4. **Kept tail**: the last `keepRecentUserTurns` user rows stay active and
 ///      everything above them is greyed. Not exact, but monotone: it never
 ///      claims MORE is active than the marker compacted beyond, so no row the
@@ -240,7 +353,10 @@ public enum DSHCompactBoundary {
             insertIndex: bounded,
             resolutionPath: decision.resolutionPath,
             resolvedAnchorId: decision.resolvedAnchorId,
-            healedMarkerAnchorId: decision.healedMarkerAnchorId
+            healedMarkerAnchorId: decision.healedMarkerAnchorId,
+            degradedAnchor: decision.degradedAnchor,
+            grayedBlockCount: decision.grayedBlockCount,
+            uiGrayedBlockCount: decision.uiGrayedBlockCount
         )
     }
 
@@ -255,10 +371,11 @@ public enum DSHCompactBoundary {
         // A marker that names no range at all cannot place a divider anywhere
         // meaningful. Say so rather than pretending the top is a boundary.
         guard marker.describesARange else {
-            return DSHCompactBoundaryDecision(
+            return unboundedDecision(
                 insertIndex: 0,
                 resolutionPath: "markerDescribesNoRange",
-                resolvedAnchorId: nil
+                resolvedAnchorId: nil,
+                uiRows: uiRows
             )
         }
         guard !uiRows.isEmpty else {
@@ -272,6 +389,22 @@ public enum DSHCompactBoundary {
         let rawById = Dictionary(rawRows.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let uiIndexBySortOrder = uiIndexMap(uiRows)
 
+        // ── 0. Degraded marker ─────────────────────────────────────────────
+        //
+        // The anchor is a position, not a store row. Nothing here can be looked
+        // up, so the honest answer is the kept tail — the same tail
+        // `effectiveAgentHistory()` keeps for such a marker, so the transcript's
+        // greyed region and the model's view of it agree. Explicitly NOT the
+        // clock heal: see rule 2 at the top of this file.
+        if marker.isDegradedAnchor {
+            return tailDecision(
+                marker: marker,
+                uiRows: uiRows,
+                keepRecentUserTurns: keepRecentUserTurns,
+                degradedAnchor: true
+            )
+        }
+
         // ── 1. Forward boundary ────────────────────────────────────────────
         //
         // `firstKeptMessageId` is the authoritative name when present: it is the
@@ -281,10 +414,11 @@ public enum DSHCompactBoundary {
            rawById[id] != nil {
             let path = marker.firstKeptMessageId == id ? "firstKeptMessageId" : "boundaryMessageId"
             if let idx = uiIndex(forRawId: id, rawById: rawById, uiIndexBySortOrder: uiIndexBySortOrder) {
-                return DSHCompactBoundaryDecision(
+                return unboundedDecision(
                     insertIndex: idx,
                     resolutionPath: path,
-                    resolvedAnchorId: id
+                    resolvedAnchorId: id,
+                    uiRows: uiRows
                 )
             }
             // The named row exists but Phase 2 gave no UI row its sort order —
@@ -295,26 +429,36 @@ public enum DSHCompactBoundary {
         if let lcmId = marker.lastCompactedMessageId {
             if let raw = rawById[lcmId],
                let idx = uiIndexBySortOrder[raw.sortOrder] {
-                return DSHCompactBoundaryDecision(
-                    insertIndex: idx + 1,
+                return anchoredDecision(
+                    anchorRow: raw,
+                    anchorRowIndex: idx,
                     resolutionPath: marker.version >= 2 ? "v2(lcmId)" : "compactAll(lastCompactedMessageId)",
-                    resolvedAnchorId: lcmId
+                    resolvedAnchorId: lcmId,
+                    healedMarkerAnchorId: nil,
+                    uiRows: uiRows
                 )
             }
             // The anchor's row is gone (deleted, or re-indexed by a sync
-            // migration). Rebuild it from the clock, which survives both.
+            // migration). Rebuild it from the clock, which survives both — but
+            // only when the rebuild names something OLDER than the newest row.
+            // A heal that names the newest row claims the whole transcript was
+            // replaced, which is exactly what a degraded anchor produces, and its
+            // failure mode is indistinguishable from a correct restore.
             if let heal = anchorByCreatedAt(
                 rawRows: rawRows,
                 markerCreatedAt: marker.createdAt,
                 historyDbIds: historyDbIds
-            ), let idx = uiIndexBySortOrder[heal.sortOrder] {
-                return DSHCompactBoundaryDecision(
-                    insertIndex: idx + 1,
+            ), !namesNewestRow(heal, rawRows: rawRows),
+               let idx = uiIndexBySortOrder[heal.sortOrder] {
+                return anchoredDecision(
+                    anchorRow: heal,
+                    anchorRowIndex: idx,
                     resolutionPath: marker.version >= 2
                         ? "v2(orphan→healByCreatedAt)"
                         : "compactAll(orphanedLcm→healByCreatedAt)",
                     resolvedAnchorId: lcmId,
-                    healedMarkerAnchorId: heal.id
+                    healedMarkerAnchorId: heal.id,
+                    uiRows: uiRows
                 )
             }
         }
@@ -327,10 +471,11 @@ public enum DSHCompactBoundary {
         if !marker.isCompactAllShape, marker.version < 2 {
             if let raw = rawRows.first(where: { $0.sortOrder >= marker.firstKeptSortOrder }),
                let idx = uiIndexBySortOrder[raw.sortOrder] {
-                return DSHCompactBoundaryDecision(
+                return unboundedDecision(
                     insertIndex: idx,
                     resolutionPath: "firstKeptSortOrder(legacy)",
-                    resolvedAnchorId: raw.id
+                    resolvedAnchorId: raw.id,
+                    uiRows: uiRows
                 )
             }
         }
@@ -340,23 +485,147 @@ public enum DSHCompactBoundary {
         // Monotone and self-limiting: the tail is active, the prefix is greyed,
         // and the divider records that the session WAS compacted even though the
         // exact boundary is unrecoverable.
+        return tailDecision(
+            marker: marker,
+            uiRows: uiRows,
+            keepRecentUserTurns: keepRecentUserTurns,
+            degradedAnchor: true
+        )
+    }
+
+    // MARK: - Decisions
+
+    /// A decision whose position came from no row at all: the divider sits
+    /// immediately before `insertIndex`, so nothing inside a bubble is claimed.
+    private static func unboundedDecision(
+        insertIndex: Int,
+        resolutionPath: String,
+        resolvedAnchorId: String?,
+        uiRows: [DSHCompactUIRow]
+    ) -> DSHCompactBoundaryDecision {
+        let coverage = blockCoverage(
+            insertIndex: insertIndex,
+            compactedInsideBoundaryRow: 0,
+            uiRows: uiRows
+        )
+        return DSHCompactBoundaryDecision(
+            insertIndex: insertIndex,
+            resolutionPath: resolutionPath,
+            resolvedAnchorId: resolvedAnchorId,
+            healedMarkerAnchorId: nil,
+            degradedAnchor: false,
+            grayedBlockCount: coverage.exact,
+            uiGrayedBlockCount: coverage.greyed
+        )
+    }
+
+    /// A decision anchored on a raw row that the transcript holds.
+    ///
+    /// Two shapes, and the difference is the whole of rule 3:
+    ///
+    ///   * the anchor is the LAST raw row of its UI row → the bubble is entirely
+    ///     at or below the anchor, so the divider goes after it and the caller
+    ///     greys it whole: exact and greyed agree;
+    ///   * the anchor is mid-bubble → the divider goes BEFORE the bubble and the
+    ///     bubble stays active. The blocks at or below the anchor are reported as
+    ///     `grayedBlockCount` and the (larger) greyed answer is not used, because
+    ///     greying the bubble would dim rows the model still sees.
+    private static func anchoredDecision(
+        anchorRow: DSHCompactRawRow,
+        anchorRowIndex idx: Int,
+        resolutionPath: String,
+        resolvedAnchorId: String?,
+        healedMarkerAnchorId: String?,
+        uiRows: [DSHCompactUIRow]
+    ) -> DSHCompactBoundaryDecision {
+        let row = uiRows[idx]
+        let rowTail = row.lastSortOrder ?? row.firstSortOrder ?? anchorRow.sortOrder
+        let anchorIsRowTail = anchorRow.sortOrder >= rowTail
+        let insertIndex = anchorIsRowTail ? idx + 1 : idx
+        let compactedInsideRow = anchorIsRowTail ? 0 : row.blocksAtOrBelow(anchorRow.sortOrder)
+        let coverage = blockCoverage(
+            insertIndex: insertIndex,
+            compactedInsideBoundaryRow: compactedInsideRow,
+            uiRows: uiRows
+        )
+        return DSHCompactBoundaryDecision(
+            insertIndex: insertIndex,
+            resolutionPath: resolutionPath,
+            resolvedAnchorId: resolvedAnchorId,
+            healedMarkerAnchorId: healedMarkerAnchorId,
+            degradedAnchor: false,
+            grayedBlockCount: coverage.exact,
+            uiGrayedBlockCount: coverage.greyed
+        )
+    }
+
+    /// The kept-tail rung, shared by the degraded marker and the unresolvable
+    /// anchor. Reports itself as degraded in both cases: the position did not
+    /// come from the marker's own anchor, and the reload path has to say so.
+    private static func tailDecision(
+        marker: DSHCompactMarkerFacts,
+        uiRows: [DSHCompactUIRow],
+        keepRecentUserTurns: Int,
+        degradedAnchor: Bool
+    ) -> DSHCompactBoundaryDecision {
         let tail = uiAnchorIndexForKeptTail(uiRows: uiRows, keepUserTurns: keepRecentUserTurns)
-        if tail > 0 {
+        guard tail > 0 else {
+            let top = unboundedDecision(
+                insertIndex: 0,
+                resolutionPath: "unresolved→noGray",
+                resolvedAnchorId: nil,
+                uiRows: uiRows
+            )
             return DSHCompactBoundaryDecision(
-                insertIndex: tail,
-                resolutionPath: marker.version >= 2
-                    ? "v2(orphan→tailAnchor)"
-                    : "compactAll(orphanedLcm→tailAnchor)",
-                resolvedAnchorId: nil
+                insertIndex: top.insertIndex,
+                resolutionPath: top.resolutionPath,
+                resolvedAnchorId: top.resolvedAnchorId,
+                healedMarkerAnchorId: nil,
+                degradedAnchor: degradedAnchor,
+                grayedBlockCount: top.grayedBlockCount,
+                uiGrayedBlockCount: top.uiGrayedBlockCount
             )
         }
-
-        // ── 5. Top ─────────────────────────────────────────────────────────
-        return DSHCompactBoundaryDecision(
-            insertIndex: 0,
-            resolutionPath: "unresolved→noGray",
-            resolvedAnchorId: nil
+        let coverage = blockCoverage(
+            insertIndex: tail,
+            compactedInsideBoundaryRow: 0,
+            uiRows: uiRows
         )
+        return DSHCompactBoundaryDecision(
+            insertIndex: tail,
+            resolutionPath: marker.version >= 2
+                ? "v2(orphan→tailAnchor)"
+                : "compactAll(orphanedLcm→tailAnchor)",
+            resolvedAnchorId: nil,
+            healedMarkerAnchorId: nil,
+            degradedAnchor: degradedAnchor,
+            grayedBlockCount: coverage.exact,
+            uiGrayedBlockCount: coverage.greyed
+        )
+    }
+
+    /// Blocks the caller's greying loop will mark, and blocks the marker covers.
+    ///
+    /// The caller greys the UI rows above the divider and skips status rows
+    /// (`systemInfo`), so this counting does the same — a number that described
+    /// the caller's loop differently from the loop itself would be a readout that
+    /// measures itself.
+    private static func blockCoverage(
+        insertIndex: Int,
+        compactedInsideBoundaryRow: Int,
+        uiRows: [DSHCompactUIRow]
+    ) -> (exact: Int, greyed: Int) {
+        let upTo = min(max(0, insertIndex), uiRows.count)
+        var greyed = 0
+        for i in 0..<upTo where !isStatusRow(uiRows[i]) {
+            greyed += uiRows[i].blockCount
+        }
+        return (greyed + max(0, compactedInsideBoundaryRow), greyed)
+    }
+
+    /// A row the caller never greys: the transcript's own status lines.
+    private static func isStatusRow(_ row: DSHCompactUIRow) -> Bool {
+        row.role != "user" && row.role != "assistant"
     }
 
     // MARK: - Lookups
@@ -380,6 +649,17 @@ public enum DSHCompactBoundary {
     ) -> Int? {
         guard let raw = rawById[id] else { return nil }
         return uiIndexBySortOrder[raw.sortOrder]
+    }
+
+    /// Whether `row` is the newest row the transcript holds.
+    ///
+    /// The clock heal is refused in exactly this case. `anchorByCreatedAt` picks
+    /// the newest row older than the marker, and a marker is written AFTER the
+    /// rows it covers, so for a marker with no real anchor the answer is always
+    /// this row — "everything was compacted", divider at the bottom. See rule 2.
+    static func namesNewestRow(_ row: DSHCompactRawRow, rawRows: [DSHCompactRawRow]) -> Bool {
+        guard let newest = rawRows.last else { return false }
+        return newest.id == row.id || newest.sortOrder == row.sortOrder
     }
 
     /// The newest raw row that predates the marker and is still bound to an
