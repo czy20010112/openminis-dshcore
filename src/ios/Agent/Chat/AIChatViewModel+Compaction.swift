@@ -394,6 +394,88 @@ extension AIChatViewModel {
         return 0
     }
 
+    // MARK: - Streaming Target (identity, not offset)
+
+    /// Offset of the assistant row the DSH driver is streaming into, or -1.
+    ///
+    /// [T-dsh-compact-divider-index-drift] Re-derived from the row's identity on
+    /// every read, because `messages` is mutated under a running turn: the
+    /// mid-turn compaction inserts the divider at the seq boundary, and that
+    /// insert moves every row below it — the streaming row included — down by
+    /// one. An offset captured before the insert then names the DIVIDER, and
+    /// every write guarded by `messages[i].role == .assistant` is silently
+    /// dropped: the reply never renders, and the divider is left as the newest
+    /// row on screen ("all new messages above the compaction line").
+    ///
+    /// Reading through the row's id makes the insert harmless: the offset is a
+    /// cache, and a stale cache is corrected here instead of being trusted. The
+    /// stored -1 stays meaningful as "no turn is streaming".
+    var dshStreamingMsgIdx: Int {
+        get {
+            guard dshStreamingMsgIdxRaw >= 0 else { return -1 }
+            if let id = dshStreamingRowId {
+                if dshStreamingMsgIdxRaw < messages.count,
+                   messages[dshStreamingMsgIdxRaw].id == id {
+                    return dshStreamingMsgIdxRaw
+                }
+                if let found = messages.firstIndex(where: { $0.id == id }) {
+                    dshStreamingMsgIdxRaw = found
+                    return found
+                }
+                // The row is gone (a rebuild replaced the array). Report "none"
+                // rather than a stale offset that now names a different row.
+                dshStreamingMsgIdxRaw = -1
+                return -1
+            }
+            // No identity recorded (legacy path): trust the offset only while it
+            // still names an assistant row.
+            guard dshStreamingMsgIdxRaw < messages.count,
+                  messages[dshStreamingMsgIdxRaw].role == .assistant else {
+                dshStreamingMsgIdxRaw = -1
+                return -1
+            }
+            return dshStreamingMsgIdxRaw
+        }
+        set { dshStreamingMsgIdxRaw = newValue }
+    }
+
+    /// Re-derive the streaming target's offset from its row identity, after
+    /// something moved rows around it.
+    ///
+    /// The one healing site the compaction path calls: `messages.insert(at:)`
+    /// shifts every row below the insertion, and the streaming row is the
+    /// trailing row, so it is always shifted. Reading through
+    /// `dshStreamingMsgIdx` would heal lazily too, but making the call explicit
+    /// means the writer's bookkeeping is correct the moment the array changes —
+    /// and the callee can log what it did rather than leaving the repair to be
+    /// inferred.
+    @discardableResult
+    func dshReanchorStreamingRow() -> Int {
+        let resolved = dshStreamingMsgIdx
+        return resolved
+    }
+
+    /// The live streaming row's identity, for callers that only need to know
+    /// WHICH row the turn is writing into — the divider's placement asks this so
+    /// it can stay above it. nil when no turn is streaming.
+    var dshLiveStreamingRowId: UUID? {
+        guard dshStreamingMsgIdx >= 0 else { return nil }
+        return dshStreamingRowId
+    }
+
+    /// Point the streaming target at the row at `index` and remember its
+    /// identity. Every path that creates the turn's assistant row goes through
+    /// this, so no later array mutation can detach the loop from it.
+    func dshSetStreamingRow(at index: Int) {
+        guard index >= 0, index < messages.count else {
+            dshStreamingRowId = nil
+            dshStreamingMsgIdxRaw = -1
+            return
+        }
+        dshStreamingRowId = messages[index].id
+        dshStreamingMsgIdxRaw = index
+    }
+
     /// Compact all messages before the specified chat message.
     ///
     /// Phase B model (rule 1/2):
