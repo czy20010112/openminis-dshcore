@@ -668,44 +668,13 @@ struct AIChatView: View {
                             // bar above the composer from OUTSIDE: inside the composer
                             // it competed with the input field for space, and as a
                             // floating sibling it read as a second card.
-                            DSHTodoPanelView()
-                                .frame(maxWidth: maxContentWidth, alignment: .leading)
-                                // The composer's own inset, so the bar's width is the
-                                // input box's width and not a second opinion about it.
-                                // It was 14 — 2pt narrower per side.
-                                .padding(.horizontal, 12)
-                                // 4pt of air, which is DSH's own dock clearance under
-                                // its panel (`conversation.input.dock: padding: 0 …
-                                // 4px`). The composer applies `.padding(.vertical, 8)`
-                                // outside its surface, so this is what puts the gap at
-                                // 4: the bar used to be pulled down 8pt (`-8`) onto
-                                // that surface, which made its straight bottom edge —
-                                // and the hairline along it — land exactly on the
-                                // composer's top edge, where the composer's corners
-                                // have already curved inward. The strip was wider there
-                                // than the surface beneath it, so the bottom edge hung
-                                // over the rounded corners.
-                                .padding(.bottom, -4)
-                                // [T-panel-bottom-inset] Measured AFTER the -4,
-                                // so the number the list reserves is the number
-                                // this VStack actually gives the bar.
-                                .measuredPanelHeight($todoPanelHeight,
-                                                     latest: $latestTodoPanelH,
-                                                     contentVisible: todoPanelVisible,
-                                                     debounce: $todoPanelHeightDebounce)
+                            measuredTodoPanel
                             // [T-tools-goal] The goal, in DSH's own slot: its
                             // composer-context stack is todo, then goal, then the
                             // queue, all at the same panel elevation. Draws
                             // nothing when there is no live goal, so this costs a
                             // composer with no goal exactly one line of layout.
-                            DSHGoalPanelView()
-                                .frame(maxWidth: maxContentWidth, alignment: .leading)
-                                .padding(.horizontal, 12)
-                                .padding(.bottom, -4)
-                                .measuredPanelHeight($goalPanelHeight,
-                                                     latest: $latestGoalPanelH,
-                                                     contentVisible: goalPanelVisible,
-                                                     debounce: $goalPanelHeightDebounce)
+                            measuredGoalPanel
                             #if DEBUG
                             if isReadOnly {
                                 forkBanner
@@ -5206,6 +5175,49 @@ struct AIChatView: View {
     ///    gated — the callback itself still runs every pass.
     ///  * The debounced commit re-reads `contentVisible`, so a bar that hid or
     ///    unmounted while the timer slept hands its points back instead of
+    /// The todo bar with its dock clearance and its height registration.
+    /// Extracted from `body`: the builder chain plus the measurement closure put
+    /// the body past the type checker's time budget in CI.
+    private var measuredTodoPanel: some View {
+        DSHTodoPanelView()
+            .frame(maxWidth: maxContentWidth, alignment: .leading)
+            // The composer's own inset, so the bar's width is the
+            // input box's width and not a second opinion about it.
+            // It was 14 — 2pt narrower per side.
+            .padding(.horizontal, 12)
+            // 4pt of air, which is DSH's own dock clearance under
+            // its panel (`conversation.input.dock: padding: 0 …
+            // 4px`). The composer applies `.padding(.vertical, 8)`
+            // outside its surface, so this is what puts the gap at
+            // 4: the bar used to be pulled down 8pt (`-8`) onto
+            // that surface, which made its straight bottom edge —
+            // and the hairline along it — land exactly on the
+            // composer's top edge, where the composer's corners
+            // have already curved inward. The strip was wider there
+            // than the surface beneath it, so the bottom edge hung
+            // over the rounded corners.
+            .padding(.bottom, -4)
+            // [T-panel-bottom-inset] Measured AFTER the -4,
+            // so the number the list reserves is the number
+            // this VStack actually gives the bar.
+            .measuredPanelHeight($todoPanelHeight,
+                                 latest: $latestTodoPanelH,
+                                 contentVisible: todoPanelVisible,
+                                 debounce: $todoPanelHeightDebounce)
+    }
+
+    /// The goal bar, same treatment and for the same reason.
+    private var measuredGoalPanel: some View {
+        DSHGoalPanelView()
+            .frame(maxWidth: maxContentWidth, alignment: .leading)
+            .padding(.horizontal, 12)
+            .padding(.bottom, -4)
+            .measuredPanelHeight($goalPanelHeight,
+                                 latest: $latestGoalPanelH,
+                                 contentVisible: goalPanelVisible,
+                                 debounce: $goalPanelHeightDebounce)
+    }
+
     ///    reserving them forever. `onDisappear` is the other half of that.
     private func measuredPanelHeight(_ height: Binding<CGFloat>,
                                      latest: Binding<CGFloat>,

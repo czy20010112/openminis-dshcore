@@ -2632,7 +2632,7 @@ extension BrowserUseManager: WKNavigationDelegate {
                 cont.resume(throwing: error)
             }
             if onWindow, let url {
-                logger.info("[Browser] reload_after_webcontent_terminate url=\(url.absoluteString.prefix(120)) \(self.presentationState)")
+                logger.info("[Browser] reload_after_webcontent_terminate url=\(url.prefix(120)) \(self.presentationState)")
                 self.loadRequest(
                     URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData,
                                timeoutInterval: Self.navigationTimeout),
