@@ -500,7 +500,7 @@ extension AIChatViewModel {
             if let mid = boundaryMsgId, rawMessages.contains(where: { $0.id == mid }) {
                 boundaryResolutionPath = (marker.firstKeptMessageId == mid) ? "firstKeptMessageId" : "boundaryMessageId"
             } else if isCompactAllShape {
-                // Leave boundaryMsgId nil so the compactAll branch (which
+                // Leave boundaryMsgId nil so the id-anchored branch (which
                 // resolves via lcmId + createdAt heal) takes over.
                 boundaryResolutionPath = "compactAll(skipLegacySortOrder)"
             } else {
@@ -514,151 +514,79 @@ extension AIChatViewModel {
             }
             logger.info("[Compact] boundary resolution path=\(boundaryResolutionPath) resolvedMsgId=\(boundaryMsgId?.prefix(8) ?? "nil")")
 
-            // --- UI graying: locate divider position. ---
+            // The one place the divider position is decided.
             //
-            // Resolution order:
-            //   1) compactAll marker (no firstKept/boundaryMessageId): use
-            //      lastCompactedMessageId. The kept tail (last N user turns +
-            //      tool/assistant follow-ups) sits AFTER the divider; only
-            //      messages up to and including lastCompactedMessageId are
-            //      grayed. If lcmId is missing (legacy marker), fall back to
-            //      "gray everything" so behavior matches old builds.
-            //   2) compactBefore marker (firstKept/boundaryMessageId set):
-            //      divider goes BEFORE that boundary message (boundary is
-            //      first kept/active).
-            //   3) Total failure: divider at top, no graying.
-            let insertIdx: Int
+            // [T-compact-marker-always-restored] The branch ladder that used to
+            // live here had "insertIdx = 0, grey nothing" as its last rung — a
+            // state indistinguishable from "the compaction record is gone",
+            // which is what the operator saw after reopening a conversation
+            // ("压缩的记录没了，压缩之前的对话的 toolcall 的条一个都没了"). The
+            // ladder is now a pure function (`DSHCompactBoundary.resolve`) that
+            // ALWAYS returns a decision, names the branch it took, and can be run
+            // against a fixture outside the app — so "no divider", "divider but
+            // nothing greyed" and "restored correctly" are three distinguishable,
+            // tested outcomes instead of one silent fallthrough.
+            let boundaryDecision = DSHCompactBoundary.resolve(
+                marker: DSHCompactMarkerFacts(
+                    version: marker.version,
+                    firstKeptMessageId: marker.firstKeptMessageId,
+                    boundaryMessageId: marker.boundaryMessageId,
+                    lastCompactedMessageId: marker.lastCompactedMessageId,
+                    firstKeptSortOrder: marker.firstKeptSortOrder,
+                    compactedCount: marker.compactedCount,
+                    createdAt: marker.createdAt
+                ),
+                rawRows: rawMessages.map { raw in
+                    DSHCompactRawRow(
+                        id: raw.id,
+                        sortOrder: raw.sortOrder,
+                        createdAt: raw.createdAt,
+                        role: raw.role.rawValue,
+                        hasText: raw.parts.contains {
+                            if case .text(let t) = $0 { return !t.isEmpty }
+                            return false
+                        },
+                        isToolResultOnly: raw.isToolResultOnly
+                    )
+                },
+                uiRows: loadedUIMessages.map { ui in
+                    DSHCompactUIRow(
+                        firstSortOrder: ui.sourceSortOrder,
+                        lastSortOrder: ui.lastSourceSortOrder,
+                        role: ui.role == .user ? "user" : (ui.role == .assistant ? "assistant" : "other"),
+                        hasText: !ui.content.isEmpty
+                    )
+                },
+                historyDbIds: Set(loadedHistory.compactMap { $0.dbMessageId })
+            )
+            let insertIdx = boundaryDecision.insertIndex
+            logger.info("[Compact] boundary decision path=\(boundaryDecision.resolutionPath) insertIdx=\(insertIdx)/\(loadedUIMessages.count) grays=\(boundaryDecision.greysAnything) anchor=\(boundaryDecision.resolvedAnchorId?.prefix(8) ?? "nil") healed=\(boundaryDecision.healedMarkerAnchorId?.prefix(8) ?? "nil")")
 
-            // ─── v2 markers (id-only model) ───────────────────────────
-            // Single source of truth: lastCompactedMessageId. Divider
-            // sits AFTER that UI row; everything before is grayed; the
-            // active anchor + new messages live below.
-            if marker.version >= 2 {
-                // Match by INCLUSIVE source-sort-order range. Phase 2 may have
-                // folded multiple raw assistant continuation rows into a
-                // single UI message — its sourceSortOrder is the FIRST raw's
-                // sortOrder, lastSourceSortOrder is the LAST. The marker's
-                // anchor can sit anywhere inside that range and still belongs
-                // to that UI message.
-                let lcmRaw = marker.lastCompactedMessageId.flatMap { id in rawMessages.first(where: { $0.id == id }) }
-                if let lcmId = marker.lastCompactedMessageId, let lcmRaw,
-                   let lcmUIIdx = Self.uiIndexForAnchorRaw(lcmRaw, in: loadedUIMessages) {
-                    insertIdx = lcmUIIdx + 1
-                    boundaryResolutionPath = "v2(lcmId)"
-                    logger.info("[Compact] Phase2.5 v2 OK: divider after UIIdx=\(lcmUIIdx) (lcmId=\(lcmId.prefix(8)) raw.sortOrder=\(lcmRaw.sortOrder), UI range=[\(loadedUIMessages[lcmUIIdx].sourceSortOrder ?? -1)…\(loadedUIMessages[lcmUIIdx].lastSourceSortOrder ?? -1)]) → insertIdx=\(insertIdx)/uiCount=\(loadedUIMessages.count)")
-                } else if lcmRaw == nil {
-                    // lcmId genuinely orphaned (id not in rawMessages at all).
-                    // Heal by createdAt. We deliberately do NOT heal when
-                    // lcmRaw is present but UI failed to map it — that's a
-                    // UI-fold edge case, not a corrupt marker, and rewriting
-                    // would silently shrink the grayed range.
-                    let historyDbIds = Set(loadedHistory.compactMap { $0.dbMessageId })
-                    let healAnchor = Self.anchorByCreatedAt(in: rawMessages, markerCreatedAt: marker.createdAt, historyDbIds: historyDbIds)
-                    let healUIIdx = healAnchor.flatMap { Self.uiIndexForAnchorRaw($0, in: loadedUIMessages) }
-                    logger.info("[Compact] Phase2.5 v2 self-heal attempt: rawCount=\(rawMessages.count) historyDbIdsCount=\(historyDbIds.count) markerCreatedAt=\(marker.createdAt) → healAnchor=\(healAnchor?.id.prefix(8) ?? "nil") (sortOrder=\(healAnchor?.sortOrder.description ?? "nil"), createdAt=\(healAnchor?.createdAt.description ?? "nil")) → healUIIdx=\(healUIIdx?.description ?? "nil")")
-                    if let healAnchor, let healUIIdx {
-                        insertIdx = healUIIdx + 1
-                        boundaryResolutionPath = "v2(orphan→healByCreatedAt)"
-                        logger.warning("[Compact] Phase2.5 v2 self-heal: orphaned lcmId=\(marker.lastCompactedMessageId?.prefix(8) ?? "nil") → newAnchor=\(healAnchor.id.prefix(8)) (sortOrder=\(healAnchor.sortOrder)) → UIIdx=\(healUIIdx) insertIdx=\(insertIdx)")
-                        let healed = Self.rewriteMarkerForHeal(marker, newAnchor: healAnchor, lastRaw: rawMessages.last)
-                        await ChatStore.shared.updateCompactMarker(healed)
-                        self.cachedLatestMarker = healed
-                        logger.info("[Compact] Phase2.5 v2 self-heal: marker rewritten id=\(marker.id.prefix(8)) lcmId=\(marker.lastCompactedMessageId?.prefix(8) ?? "nil")→\(healAnchor.id.prefix(8)) version=\(marker.version)→2")
-                    } else {
-                        // createdAt fallback failed (no qualifying raw predates
-                        // the marker). Place divider at top, no graying.
-                        logger.warning("[Compact] Phase2.5 v2 unresolved (heal failed): marker.id=\(marker.id.prefix(8)) lcmId=\(marker.lastCompactedMessageId?.prefix(8) ?? "nil") healAnchor=\(healAnchor?.id.prefix(8) ?? "nil") healUIIdx=\(healUIIdx?.description ?? "nil") — placing divider at top, no graying (use revert to clear)")
-                        insertIdx = 0
-                        boundaryResolutionPath = "v2(unresolved→noGray)"
-                    }
-                } else {
-                    // lcmRaw present but UI failed to map it (UI-fold edge
-                    // case, not a corrupt marker). Don't rewrite — that would
-                    // silently shrink grayed range. Place divider at top.
-                    logger.warning("[Compact] Phase2.5 v2 unresolved (UI miss with lcmRaw present): marker.id=\(marker.id.prefix(8)) lcmId=\(marker.lastCompactedMessageId?.prefix(8) ?? "nil") raw.sortOrder=\(lcmRaw?.sortOrder ?? -1) uiCount=\(loadedUIMessages.count) — placing divider at top, no graying")
-                    insertIdx = 0
-                    boundaryResolutionPath = "v2(uiMiss→noGray)"
-                }
-            } else if boundaryMsgId == nil && marker.firstKeptMessageId == nil && marker.boundaryMessageId == nil {
-                // compactAll marker — use lastCompactedMessageId for cutoff.
-                if let lcmId = marker.lastCompactedMessageId,
-                   let lcmRaw = rawMessages.first(where: { $0.id == lcmId }),
-                   let lcmUIIdx = loadedUIMessages.firstIndex(where: { $0.sourceSortOrder == lcmRaw.sortOrder }) {
-                    insertIdx = lcmUIIdx + 1
-                    boundaryResolutionPath = "compactAll(lastCompactedMessageId)"
-                    logger.info("[Compact] Phase2.5 compactAll OK: divider after UIIdx=\(lcmUIIdx) (lcmId=\(lcmId.prefix(8)) raw.sortOrder=\(lcmRaw.sortOrder)) → insertIdx=\(insertIdx)/uiCount=\(loadedUIMessages.count)")
-                } else {
-                    // Diagnostic: explain WHICH stage of resolution failed.
-                    // Used to silently slide divider to messages.count, manifesting
-                    // as "divider drifted to bottom + every UI message grayed."
-                    // Real-world cause (M-team session, marker created 2026-05-06):
-                    // marker.lcmId pointed at a row id that no longer exists in DB
-                    // — the underlying messages were re-indexed by a v1→v2 sync
-                    // migration, leaving the marker's lcmId orphaned.
-                    let lcmIdStr = marker.lastCompactedMessageId?.prefix(8) ?? "nil"
-                    let rawHit = marker.lastCompactedMessageId.flatMap { id in rawMessages.first(where: { $0.id == id }) }
-                    let stage: String
-                    if marker.lastCompactedMessageId == nil {
-                        stage = "marker.lcmId is nil"
-                    } else if rawHit == nil {
-                        stage = "lcmId not in rawMessages(count=\(rawMessages.count))"
-                    } else {
-                        stage = "lcmId raw.sortOrder=\(rawHit!.sortOrder) not matched by any UI msg.sourceSortOrder (loadedUI.count=\(loadedUIMessages.count))"
-                    }
-                    let uiTail = loadedUIMessages.suffix(5).enumerated().map { (off, m) -> String in
-                        let abs = loadedUIMessages.count - 5 + off
-                        return "[\(abs)] role=\(m.role) sortOrder=\(m.sourceSortOrder.map(String.init) ?? "nil")"
-                    }.joined(separator: " | ")
-                    logger.warning("[Compact] Phase2.5 compactAll DIAG: marker.id=\(marker.id.prefix(8)) lcmId=\(lcmIdStr) reason=\(stage) uiTail5=\(uiTail)")
-
-                    // Self-heal: recompute anchor by marker.createdAt — the
-                    // last raw message that predates the marker is the natural
-                    // replacement for the orphaned lcmId. On success, rewrite
-                    // the marker and upgrade to v2 so subsequent loads /
-                    // effectiveAgentHistory() resolve through the corrected id
-                    // without recomputing. Avoids the marker-position drift
-                    // bug where indexOfNthFromLastUserText slides forward as
-                    // new messages arrive.
-                    //
-                    // Anchor candidate is filtered to raw rows whose id is
-                    // present as a dbMessageId in agentHistory — otherwise the
-                    // rewrite would be cosmetic (effectiveAgentHistory still
-                    // can't resolve the new lcmId and stays in degraded mode).
-                    let historyDbIds = Set(loadedHistory.compactMap { $0.dbMessageId })
-                    let healAnchor = Self.anchorByCreatedAt(in: rawMessages, markerCreatedAt: marker.createdAt, historyDbIds: historyDbIds)
-                    let healUIIdx = healAnchor.flatMap { Self.uiIndexForAnchorRaw($0, in: loadedUIMessages) }
-                    logger.info("[Compact] Phase2.5 compactAll self-heal attempt: rawCount=\(rawMessages.count) historyDbIdsCount=\(historyDbIds.count) markerCreatedAt=\(marker.createdAt) → healAnchor=\(healAnchor?.id.prefix(8) ?? "nil") (sortOrder=\(healAnchor?.sortOrder.description ?? "nil"), createdAt=\(healAnchor?.createdAt.description ?? "nil")) → healUIIdx=\(healUIIdx?.description ?? "nil")")
-                    if let healAnchor, let healUIIdx {
-                        insertIdx = healUIIdx + 1
-                        boundaryResolutionPath = "compactAll(orphanedLcm→healByCreatedAt)"
-                        logger.warning("[Compact] Phase2.5 compactAll self-heal: orphaned lcmId → newAnchor=\(healAnchor.id.prefix(8)) (sortOrder=\(healAnchor.sortOrder)) → UIIdx=\(healUIIdx) insertIdx=\(insertIdx)")
-                        let healed = Self.rewriteMarkerForHeal(marker, newAnchor: healAnchor, lastRaw: rawMessages.last)
-                        await ChatStore.shared.updateCompactMarker(healed)
-                        self.cachedLatestMarker = healed
-                        logger.info("[Compact] Phase2.5 compactAll self-heal: marker rewritten id=\(marker.id.prefix(8)) lcmId=\(marker.lastCompactedMessageId?.prefix(8) ?? "nil")→\(healAnchor.id.prefix(8)) version=\(marker.version)→2")
-                    } else {
-                        // createdAt fallback also failed — walk back N user
-                        // turns as last resort. This is the legacy behavior
-                        // that drifts on every send but at least keeps SOME
-                        // active tail rather than graying everything.
-                        let anchor = Self.uiAnchorIndexForKeptTail(
-                            in: loadedUIMessages,
-                            keepUserTurns: Self.compactKeepRecentUserTurns
-                        )
-                        insertIdx = anchor
-                        boundaryResolutionPath = "compactAll(orphanedLcm→tailAnchor)"
-                        logger.warning("[Compact] Phase2.5 compactAll fallback: divider before UIIdx=\(anchor) (kept=\(loadedUIMessages.count - anchor) tail messages active, \(anchor) grayed)")
-                    }
-                }
-            } else if let mid = boundaryMsgId,
-               let bmRaw = rawMessages.first(where: { $0.id == mid }),
-               let bmUIIdx = loadedUIMessages.firstIndex(where: { $0.sourceSortOrder == bmRaw.sortOrder }) {
-                insertIdx = bmUIIdx  // divider BEFORE boundary (boundary message is first active)
-            } else {
-                // Total resolution failure: don't gray anything, but still show divider at top for the summary.
-                logger.warning("[Compact] UI boundary unresolved; placing divider at top. This marker will not render a grayed zone.")
-                insertIdx = 0
+            // A healed anchor has to reach the store, or the next launch repeats
+            // the same repair — and `effectiveAgentHistory()` keeps degrading to
+            // "keep the last N user turns" in the meantime (the marker's lcmId is
+            // the one it resolves the summary through).
+            if let healedId = boundaryDecision.healedMarkerAnchorId,
+               healedId != marker.lastCompactedMessageId,
+               let newAnchor = rawMessages.first(where: { $0.id == healedId }) {
+                let healed = Self.rewriteMarkerForHeal(marker, newAnchor: newAnchor, lastRaw: rawMessages.last)
+                await ChatStore.shared.updateCompactMarker(healed)
+                self.cachedLatestMarker = healed
+                logger.warning("[Compact] Phase2.5 healed marker rewritten id=\(marker.id.prefix(8)) lcmId=\(marker.lastCompactedMessageId?.prefix(8) ?? "nil")→\(healedId.prefix(8)) version=\(marker.version)→2")
             }
+
+            if !boundaryDecision.greysAnything && !loadedUIMessages.isEmpty {
+                // Not fatal, and no longer silent: this is the state that looks
+                // like "the compaction record is gone", so it names itself.
+                logger.warning("[Compact] Phase2.5 restored a divider that greys nothing (path=\(boundaryDecision.resolutionPath)) — the marker describes no position this transcript can resolve; use revert to clear it")
+            }
+
+            // The decision above replaced the old branch ladder that used to live
+            // here. Its last rung was "insertIdx = 0, grey nothing", which is the
+            // state the operator reported as "the compaction record is gone" —
+            // indistinguishable, from the transcript, from a marker that was never
+            // written. Position is now decided once, by a pure function that always
+            // returns an answer and names the branch it took.
 
             let compactedUICount = insertIdx
             logger.info("[Compact] UI: insertIdx=\(insertIdx) compactedUI=\(compactedUICount) totalUI=\(loadedUIMessages.count)")
