@@ -255,33 +255,83 @@ public final class DSHSession: @unchecked Sendable {
 
     /// The current surface: the log read through the active shadow set.
     ///
-    /// A summary entry replaces the range it shadows, so the shadowed entries
-    /// disappear and the summary takes their position. Applying shadows from the
-    /// oldest keeps later summaries positioned where they landed.
+    /// [T-dsh-surface-replace-position] A summary entry takes the POSITION of the
+    /// range it shadows — it is a replacement copy, not an append. That is the
+    /// semantics the surface fold implements upstream, and the difference is
+    /// visible rather than cosmetic:
+    ///
+    ///   * `foldSurface` applies a replace as
+    ///     `nodes.splice(startIdx, endIdx - startIdx + 1, seq)`
+    ///     (`packages/core/session/src/surface.ts`), i.e. the summary lands AT the
+    ///     range's first position; the compaction transaction appends its
+    ///     checkpoint with `surfaceOp: { op: 'replace', startSeq, endSeq }`
+    ///     (`packages/compaction/compaction-basic/src/region.ts`,
+    ///     `commitCompactionBody`). The log keeps the summary at the tail; the
+    ///     MODEL-VISIBLE surface puts it where the shadowed range was.
+    ///   * Appending it at the summary entry's own log position instead pins the
+    ///     summary to the end of the conversation on every read, so the messages
+    ///     after it (which the surface really does keep) sort BEFORE it. On the
+    ///     device this showed up as the summary being pushed down into the newest
+    ///     position on each of a turn's compactions, and as a compaction that
+    ///     re-eats the same entries: the next range always starts at surface node
+    ///     `firstIdx`, so it consumed the previous summary plus the tail again,
+    ///     which is why one long turn compacted five times for a ~34k-token step
+    ///     each time instead of once.
+    ///
+    /// The position is derived by replaying the log the way `foldSurface` reads it,
+    /// which is a single pass in seq order: each message-producing entry joins the
+    /// surface, and a summary takes the range it names out of the surface and puts
+    /// itself where the first of those entries was —
+    /// `nodes.splice(startIdx, endIdx - startIdx + 1, seq)`
+    /// (`packages/core/session/src/surface.ts`, `applySurfacePlan`).
+    ///
+    /// A replacement's own node stays in the surface, so a later range can name it.
+    /// Upstream's own regression test is exactly that case — two appends, a
+    /// replacement of node 0, then a replacement of nodes 2…1 — and the surface it
+    /// asserts is `[3]`: the second replacement swallowed the first summary as well
+    /// as the entry it replaced (`packages/core/session/tests/surface.spec.ts`,
+    /// "shares ordered entries and nested replacement ranges with foldSurface").
+    /// That is what keeps DSH's cumulative summaries one line.
+    ///
+    /// Walking the log in order rather than collecting replacements first is also
+    /// what makes the range lookup work: the entries a compaction replaces are
+    /// appended to the log before its own summary, so they are already in the
+    /// surface by the time the summary is reached.
     public func surface() -> [DSHLogEntry] {
         lock.lock()
         defer { lock.unlock() }
 
-        // Collect the effective shadow set. A later summary that overlaps an
-        // earlier one wins, because it describes the more recent state.
-        var shadowed = Set<Int>()
-        for entry in log where entry.shadows != nil {
-            guard let range = entry.shadows else { continue }
-            for seqValue in range.lowerBound.value...range.upperBound.value {
-                shadowed.insert(seqValue)
-            }
-        }
-
-        var surface: [DSHLogEntry] = []
+        // Replay the log in seq order, exactly as `foldSurface` does: a
+        // message-producing entry joins the surface, and a replacement takes the
+        // range it names out of the surface and puts itself where the first of those
+        // entries was — `nodes.splice(startIdx, endIdx - startIdx + 1, seq)`
+        // (`packages/core/session/src/surface.ts`, `applySurfacePlan`).
+        //
+        // A replacement's own node stays in the surface, so a later range can name it
+        // as well as the entries under it. That is what makes a cumulative summary
+        // one line: the newer range covers the previous summary's position, and the
+        // splice takes it out.
+        var nodes: [DSHLogEntry] = []
         for entry in log {
-            if shadowed.contains(entry.seq.value) {
-                // The shadowed range is represented by its summary, which sits
-                // at the summary entry's own position.
+            guard let range = entry.shadows else {
+                nodes.append(entry)
                 continue
             }
-            surface.append(entry)
+            // Both ends of the range, by identity. A range is only ever selected from
+            // the surface it is compacting, so both are present in every real
+            // compaction; a range that names a position this surface does not hold is
+            // dropped rather than placed, because a summary pinned anywhere but where
+            // its range was is the defect this method exists to remove.
+            // [T-dsh-compact-no-range]
+            guard let startIdx = nodes.firstIndex(where: { $0.seq == range.lowerBound }),
+                  let endIdx = nodes.firstIndex(where: { $0.seq == range.upperBound }) else {
+                continue
+            }
+            let from = min(startIdx, endIdx)
+            let to = max(startIdx, endIdx)
+            nodes.replaceSubrange(from...to, with: [entry])
         }
-        return surface
+        return nodes
     }
 
     /// The surface's messages, ready to project into a provider request.

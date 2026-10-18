@@ -2021,7 +2021,19 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
 
     /// Session ID for persistence integration. Set by the view on appear.
     var sessionId: String? {
-        didSet { browserTabPool.sessionId = sessionId }
+        didSet {
+            browserTabPool.sessionId = sessionId
+            // [T-ctx-measured 2026-10-18] The one choke point every promotion path
+            // flows through (loadSession, ensureSessionReturningId, the RPC and
+            // intent entry points), so the context readouts' session binding moves
+            // here and no caller has to remember it. Both stores are
+            // process-global: without this a new chat opened on the conversation
+            // it replaced — the reported "a fresh chat already shows a used
+            // figure" — and the sheet's rows could be paired with another
+            // session's provider receipt. Binding drops the previous session's
+            // measured occupancy, which is what makes "no figure yet" reachable.
+            DSHContextBreakdownStore.shared.bind(sessionKey: sessionId)
+        }
     }
 
     /// The draft ID assigned by the parent view (e.g. "__new__<UUID>").
@@ -2099,10 +2111,34 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
 
     /// A compaction the driver reported that still has to reach the store.
     ///
-    /// Resolved synchronously in `didCompact` (the anchor's database id only
-    /// exists in `agentHistory`, which the end-of-turn reconcile replaces) and
+    /// Captured synchronously in `didCompact` (the shadowed rows' database ids
+    /// only exist in `agentHistory`, which the end-of-turn reconcile replaces) and
     /// written at the end of the turn, because the store is an actor.
-    var dshPendingMarker: (anchorId: String, summary: String, count: Int)?
+    ///
+    /// [T-dsh-compact-anchor-walkback] The payload carries the whole shadowed span
+    /// as an ordered candidate list rather than one pre-resolved row id: the range
+    /// reaches into rows this turn has not persisted yet, so which row the marker
+    /// can anchor on is only decidable after the persistence pass. See
+    /// `dshCompactAnchor`.
+    struct DSHPendingCompaction {
+
+        /// One row the compaction shadowed, with the database id it had when the
+        /// compaction landed (nil for a row not yet written).
+        struct Candidate {
+            let seq: Int
+            let dbMessageId: String?
+        }
+
+        /// Newest first — the order the anchor walk-back reads.
+        let candidates: [Candidate]
+        let summary: String
+        /// How many surface entries the summary shadows.
+        let count: Int
+        /// Seq of the newest shadowed entry, for the transcript divider's position.
+        let lastShadowedSeq: Int
+    }
+
+    var dshPendingMarker: DSHPendingCompaction?
 
     /// Index of the assistant message the driver is streaming into, or -1 when
     /// no turn is streaming.
@@ -5033,9 +5069,23 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
         self.committedBlockCount = committedBlockCount
         var turnUsage = TokenUsage()
 
-        // Log context baseline for offload diagnostics
-        let estimatedTokens = estimateContextTokens()
-        logger.info("📐 Context baseline: agentHistory=\(self.agentHistory.count) msgs, estimated ~\(estimatedTokens) tokens, turnUsage.latestContextTokens=\(turnUsage.latestContextTokens) (model window: \(ProviderConfigStore.shared.entry(for: entry.id)?.model.contextWindowTokens ?? 0))")
+        // Log context baseline for offload diagnostics.
+        //
+        // `DSHContextUsageStore` owns the measured figure and the growth baseline;
+        // this line reports both kinds and names them, because the legacy loop is
+        // the one call site where a reader has no other way to tell them apart.
+        DSHContextUsageStore.shared.bind(sessionKey: sessionId)
+        if let envelope = DSHContextBreakdownStore.shared.latest?.estimatedTotal, envelope > 0 {
+            // This run is about to assemble a request over the surface as it
+            // stands now, so the measured record's growth baseline moves to that
+            // envelope. Without it the projection would later count everything
+            // appended since the last report as growth twice: once by the
+            // provider in its own count, and again as this difference.
+            DSHContextUsageStore.shared.rebase(envelopeTokens: envelope)
+        }
+        let contextTokens = estimateContextTokens("runAgentLoop(baseline)")
+        let measuredTokens = DSHContextUsageStore.shared.measured?.promptTokens
+        logger.info("📐 Context baseline: agentHistory=\(self.agentHistory.count) msgs, occupancy=\(contextTokens) (measured provider count when one exists for this session; this app's character lower bound otherwise — 2.44× low on the 2026-10-18 log), measuredPrompt=\(measuredTokens.map { String($0) } ?? "nil"), turnUsage.latestContextTokens=\(turnUsage.latestContextTokens) (model window: \(ProviderConfigStore.shared.entry(for: entry.id)?.model.contextWindowTokens ?? 0))")
 
         // Safety: scan the entire agentHistory for assistant messages with tool_use
         // that lack corresponding tool_result messages. This can happen when:
@@ -5744,10 +5794,12 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
             // report, and the context ring plus the panel behind it read the row:
             // stamping once at the end left both describing the PREVIOUS turn for
             // the whole of the current one. The store takes the same value, so the
-            // panel's cache row moves with each response too.
+            // panel's cache row moves with each response too — and since
+            // 2026-10-18 also the measured context occupancy, which is the only
+            // figure the panel is allowed to publish as "used".
             if msgIdx >= 0, msgIdx < messages.count {
                 messages[msgIdx].usage = turnUsage
-                DSHContextBreakdownStore.shared.recordUsage(turnUsage)
+                DSHContextBreakdownStore.shared.recordUsage(turnUsage, sessionKey: sessionId)
             }
 
             // Track session-level token stats

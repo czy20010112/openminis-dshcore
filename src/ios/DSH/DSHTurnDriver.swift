@@ -127,6 +127,18 @@ public struct DSHTurnDriverConfig: Sendable {
     /// lexicographic order.
     public var toolOrder: [String]?
 
+    /// The conversation this turn belongs to, or nil for a draft with no id yet.
+    ///
+    /// The context readout stores (`DSHContextBreakdownStore`,
+    /// `DSHContextUsageStore`) are process-global and the app switches
+    /// conversations inside one process, so every figure they hold has to carry
+    /// its owner. Without this a new chat opened on the previous chat's measured
+    /// occupancy, and the sheet's rows could be paired with another session's
+    /// provider receipt. A field rather than a read of some ambient "current
+    /// session", because the driver is built per turn and must not observe a
+    /// switch that happened after it was constructed.
+    public var sessionKey: String?
+
     /// Backoff before retrying a retryable stream failure. Empty disables retry.
     ///
     /// The driver owns the loop and the host owns transport policy, but the
@@ -157,6 +169,7 @@ public struct DSHTurnDriverConfig: Sendable {
         compactionRetainTokensOverride: Int? = nil,
         autoCompactionEnabled: Bool = true,
         toolOrder: [String]? = nil,
+        sessionKey: String? = nil,
         memoryEnabled: Bool = true,
         streamRetryDelays: [Int] = [3, 5, 10, 15, 30]
     ) {
@@ -181,6 +194,7 @@ public struct DSHTurnDriverConfig: Sendable {
         }
         self.autoCompactionEnabled = autoCompactionEnabled
         self.toolOrder = toolOrder
+        self.sessionKey = sessionKey
         self.memoryEnabled = memoryEnabled
         self.streamRetryDelays = streamRetryDelays.filter { $0 > 0 }
     }
@@ -237,6 +251,17 @@ public final class DSHTurnDriver {
         let reservedCompletionTokens: Int
         /// Surface tokens the envelope was measured with.
         let surfaceTokens: Int
+        /// Whether `promptTokens` is the provider's own count.
+        ///
+        /// A diagnostic fact, not a decision input: the threshold is compared
+        /// against the same number either way, because an unpriced envelope is
+        /// the only thing a first step has and refusing to gate on it would let
+        /// that step overflow. What it changes is what the log may CLAIM. The
+        /// 2026-10-18 log printed `measured=192122` for a number this app had
+        /// computed, in a message set whose every other figure it had also
+        /// invented — which is how a 2.44×-low estimate came to be read as the
+        /// engine's own measurement.
+        let isProviderCount: Bool
     }
 
     /// Provider-confirmed overflow recoveries spent in this turn.
@@ -321,6 +346,16 @@ public final class DSHTurnDriver {
 
         let turn = currentTurn
         var step = 0
+
+        // The context readouts are process-global and the app switches
+        // conversations inside one process, so the binding moves at the start of
+        // every turn — the earliest point at which this driver knows which
+        // conversation it is about to spend. A value that outlived its session is
+        // worse than no value: without this, a chat that has sent nothing yet
+        // renders its predecessor's measured occupancy as its own, which is the
+        // reported "a brand-new chat already shows a used figure". The binding is
+        // idempotent, so a turn that did not move conversations costs nothing.
+        DSHContextBreakdownStore.shared.bind(sessionKey: config.sessionKey)
 
         // Counters are per turn, so a call repeated across turns is not a loop.
         gate.reset()
@@ -669,6 +704,10 @@ public final class DSHTurnDriver {
 
         let surfaceNow = DSHTokenEstimate.total(session.surface())
         let measured = price.promptTokens + max(0, surfaceNow - price.surfaceTokens)
+        // Which kind of number `measured` is, captured before the retry loop can
+        // re-price it: every line of this decision reports the same provenance.
+        let measuredSource: DSHContextUsageSource =
+            price.isProviderCount ? .providerMeasured : .requestEnvelopeEstimate
 
         let spec: DSHCompactionSpec
         do {
@@ -713,12 +752,19 @@ public final class DSHTurnDriver {
             switch result {
             case .success(let outcome):
                 let position = "turn=\(turn) step=\(step)"
-                let tokens = "before=\(outcome.beforeTokens) after=\(outcome.afterTokens)"
+                // `before`/`after` are this app's own surface estimates — the
+                // compaction's own outcome, measured by `DSHTokenEstimate` on both
+                // sides of the shadow — so they are labelled as estimates rather
+                // than printed beside `measured=` as if they were the same kind of
+                // number. They were read as the engine's counts for a round: a
+                // 262k-window session logged `before=77655 after=43779` while the
+                // provider was charging 189,546 for the same request.
+                let tokens = "beforeEst=\(outcome.beforeTokens) afterEst=\(outcome.afterTokens)"
                 let shadowed = outcome.range.shadowedSeqs.count
                 AppLogger(category: "CompactDiag").warning(
                     "[CompactDiag] mid-turn compaction at \(position): \(tokens) "
                     + "shadowed=\(shadowed) reason=pressure "
-                    + specFacts(spec, measured: measured)
+                    + specFacts(spec, measured: measured, source: measuredSource)
                     + " attempt=\(attempt) reserved=\(spec.reservedCompletionTokens)"
                 )
                 delegate?.driver(self, didCompact: outcome)
@@ -729,7 +775,8 @@ public final class DSHTurnDriver {
                 lastPricedRequest = PricedRequest(
                     promptTokens: after,
                     reservedCompletionTokens: spec.reservedCompletionTokens,
-                    surfaceTokens: DSHTokenEstimate.total(session.surface())
+                    surfaceTokens: DSHTokenEstimate.total(session.surface()),
+                    isProviderCount: false
                 )
             case .failure(let error):
                 // Reported once per reason per turn: a surface that is over
@@ -744,7 +791,7 @@ public final class DSHTurnDriver {
                     let entries = session.surfaceCount
                     AppLogger(category: "CompactDiag").warning(
                         "[CompactDiag] mid-turn compaction skipped at \(position): "
-                        + "reason=\(reason) \(specFacts(spec, measured: measured)) "
+                        + "reason=\(reason) \(specFacts(spec, measured: measured, source: measuredSource)) "
                         + "surfaceEntries=\(entries)"
                     )
                 }
@@ -755,11 +802,18 @@ public final class DSHTurnDriver {
         let attempts = spec.compactionRetries + 1
         AppLogger(category: "CompactDiag").warning(
             "[CompactDiag] mid-turn compaction still above threshold at turn=\(turn) step=\(step) "
-            + "after \(attempts) attempt(s): \(specFacts(spec, measured: measured))"
+            + "after \(attempts) attempt(s): \(specFacts(spec, measured: measured, source: measuredSource))"
         )
     }
 
     /// The budget facts one compaction line reports.
+    ///
+    /// `measured` is the priced request envelope the threshold was compared
+    /// against, and it is exactly that: the provider's own count once a response
+    /// has reported one this turn, and this app's estimate of the same envelope
+    /// before that (`PricedRequest.isProviderCount`). The suffix says which, so a
+    /// log reader never has to guess — that guess is what made a 2.44×-low
+    /// estimate look like the engine's measurement.
     ///
     /// A named piece rather than one long `+` chain: a single chain holding a
     /// dozen interpolations over mixed `Int`/`Double`/`String` operands makes the
@@ -770,9 +824,15 @@ public final class DSHTurnDriver {
     /// - Parameters:
     ///   - spec: the resolved trigger budget.
     ///   - measured: the priced envelope the threshold was compared against.
+    ///   - source: whether that envelope carries a provider count.
     /// - Returns: one line's worth of threshold, window, and retention facts.
-    private func specFacts(_ spec: DSHCompactionSpec, measured: Int) -> String {
-        "measured=\(measured) threshold=\(spec.thresholdTokens)"
+    private func specFacts(
+        _ spec: DSHCompactionSpec,
+        measured: Int,
+        source: DSHContextUsageSource = .requestEnvelopeEstimate
+    ) -> String {
+        let kind = source == .providerMeasured ? "provider" : "estimated"
+        return "measured=\(measured)(\(kind)) threshold=\(spec.thresholdTokens)"
             + " window=\(spec.contextWindow) retain=\(spec.retainTokens)"
     }
 
@@ -836,7 +896,7 @@ public final class DSHTurnDriver {
         switch result {
         case .success(let outcome):
             let position = "turn=\(turn) step=\(step)"
-            let tokens = "before=\(outcome.beforeTokens) after=\(outcome.afterTokens)"
+            let tokens = "beforeEst=\(outcome.beforeTokens) afterEst=\(outcome.afterTokens)"
             let shadowed = outcome.range.shadowedSeqs.count
             let attempt = overflowRetries + 1
             let limits = config.compactionPolicy.maxOverflowRetries
@@ -853,7 +913,7 @@ public final class DSHTurnDriver {
             let tokens = surfaceBefore
             AppLogger(category: "CompactDiag").warning(
                 "[CompactDiag] context-overflow recovery not possible at \(position): "
-                + "reason=\(reason) surfaceTokens=\(tokens) failure=\(code)"
+                + "reason=\(reason) surfaceTokensEst=\(tokens) failure=\(code)"
             )
         }
 
@@ -897,17 +957,28 @@ public final class DSHTurnDriver {
         return PricedRequest(
             promptTokens: promptTokens,
             reservedCompletionTokens: config.maxTokens,
-            surfaceTokens: surfaceTokens
+            surfaceTokens: surfaceTokens,
+            isProviderCount: false
         )
     }
 
     /// Replace the estimated envelope with the prompt tokens the provider counted.
     ///
-    /// The estimator is character-proportional and excludes none of the request,
-    /// but it cannot know how an adapter tokenizes: CJK text and JSON schema
-    /// documents are both underpriced by any characters-per-token ratio. The
-    /// provider's own count has neither problem, so it supersedes the estimate
-    /// whenever a request reports one — which is also what DSH's meter does.
+    /// The estimator is character-proportional, and it cannot know how an adapter
+    /// tokenizes: CJK prose, tool JSON and base64 payloads are all underpriced by
+    /// any characters-per-token ratio, and on the 2026-10-18 device log the
+    /// understatement was a factor of 2.44 (`prompt=189546` against the app's own
+    /// 77,655 for the same turn). The provider's own count has neither problem, so
+    /// it supersedes the estimate whenever a request reports one — which is also
+    /// what DSH's meter does.
+    ///
+    /// This is also the only writer of the app's MEASURED context figure
+    /// (`DSHContextUsageStore`), on either loop: every readout of "how full is the
+    /// context" reads what this records, and nothing derives the figure a second
+    /// way. It is written here rather than in the delegate's usage callback
+    /// because here the envelope the provider priced is still in hand
+    /// (`built.surfaceTokens`), which is what the growth projection needs as its
+    /// baseline.
     ///
     /// - Parameter usage: usage accumulated for the request that just finished.
     private func recordProviderPricing(_ usage: DSHTokenUsage) {
@@ -919,7 +990,13 @@ public final class DSHTurnDriver {
         lastPricedRequest = PricedRequest(
             promptTokens: reported,
             reservedCompletionTokens: built.reservedCompletionTokens,
-            surfaceTokens: built.surfaceTokens
+            surfaceTokens: built.surfaceTokens,
+            isProviderCount: true
+        )
+        DSHContextUsageStore.shared.record(
+            promptTokens: reported,
+            envelopeTokens: built.surfaceTokens,
+            sessionKey: config.sessionKey
         )
     }
 
@@ -1090,7 +1167,8 @@ public final class DSHTurnDriver {
             surface: session.surface(),
             sectionNames: assembly.sections.filter { !$0.text.isEmpty }.map(\.name),
             model: provider.model.id,
-            provider: provider.name
+            provider: provider.name,
+            sessionKey: config.sessionKey
         )
 
         // Price the envelope here, where all three of its inputs are in hand at
@@ -1109,8 +1187,16 @@ public final class DSHTurnDriver {
                 + DSHTokenEstimate.tokens(forToolSchemas: schemas)
                 + pricedSurface,
             reservedCompletionTokens: config.maxTokens,
-            surfaceTokens: pricedSurface
+            surfaceTokens: pricedSurface,
+            isProviderCount: false
         )
+        // The measured context record's growth baseline moves to the envelope just
+        // assembled. This is the only place that knows the envelope the NEXT
+        // receipt will cover, so it is the only place that can stop the projection
+        // from counting a step's appends twice: the response's own tokens land on
+        // the surface before its report arrives, and that report's count already
+        // includes them.
+        DSHContextUsageStore.shared.rebase(envelopeTokens: pricedSurface)
 
         return LoopRequest(
             messages: requestMessages,
