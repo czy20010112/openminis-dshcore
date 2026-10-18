@@ -343,8 +343,10 @@ public final class DSHSystemPrompt: @unchecked Sendable {
     /// a `memory_write`. A deployment therefore declares which of its sections
     /// carry volatile state and hands the same assembly to both callers: the
     /// volatile text goes into `renderVolatileSections`, which the agent loop
-    /// admits as a message *before the turn's own user message*, exactly where
-    /// upstream DSH admits its runtime-context snapshot
+    /// admits as a message at the head of the conversation — an index the
+    /// conversation's own growth cannot move, and the position this text held
+    /// before P1-2, when it was part of the prompt. Upstream DSH holds the same
+    /// invariant by admitting its runtime-context snapshot once and never moving it
     /// (`packages/core/agent-loop/src/runtime-context.ts`). The model reads the
     /// same text; only the message carrying it changed.
     public static func renderPrompt(excludingVolatileSectionsOf assembly: DSHPromptAssembly) -> String {
