@@ -1155,12 +1155,18 @@ struct AIChatView: View {
         // a request is in flight the app's own enveloped estimate — labelled as
         // an estimate, which `.reported` alone cannot say.
         .sheet(isPresented: $showContextPanel) {
-            DSHContextPanel(reading: DSHContextReading.display(
-                messages: cached.vm.messages,
-                window: cached.vm.currentModelContextWindow,
-                sessionId: cached.vm.sessionId,
+            DSHContextPanel(
+                reading: DSHContextReading.display(
+                    messages: cached.vm.messages,
+                    window: cached.vm.currentModelContextWindow,
+                    sessionId: cached.vm.sessionId,
+                    requestInFlight: cached.vm.isProcessing
+                ),
+                // The sheet's own rows are the last request this session ASSEMBLED,
+                // so the heading has to know whether that is the request being sent
+                // right now or one this session has already finished.
                 requestInFlight: cached.vm.isProcessing
-            ))
+            )
             .presentationDetents([.height(DSHContextPanel.sheetHeight), .large])
         }
         // [T-tools-todo-plan] The plan review `exit_plan_mode` is suspended on.

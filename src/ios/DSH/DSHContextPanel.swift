@@ -62,6 +62,28 @@
 //  no cache buckets the row is absent rather than reading 0%: silence about the
 //  cache is not a cache miss.
 //
+//  WHICH REQUEST the rows are about is said in words, because the sheet shows two
+//  different ones. While a turn runs, the assembly the rows were measured from is
+//  the request being assembled and sent — "This request, …". Once it has finished,
+//  it is the newest request this session completed — "Last request, …", and calling
+//  that "this request" is what the operator reported as wrong. The
+//  measured/estimated word after the comma stays `isMeasured`'s business and does
+//  not change with the scope; the scope comes from the turn state the presenter
+//  hands the sheet, never from a guess about the numbers.
+//
+//  The rows also SURVIVE the receipt that follows them. Both readout stores are
+//  process-global and both carry a session key, and the driver's config names no
+//  session — the one place building it passes none — so every assembly arrives
+//  UNNAMED. An unnamed report is attributed to the session the app has bound
+//  (`DSHContextBreakdownStore.boundSessionKey`, stated by `bind(sessionKey:)`,
+//  which every promotion path reaches through `AIChatViewModel.sessionId`), and a
+//  report naming a DIFFERENT session moves the binding and drops the previous
+//  conversation's rows and receipt. Stored under the nil it arrived with, the
+//  assembly was refused by every reader (they compare it against the session id)
+//  and then wiped by the response that followed it: the sheet printed "no request
+//  has been assembled yet in this session" over a request it had assembled seconds
+//  earlier, with the cache-hit row gone for the same reason.
+//
 //  The denominator is the model's WINDOW (`AIChatViewModel
 //  .currentModelContextWindow`), not the compaction pressure threshold. The
 //  threshold is a policy of ours — 80% of the window on the iOS 26 line — and a
@@ -472,6 +494,20 @@ struct DSHContextBreakdown: Equatable {
         isMeasured ? "This request, measured" : "This request, estimated"
     }
 
+    /// The same pair of words for a request that has already been answered:
+    /// "Last request, estimated" · "Last request, measured".
+    ///
+    /// The sheet describes two different requests in its two states and now says
+    /// which. While a turn runs, the rows are the request being assembled and
+    /// sent — `sectionTitle` above. Once it has finished they are the newest
+    /// request this session completed, and "This request, estimated" over them
+    /// reads as an answer about the request in flight: the operator reported
+    /// exactly that ("本次请求（估算）" over the previous request's rows).
+@MainActor
+    var lastSectionTitle: String {
+        isMeasured ? "Last request, measured" : "Last request, estimated"
+    }
+
     /// "Total (estimated)" · "Total (measured)".
 @MainActor
     var totalLabel: String {
@@ -521,6 +557,21 @@ final class DSHContextBreakdownStore: ObservableObject {
     /// model call of an agent loop rather than only at the end of the turn.
     @Published private(set) var latestUsage: DSHUsageReading?
 
+    /// The conversation the app has bound these readouts to, as the last
+    /// `bind(sessionKey:)` stated — the same value the measured store holds.
+    ///
+    /// It exists so a report that names NO session can be attributed to the one
+    /// the app is showing. The driver's config carries a `sessionKey` that the
+    /// single place building it passes no value for, so on the device path every
+    /// assembly arrives unnamed while the app has already bound the readouts to
+    /// the conversation on screen (`AIChatViewModel.sessionId`'s own choke point).
+    /// Stored under the nil it arrived with, such a record is refused by every
+    /// reader — they compare it against the session id — and the receipt that
+    /// follows it wipes it, which is how the sheet came to print "no request has
+    /// been assembled yet in this session" over a request it had assembled
+    /// seconds earlier, with the cache-hit row gone for the same reason.
+    private(set) var boundSessionKey: String?
+
     private init() {}
 
     /// Record one assembled request.
@@ -538,9 +589,12 @@ final class DSHContextBreakdownStore: ObservableObject {
     /// that append twice.
     ///
     /// - Parameters:
-    ///   - sessionKey: the conversation being assembled for. A change of
-    ///     conversation drops the previous one's receipt here as well, so a
-    ///     value from another chat cannot be paired with this request's rows.
+    ///   - sessionKey: the conversation being assembled for, or nil when the
+    ///     caller names none — `record` then attributes it to the bound session
+    ///     (`boundSessionKey`), which is the same conversation the sheet is
+    ///     showing. A change of conversation drops the previous one's receipt here
+    ///     as well, so a value from another chat cannot be paired with this
+    ///     request's rows.
     func record(
         systemPrompt: String,
         tools: [DSHToolSchema],
@@ -550,6 +604,11 @@ final class DSHContextBreakdownStore: ObservableObject {
         provider: String,
         sessionKey: String?
     ) {
+        // A report that names no session is attributed to the bound one rather
+        // than stored unnamed: an unnamed record is refused by every reader and
+        // is then dropped by the receipt that follows it, which is what emptied
+        // this sheet's rows. See `boundSessionKey`.
+        let owner = sessionKey ?? boundSessionKey
         let next = DSHContextBreakdown(
             systemPromptTokens: DSHTokenEstimate.tokens(forText: systemPrompt),
             systemPromptChars: systemPrompt.count,
@@ -560,14 +619,23 @@ final class DSHContextBreakdownStore: ObservableObject {
             sectionNames: sectionNames,
             model: model,
             provider: provider,
-            sessionKey: sessionKey,
+            sessionKey: owner,
             capturedAt: Date()
         )
-        let moved = latest?.sessionKey != sessionKey
+        let moved = latest?.sessionKey != owner
         if next != latest { latest = next }
         if moved {
             if latestUsage != nil { latestUsage = nil }
         }
+        // Deliberately the RAW argument and not `owner`. This call lets go of the
+        // previous receipt, and the line below re-bases what is left — but the
+        // measured figure's OWN identity is that same baseline field
+        // (`measuredEnvelopeTokens`, which `isMeasured` compares against this
+        // assembly's total). Keeping the receipt alive across an assembly would
+        // therefore make every later assembly read as "measured" when the provider
+        // had priced an earlier, smaller request — a word that lies is worse than
+        // the receipt being absent. Nothing goes blank either way: the header falls
+        // back to the durable receipt on the newest assistant row.
         DSHContextUsageStore.shared.bind(sessionKey: sessionKey)
         DSHContextUsageStore.shared.rebase(envelopeTokens: next.estimatedTotal)
     }
@@ -590,10 +658,23 @@ final class DSHContextBreakdownStore: ObservableObject {
     /// one write, two readers, no second derivation of the number.
     ///
     /// - Parameter usage: the response's own accounting.
-    /// - Parameter sessionKey: the conversation the response belongs to. A
-    ///   response for a session the measured store is not bound to is refused
-    ///   there (it belongs to the chat the user just left).
+    /// - Parameter sessionKey: the conversation the response belongs to, or nil
+    ///   when the caller names none — attributed to the bound session exactly as
+    ///   `record` attributes an unnamed assembly. A response for a session the
+    ///   measured store is not bound to is refused there (it belongs to the chat
+    ///   the user just left).
     func recordUsage(_ usage: TokenUsage, sessionKey: String?) {
+        let owner = sessionKey ?? boundSessionKey
+
+        // Bind BEFORE the receipt is stored, not after it. A bind that moves the
+        // session drops the previous conversation's values, so a receipt stored
+        // first was wiped by the very call that accepted its session: the
+        // cache-hit row disappeared after every response, and the rows above it
+        // went with it. A report from the legacy agent loop — which assembles no
+        // DSH request and therefore records no breakdown — still counts as this
+        // session's measurement rather than being dropped for want of an owner.
+        bind(sessionKey: owner)
+
         let next = usage.cacheReported && usage.latestContextTokens > 0
             ? DSHUsageReading(
                 promptTokens: usage.latestContextTokens,
@@ -602,36 +683,41 @@ final class DSHContextBreakdownStore: ObservableObject {
             : nil
         if next != latestUsage { latestUsage = next }
 
-        // Bind first, so a report from the legacy agent loop — which assembles no
-        // DSH request and therefore records no breakdown — still counts as this
-        // session's measurement rather than being dropped for want of an owner.
-        // The binding is idempotent and only wipes a value that belonged to
-        // another conversation.
-        bind(sessionKey: sessionKey)
-
         // The measured figure and its growth baseline are `DSHContextUsageStore`'s
         // to own: this method reports ONE receipt and nothing else, and the
         // baseline is re-based by `record()` on the next assembly, which is the
         // only place that knows the envelope the receipt covers.
         DSHContextUsageStore.shared.record(
             promptTokens: usage.latestContextTokens,
-            envelopeTokens: latest?.sessionKey == sessionKey ? (latest?.estimatedTotal ?? 0) : 0,
-            sessionKey: sessionKey
+            envelopeTokens: latest?.sessionKey == owner ? (latest?.estimatedTotal ?? 0) : 0,
+            sessionKey: owner
         )
     }
 
-    /// Drop the measurement, so a later session cannot open the panel on the
-    /// previous session's request.
+    /// Point every readout at a conversation, dropping whatever belonged to
+    /// another one — so a later session cannot open the panel on the previous
+    /// session's request.
     ///
-    /// - Parameter sessionKey: the conversation to bind to, or nil to unbind.
+    /// - Parameter sessionKey: the conversation the next readout describes, or
+    ///   nil to leave the binding where it is. nil states no session; it is not
+    ///   the statement "this conversation has no id". The driver's turn start
+    ///   binds exactly that value — the config it runs on carries no session key —
+    ///   and honouring it as an unbind dropped the binding the app had just set,
+    ///   after which every assembly of that turn was stored unnamed and then
+    ///   thrown away by the response that followed it. A NAMED move is what moves
+    ///   the binding.
+    ///
     ///   Binding is what makes the previous session's value unusable: the
     ///   measured store drops its own value on a move, and a breakdown stamped
     ///   with another key is refused by every reader. `DSHContextUsageStore` is
     ///   the authority for the binding; this only follows it so the sheet's rows
-    ///   cannot outlive the figure above them.
+    ///   cannot outlive the figure above them. This is also the statement that
+    ///   names the owner of a later unnamed report (`boundSessionKey`).
     func bind(sessionKey: String?) {
-        DSHContextUsageStore.shared.bind(sessionKey: sessionKey)
-        if latest?.sessionKey != sessionKey {
+        let effective = sessionKey ?? boundSessionKey
+        DSHContextUsageStore.shared.bind(sessionKey: effective)
+        boundSessionKey = effective
+        if latest?.sessionKey != effective {
             if latest != nil { latest = nil }
             if latestUsage != nil { latestUsage = nil }
         }
@@ -791,6 +877,12 @@ struct DSHContextPanel: View {
     /// re-evaluates this on every change it observes, so a running turn updates
     /// it.
     var reading: DSHContextReading?
+    /// Whether a turn is running. The rows below then describe the request being
+    /// assembled and sent; once it has finished they describe the newest request
+    /// this session completed. Snapshot at presentation for the same reason
+    /// `reading` is: the heading must not describe a different request than the
+    /// rows under it.
+    var requestInFlight: Bool = false
     @ObservedObject private var breakdowns = DSHContextBreakdownStore.shared
     @Environment(\.dismiss) private var dismiss
 
@@ -892,13 +984,27 @@ struct DSHContextPanel: View {
 
     // MARK: Rows
 
+    /// Which request the rows below describe.
+    ///
+    /// The scope words come from the turn state and the measured/estimated words
+    /// from the breakdown's own record of what a provider priced — two different
+    /// questions, so neither is inferred from the other. While a turn runs, the
+    /// assembly the rows were measured from is the request being sent; once it
+    /// has finished, it is the newest one this session completed, and calling
+    /// that "this request" is what the operator reported as wrong.
+    private var sectionHeading: String {
+        guard let breakdown = breakdowns.latest else { return "This request, estimated" }
+        return requestInFlight ? breakdown.sectionTitle : breakdown.lastSectionTitle
+    }
+
     private var components: some View {
         VStack(alignment: .leading, spacing: 10) {
             // "estimated" while the envelope has not been priced by a provider,
             // "measured" once it has — one word that tells the reader whether the
             // rows below are what the model was charged or what this app thinks it
-            // will be charged.
-            Text(LocalizedStringKey(breakdowns.latest?.sectionTitle ?? "This request, estimated"))
+            // will be charged. The scope word in front of it is the turn state:
+            // see `sectionHeading`.
+            Text(LocalizedStringKey(sectionHeading))
                 .font(Font(AppFont.ui(11, weight: .semibold, category: .ui)))
                 .foregroundStyle(.secondary)
 

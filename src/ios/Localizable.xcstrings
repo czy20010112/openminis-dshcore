@@ -265288,6 +265288,232 @@
         }
       }
     },
+                                "Last request, measured" : {
+                                  "extractionState" : "manual",
+                                  "localizations" : {
+                                    "en" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "Last request, measured"
+                                      }
+                                    },
+                                    "de" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "Letzte Anfrage, gemessen"
+                                      }
+                                    },
+                                    "es" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "Última solicitud, medida"
+                                      }
+                                    },
+                                    "fr" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "Dernière requête, mesurée"
+                                      }
+                                    },
+                                    "ja" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "前回のリクエスト（実測）"
+                                      }
+                                    },
+                                    "ko" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "지난 요청 (측정됨)"
+                                      }
+                                    },
+                                    "ru" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "Последний запрос, измерено"
+                                      }
+                                    },
+                                    "zh-Hans" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "最近一次请求（实测）"
+                                      }
+                                    },
+                                    "zh-Hant" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "最近一次請求（實測）"
+                                      }
+                                    },
+                                    "id" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "Permintaan terakhir, terukur"
+                                      }
+                                    },
+                                    "ms" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "Permintaan terakhir, diukur"
+                                      }
+                                    },
+                                    "fil" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "Huling kahilingan, sinukat"
+                                      }
+                                    },
+                                    "th" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "คำขอล่าสุด (วัดจริง)"
+                                      }
+                                    },
+                                    "tr" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "Son istek, ölçülen"
+                                      }
+                                    },
+                                    "pl" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "Ostatnie żądanie, zmierzone"
+                                      }
+                                    },
+                                    "ro" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "Ultima cerere, măsurat"
+                                      }
+                                    },
+                                    "hr" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "Posljednji zahtjev, izmjereno"
+                                      }
+                                    },
+                                    "pt-BR" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "Última solicitação, medido"
+                                      }
+                                    }
+                                  }
+                                },
+                                "Last request, estimated" : {
+                                  "extractionState" : "manual",
+                                  "localizations" : {
+                                    "en" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "Last request, estimated"
+                                      }
+                                    },
+                                    "de" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "Letzte Anfrage, geschätzt"
+                                      }
+                                    },
+                                    "es" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "Última solicitud, estimada"
+                                      }
+                                    },
+                                    "fr" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "Dernière requête, estimée"
+                                      }
+                                    },
+                                    "ja" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "前回のリクエスト（推定）"
+                                      }
+                                    },
+                                    "ko" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "지난 요청 (추정)"
+                                      }
+                                    },
+                                    "ru" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "Последний запрос, оценка"
+                                      }
+                                    },
+                                    "zh-Hans" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "最近一次请求（估算）"
+                                      }
+                                    },
+                                    "zh-Hant" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "最近一次請求（估算）"
+                                      }
+                                    },
+                                    "id" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "Permintaan terakhir, diperkirakan"
+                                      }
+                                    },
+                                    "ms" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "Permintaan terakhir, dianggarkan"
+                                      }
+                                    },
+                                    "fil" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "Huling kahilingan, tinatantya"
+                                      }
+                                    },
+                                    "th" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "คำขอล่าสุด (ประมาณ)"
+                                      }
+                                    },
+                                    "tr" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "Son istek, tahmini"
+                                      }
+                                    },
+                                    "pl" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "Ostatnie żądanie, oszacowane"
+                                      }
+                                    },
+                                    "ro" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "Ultima cerere, estimat"
+                                      }
+                                    },
+                                    "hr" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "Posljednji zahtjev, procijenjeno"
+                                      }
+                                    },
+                                    "pt-BR" : {
+                                      "stringUnit" : {
+                                        "state" : "translated",
+                                        "value" : "Última solicitação, estimado"
+                                      }
+                                    }
+                                  }
+                                },
                                 "estimated request envelope" : {
                                   "extractionState" : "manual",
                                   "localizations" : {
