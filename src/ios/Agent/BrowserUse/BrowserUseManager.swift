@@ -2603,12 +2603,12 @@ extension BrowserUseManager: WKNavigationDelegate {
                 self.navigationContinuation = nil
                 cont.resume(throwing: error)
             }
-            if onWindow, let url {
-                logger.info("[Browser] reload_after_webcontent_terminate url=\(url.prefix(120)) \(self.presentationState)")
+            if onWindow, let urlString = url, let reloadURL = URL(string: urlString) {
+                logger.info("[Browser] reload_after_webcontent_terminate url=\(urlString.prefix(120)) \(self.presentationState)")
                 self.loadRequest(
-                    URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData,
+                    URLRequest(url: reloadURL, cachePolicy: .reloadIgnoringLocalCacheData,
                                timeoutInterval: Self.navigationTimeout),
-                    requestedURL: url)
+                    requestedURL: reloadURL)
             }
         }
     }
