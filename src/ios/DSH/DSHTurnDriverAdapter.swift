@@ -366,13 +366,35 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
         """
         row.systemIcon = "arrow.down.right.and.arrow.up.left"
         messages.insert(row, at: insertIdx)
+
+        // [T-dsh-compact-divider-index-drift] The insert moved every row below
+        // the divider down by one — including the assistant row this turn is
+        // streaming into. Re-anchor it before anything else reads it, or the loop
+        // keeps writing at the pre-insert offset, which is now this divider: text,
+        // thinking and tool blocks are then rejected by their
+        // `role == .assistant` guards, the reply row stays empty forever, and the
+        // divider ends up as the newest row on screen — the operator's "all new
+        // messages appear above the compaction line, as if nothing new arrived".
+        //
+        // One healing site, and this is it: the target is re-derived from the
+        // row's own identity, so it is correct however far the insert moved it.
+        dshReanchorStreamingRow()
+
+        // The streaming row is BY CONSTRUCTION the newest row of this turn, so it
+        // is never part of the shadowed prefix. Skipping it explicitly keeps the
+        // greying loop from ever marking live output as compacted history, even
+        // if a future insert index lands below it.
+        let liveIdx = dshStreamingMsgIdx
         for above in 0..<insertIdx
-        where messages[above].role != .compactDivider && messages[above].role != .systemInfo {
+        where above != liveIdx
+            && messages[above].role != .compactDivider
+            && messages[above].role != .systemInfo {
             messages[above].isCompactedHistory = true
         }
         AppLogger(category: "DSHLoop").warning(
             "[DSH] compaction divider at \(insertIdx)/\(messages.count) "
-            + "lastShadowedSeq=\(outcome.range.shadowedSeqs.last.map { String($0.value) } ?? "nil")"
+            + "lastShadowedSeq=\(outcome.range.shadowedSeqs.last.map { String($0.value) } ?? "nil") "
+            + "liveRow=\(liveIdx)"
         )
         publishUnlessTransitioning()
         scrollToBottomSignal.send()
@@ -395,11 +417,38 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
     /// boundary — an unresolvable position must not hide rows the model can still
     /// see.
     static func dshDividerInsertIndex(messages: [ChatMessage], lastShadowedSeq: Int?) -> Int {
-        guard let lastShadowedSeq else { return messages.count }
-        if let idx = messages.firstIndex(where: { ($0.dshSeq ?? Int.min) > lastShadowedSeq }) {
-            return idx
+        guard let lastShadowedSeq else {
+            return Self.dshDividerPosition(messages: messages, boundary: messages.count)
         }
-        return messages.count
+        if let idx = messages.firstIndex(where: { ($0.dshSeq ?? Int.min) > lastShadowedSeq }) {
+            return Self.dshDividerPosition(messages: messages, boundary: idx)
+        }
+        return Self.dshDividerPosition(messages: messages, boundary: messages.count)
+    }
+
+    /// Keep the divider ABOVE the row this turn is streaming into.
+    ///
+    /// [T-dsh-compact-divider-above-live-row] The seq boundary and the live row
+    /// are different coordinate systems, and the live row has no seq at all:
+    /// `sealStreamingTurn` is what stamps it, and that runs at the END of the
+    /// turn. So `dshSeq` for the live row is nil (read as `Int.min`), the
+    /// boundary search walks straight past it, and the divider lands BELOW it.
+    ///
+    /// The divider's whole job is to say "everything above me was replaced";
+    /// leaving it below live output puts the newest content above the line,
+    /// which is exactly what the operator reported ("所有新消息继续出现在压缩的
+    /// 那条提示的线上方，看起来就像刚压缩完一点新消息没有"). The older
+    /// append-to-`messages.count` shape had the same effect, which is what round
+    /// 8 was fixing; this keeps the fix true for the row the turn is still
+    /// writing into.
+    ///
+    /// Nothing is greyed by the move: the live row is never in the replacement
+    /// region, because the compaction selected its range from a surface the live
+    /// row had not been appended to yet.
+    static func dshDividerPosition(messages: [ChatMessage], boundary: Int) -> Int {
+        guard let liveId = messages.dshLiveStreamingRowId else { return boundary }
+        guard let liveIdx = messages.firstIndex(where: { $0.id == liveId }) else { return boundary }
+        return min(boundary, liveIdx)
     }
 
     public func driver(_ driver: DSHTurnDriver, didEndTurn reason: DSHTurnEndReason) {
