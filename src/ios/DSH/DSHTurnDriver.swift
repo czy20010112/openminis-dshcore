@@ -138,6 +138,9 @@ public struct DSHTurnDriverConfig: Sendable {
     /// these same five delays out on `LLMError.isRetryable` (network, 5xx) and
     /// shows a countdown. Without it a two-second network blip ended the turn
     /// with an error banner where the app previously recovered invisibly.
+    /// Whether the memory feature is on for this session. The volatile tail
+    /// block is assembled on the app side and needs the same answer.
+    public var memoryEnabled: Bool = true
     public var streamRetryDelays: [Int]
 
     public init(
@@ -154,6 +157,7 @@ public struct DSHTurnDriverConfig: Sendable {
         compactionRetainTokensOverride: Int? = nil,
         autoCompactionEnabled: Bool = true,
         toolOrder: [String]? = nil,
+        memoryEnabled: Bool = true,
         streamRetryDelays: [Int] = [3, 5, 10, 15, 30]
     ) {
         self.maxParallelToolCalls = max(1, maxParallelToolCalls)
@@ -177,6 +181,7 @@ public struct DSHTurnDriverConfig: Sendable {
         }
         self.autoCompactionEnabled = autoCompactionEnabled
         self.toolOrder = toolOrder
+        self.memoryEnabled = memoryEnabled
         self.streamRetryDelays = streamRetryDelays.filter { $0 > 0 }
     }
 }
@@ -1032,9 +1037,9 @@ public final class DSHTurnDriver {
         // `memory_write` shows up in the next step's request rather than being
         // frozen for the whole turn.
         let volatileSections = DSHSystemPrompt.renderVolatileSections(assembly)
-        let tailContext = Self.volatileTurnContextSuffix(
+        let tailContext = AIChatViewModel.volatileTurnContextSuffix(
             runtimeFacts: [],
-            memoryEnabled: memoryEnabled,
+            memoryEnabled: config.memoryEnabled,
             extraParts: volatileSections.isEmpty ? [] : [volatileSections]
         )
 
@@ -1075,7 +1080,7 @@ public final class DSHTurnDriver {
         // figure below, so the panel's total still prices the whole request rather
         // than the prompt alone.
         let projected = projectMessages(session.surfaceMessages())
-        let requestMessages = Self.historyWithVolatileTurnContext(projected, suffix: tailContext)
+        let requestMessages = AIChatViewModel.historyWithVolatileTurnContext(projected, suffix: tailContext)
         DSHContextBreakdownStore.shared.record(
             systemPrompt: systemPrompt,
             tools: schemas,
