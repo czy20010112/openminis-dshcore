@@ -2707,7 +2707,7 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
     /// Cached offset of `dshStreamingRowId`. Never read directly: read
     /// `dshStreamingMsgIdx`, which re-derives it after any array mutation.
     /// -1 means "no turn is streaming".
-    private var dshStreamingMsgIdxRaw: Int = -1
+    var dshStreamingMsgIdxRaw: Int = -1
 
     /// Reasoning text awaiting delivery to the thinking block.
     var dshPendingReasoning = ""
