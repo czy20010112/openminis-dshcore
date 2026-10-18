@@ -134,7 +134,24 @@ public enum DSHSpillFeature {
                     callId: block.id,
                     tokens: tokens,
                     omittedBytes: bound.omittedBytes,
-                    locator: locator
+                    locator: locator,
+                    keptChars: bound.text.count,
+                    priorLocator: bound.priorLocator
+                )
+            )
+            // The one line every shortening leaves, in one shape, so "was this
+            // result shortened, and was the model told" is answerable from a device
+            // log without knowing which mechanism did it. This pass always notifies:
+            // the notice is part of `bound.text`, which is what the model receives.
+            AppLogger(category: "ToolResult").warning(
+                DSHSpill.truncationLogLine(
+                    toolName: block.name,
+                    callId: block.id,
+                    mechanism: "spill",
+                    originalChars: text.count,
+                    keptChars: bound.text.count,
+                    locator: locator,
+                    notified: true
                 )
             )
 

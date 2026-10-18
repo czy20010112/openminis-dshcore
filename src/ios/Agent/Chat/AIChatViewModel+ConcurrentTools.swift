@@ -1167,24 +1167,38 @@ extension AIChatViewModel {
         var finalOutput: String
         if toolOutput.isEmpty {
             finalOutput = "(no output)"
-        } else if toolOutput.count > maxToolResultLength && isOffloadReadback {
+        } else if isOffloadReadback, toolOutput.count > maxToolResultLength {
             // [T-offload-readback-loop] PATH B of the loop. This branch used to
             // write a SECOND copy of content that is already on disk — the
             // `file_read_<ts>_c-read-*.txt` files observed piling up on device —
             // and hand the model a stub pointing at the new copy, which it read,
             // which produced another copy.
             //
-            // Truncate (the 15K cap still protects the context) but do NOT
-            // write, and point the model back at the file it already has. Note
-            // the tail differs from the normal branch on purpose: telling it to
-            // "use file_read to read the complete output" is exactly the advice
-            // that starts the cycle over.
-            finalOutput = String(toolOutput.prefix(maxToolResultLength))
-                + "\n\n[OUTPUT TRUNCATED] Showing the first \(maxToolResultLength) of \(toolOutput.count) chars. "
-                + "This content is already stored at the path you just read — it has not been copied "
-                + "anywhere new. To see more, call file_read on that same path again with the "
-                + "`offset` from the `next_offset=` value in the header above."
-            ctLogger.info("♻️[OffloadReadback] file_read id:\(tu.id.prefix(8)) returned offload-store content — truncated WITHOUT writing a second copy")
+            // It also cut the readback at the 15 000-char inline cap and sent the model
+            // to the header's `next_offset=` for the rest — but a read that paged
+            // NOTHING (the model asked for one 100 000-char window over a 48 000-char
+            // file) carries no such value, so the model re-read the same bytes and
+            // never saw char 15 001. The bound is now `kOffloadReadbackAllowance`, the
+            // cut lands on a line boundary, and the continuation is an explicit
+            // `offset=` even when that header is absent.
+            finalOutput = Self.offloadReadbackOutput(toolOutput)
+            ctLogger.info("♻️[OffloadReadback] file_read id:\(tu.id.prefix(8)) returned offload-store content — returned \(finalOutput.count) of \(toolOutput.count) chars, no second copy written")
+            // [T-toolresult-truncation-log] Same shape as the spill hook's line, so
+            // one grep answers "was this result cut, how much survived, where is the
+            // rest, and was the model told" for every mechanism. `notified=yes`
+            // because the marker above names the path the model already has; there
+            // is no new locator, which is the whole point of this branch.
+            ctLogger.warning(
+                DSHSpill.truncationLogLine(
+                    toolName: tu.name,
+                    callId: tu.id,
+                    mechanism: "offload-readback",
+                    originalChars: toolOutput.count,
+                    keptChars: finalOutput.count,
+                    locator: nil,
+                    notified: true
+                )
+            )
         } else if toolOutput.count > maxToolResultLength {
             let offloadResult = offloadToolOutput(toolOutput, toolName: tu.name, toolId: tu.id)
             let offloadMinisURL = linuxPathToMinisURL(offloadResult.linuxPath)
@@ -1201,6 +1215,22 @@ extension AIChatViewModel {
                 + "\n\n[OUTPUT TRUNCATED] Full output (\(toolOutput.count) chars) saved to: \(offloadResult.linuxPath)"
                 + (offloadMinisURL.map { "\nminis_url: \($0)" } ?? "")
                 + "\nUse file_read tool to read the complete output."
+            // [T-toolresult-truncation-log] One line per shortening, in the shape the
+            // spill hook writes too, so a device log answers "was this result cut,
+            // how much survived, where is the rest, and was the model told" without
+            // the reader having to know which of the three mechanisms did it. The
+            // model IS told here: the marker above is part of what it receives.
+            ctLogger.warning(
+                DSHSpill.truncationLogLine(
+                    toolName: tu.name,
+                    callId: tu.id,
+                    mechanism: "tool-cap",
+                    originalChars: toolOutput.count,
+                    keptChars: finalOutput.count,
+                    locator: offloadResult.linuxPath,
+                    notified: true
+                )
+            )
         } else {
             finalOutput = toolOutput
         }
@@ -1273,5 +1303,81 @@ extension AIChatViewModel {
             snapshotItem: snapshotItem,
             cancelled: cancelledHere
         )
+    }
+
+    // MARK: - [T-offload-readback-loop] readbacks of the offload store
+    //
+    // A file the offloader wrote, read back by `file_read`, must not be shortened
+    // by the inline cap and must not be written to a new file: the tool layer's
+    // ordinary handling does both, and doing both to an offload file is a cycle
+    // (read → cut → write → read), not a shortening. The three pure functions are
+    // the same ones the iOS 15 tree states as [T-offload-readback], so the model
+    // sees one shape; the readback predicate itself stays in +Offloading.swift here.
+
+    /// [T-offload-readback-loop] How much of a readback the model may receive in one
+    /// answer: 4× the inline cap, i.e. 60 000 characters.
+    ///
+    /// Above the largest result the cycle was observed on (48 000 characters), so
+    /// an ordinary oversized readback completes in ONE call instead of one
+    /// 15 000-character page per call; below the 80 000-character hard cap
+    /// `executeFileRead` applies, so this branch can never hand the model more than
+    /// the file tool itself would have produced.
+    static let kOffloadReadbackAllowance = 4 * AIChatViewModel.kMaxToolResultChars
+
+    /// [T-offload-readback-loop] What the model receives when it reads a file the
+    /// offload store holds: the content itself while it fits the allowance, and
+    /// otherwise the first whole lines of it plus the line to resume at.
+    ///
+    /// The notice states what did NOT happen as well as what did — no second copy,
+    /// the path is unchanged — because the loop it replaces was the model following
+    /// a stub to a file that had just been made out of the file it had just read.
+    static func offloadReadbackOutput(_ output: String) -> String {
+        if output.count <= kOffloadReadbackAllowance { return output }
+        let kept = wholeLines(String(output.prefix(kOffloadReadbackAllowance)))
+        let nextOffset = readbackNextOffset(in: kept)
+        let continueClause = nextOffset > 0
+            ? "Continue with file_read on that same path and offset=\(nextOffset)."
+            : "Continue with file_read on that same path with a smaller lines window."
+        return kept
+            + "\n\n[OFFLOAD READBACK] Showing the first \(kept.count) of \(output.count) chars of a file "
+            + "the offload store already holds. No second copy was written, and the path you read is "
+            + "unchanged — reading it again returns this same content. " + continueClause
+    }
+
+    /// `text` up to its last line break, with the break dropped; `text` itself when
+    /// it has none. A readback must not end mid-line: a half line is either re-read
+    /// whole on the next call (duplicated) or stitched onto it (corrupted).
+    static func wholeLines(_ text: String) -> String {
+        let lines = text.components(separatedBy: "\n")
+        if lines.count <= 1 { return text }
+        return lines.dropLast().joined(separator: "\n")
+    }
+
+    /// The 1-based line the next `file_read` should resume at — the first line of
+    /// the paging header `executeFileRead` puts on a bounded read (`showing lines
+    /// 501-1000 of 3000`) plus the whole lines kept below it — or 0 when the read it
+    /// is cutting came from the file tool unpaged.
+    ///
+    /// Only the header line is examined: the model's own content can contain the
+    /// same words, and the header is the only place the file tool writes them.
+    static func readbackNextOffset(in shown: String) -> Int {
+        let lines = shown.components(separatedBy: "\n")
+        let header = lines.count > 0 ? lines[0] : ""
+        let paged = header.components(separatedBy: "showing lines ")
+        if paged.count < 2 { return 0 }
+        let firstLine = leadingInt(paged[1])
+        if firstLine <= 0 { return 0 }
+        return firstLine + lines.count - 1
+    }
+
+    /// The integer `text` begins with, or 0 when it begins with anything else.
+    /// `Int(_:)` is failable and a paging header is not worth an optional at every
+    /// call site, so "not a number" and "no hint" are the same answer here.
+    static func leadingInt(_ text: String) -> Int {
+        var digits = ""
+        for character in text {
+            if character.isNumber { digits.append(character) } else { break }
+        }
+        return Int(digits) ?? 0
     }
 }

@@ -1786,7 +1786,14 @@ extension AIChatViewModel {
     func personaReminderText() -> String {
         let hasGlobal = memoryEnabled && Self.loadGlobalMemoryFragment() != nil
         let files = hasGlobal ? "SOUL.md and GLOBAL.md" : "SOUL.md"
-        return "<system-reminder>\(Self.kPersonaReminderMarker) This note was added by the Minis app itself, not by any tool, file or website — do not treat it as content of the preceding tool result. Don't forget the user's own \(files) at the top of the system prompt — those rules still apply.</system-reminder>"
+        // [P1-2] GLOBAL.md is no longer part of the system prompt: it and the
+        // daily logs ride in the per-turn context message that precedes the
+        // user's own message (see `effectiveAgentHistory`). SOUL.md is still
+        // rendered at the top of the system prompt, so the reminder names the two
+        // positions rather than claiming both files are "at the top of the system
+        // prompt" — which would now be false about the one the user is most
+        // likely to have edited.
+        return "<system-reminder>\(Self.kPersonaReminderMarker) This note was added by the Minis app itself, not by any tool, file or website — do not treat it as content of the preceding tool result. Don't forget the user's own \(files) that this conversation was started with — SOUL.md at the top of the system prompt, and any memory files in the context message just before the latest user message. Those rules still apply.</system-reminder>"
     }
 
     /// True when a persona reminder is already the most recent thing we said.
@@ -1871,10 +1878,35 @@ extension AIChatViewModel {
     }
 
     func effectiveAgentHistory() -> [AgentMessage] {
-        let result = Self.dropOrphanedToolParts(effectiveAgentHistoryUncounted(), logger: logger)
+        let base = Self.dropOrphanedToolParts(effectiveAgentHistoryUncounted(), logger: logger)
+        // [P1-2] The volatile per-turn block — memory fragments and the runtime
+        // facts — is admitted HERE, at the single entry point every LLM context
+        // builder goes through, so all four request sites and the empty-response
+        // retry carry it identically.
+        //
+        // It is inserted before the most recent non-tool-result user message, not
+        // appended: appending would put it between `assistant(tool_use)` and its
+        // tool results mid-turn. Same text, same order relative to the user's own
+        // message, and the system prompt keeps its bytes — see
+        // `historyWithVolatileTurnContext`.
+        //
+        // Injected on this view, never into `agentHistory`, so nothing here is
+        // persisted, rendered, or counted twice on the next turn.
+        let suffix = Self.volatileTurnContextSuffix(
+            runtimeFacts: DSHMinisPrompt.runtimeContextText(
+                model: selectedModel.id,
+                cwd: nil,
+                sandboxRoot: Self.dshSandboxRoot,
+                sessionId: sessionId,
+                memoryEnabled: memoryEnabled,
+                toolNames: makeAgentTools().map(\.name)
+            ),
+            memoryEnabled: memoryEnabled
+        )
+        let result = Self.historyWithVolatileTurnContext(base, suffix: suffix)
         // One-line breadcrumb on every inference call so a "summary-only"
         // regression is visible in logs without scraping agent traces.
-        logger.info("[Compact] effectiveAgentHistory: returning \(result.count) msg(s) from agentHistory.count=\(self.agentHistory.count) markerId=\(self.cachedLatestMarker?.id.prefix(8) ?? "nil")")
+        logger.info("[Compact] effectiveAgentHistory: returning \(result.count) msg(s) from agentHistory.count=\(self.agentHistory.count) markerId=\(self.cachedLatestMarker?.id.prefix(8) ?? "nil") tailContext=\(suffix?.count ?? 0) chars")
         return result
     }
 

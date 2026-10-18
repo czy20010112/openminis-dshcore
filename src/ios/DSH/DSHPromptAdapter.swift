@@ -60,14 +60,23 @@ extension AIChatViewModel {
         // way for plan mode to be silently inert.
         disposers.append(prompt.section(DSHPlanMode.policySection()))
 
-        // Dynamic runtime context: the facts the model would otherwise guess
-        // at. Folded in as a snapshot of the state at request-build time.
-        disposers.append(prompt.section(DSHMinisPrompt.runtimeContextSection(
-            sandboxRoot: Self.dshSandboxRoot,
-            sessionId: sessionId,
-            memoryEnabled: memoryEnabled
-        )))
+        // P1-2: the runtime context and the memory fragments are NOT registered
+        // here. They are per-turn state, and everything registered into this
+        // prompt is rendered into the system prompt — the prefix the engine's KV
+        // cache matches on. A memory written in one turn therefore rewrote bytes
+        // at the head of the next request and the engine re-prefilled the whole
+        // conversation (`cache` 99.5% → 0.0% on the next request, measured).
+        //
+        // They travel in `dshVolatileTurnContext` instead, which the request
+        // builders admit as a message before the turn's own user message — the
+        // position upstream DSH gives its runtime-context snapshot
+        // (`packages/core/agent-loop/src/runtime-context.ts`).
 
+        // The assembly is unchanged; only the boundary between prompt and message
+        // moves. Volatile sections are named with
+        // `DSHSystemPrompt.volatileSectionPrefix`, so the render call below is
+        // what drops them and the same assembly still reports every section that
+        // took part.
         let assembly = prompt.assemble(
             tools: [],
             context: DSHAssembleContext(
@@ -79,7 +88,7 @@ extension AIChatViewModel {
             )
         )
 
-        var text = DSHSystemPrompt.renderPrompt(assembly)
+        var text = DSHSystemPrompt.renderPrompt(excludingVolatileSectionsOf: assembly)
 
         // Preserve the model-specific fragments the original prompt injected:
         // they carry per-model capability and behaviour notes that are still
@@ -149,28 +158,15 @@ extension AIChatViewModel {
         }
         let memoryStatus = memoryStatusFragment
         if !memoryStatus.isEmpty {
-            // The status line is authoritative and says the memory files "have
-            // been injected above". Registering it without the files made the
-            // prompt assert something that had not happened — the same kind of
-            // confident falsehood the honesty section forbids — so the two
-            // fragments below go in first, under the same toggle the legacy
-            // assembly used.
-            if memoryEnabled {
-                if let fragment = Self.loadGlobalMemoryFragment(), !fragment.isEmpty {
-                    disposers.append(prompt.section(DSHPromptSection(
-                        name: "minis:memory-global",
-                        order: DSHSectionOrder.memory.rawValue,
-                        text: fragment
-                    )))
-                }
-                if let fragment = Self.loadRecentDailyMemoryFragment(), !fragment.isEmpty {
-                    disposers.append(prompt.section(DSHPromptSection(
-                        name: "minis:memory-daily",
-                        order: DSHSectionOrder.memory.rawValue + 10,
-                        text: fragment
-                    )))
-                }
-            }
+            // The status line is authoritative and says the memory files are in
+            // this request. It stays in the system prompt: it moves only when the
+            // user flips the per-session memory toggle, and it must precede the
+            // block it describes.
+            //
+            // The files themselves used to sit right above it, also in the
+            // system prompt — see `dshVolatileTurnContext`. `minis:memory-status`
+            // still says "injected", which is now true of the block the request
+            // carries ahead of the user's own message.
             disposers.append(prompt.section(DSHPromptSection(
                 name: "minis:memory-status",
                 order: DSHSectionOrder.memory.rawValue + 20,
@@ -182,6 +178,41 @@ extension AIChatViewModel {
 
     /// Sandbox root the DSH runtime context reports.
     static var dshSandboxRoot: String { "/var/minis" }
+
+    // MARK: - Volatile Turn Context (P1-2)
+
+    /// The per-turn block that must NOT go into the system prompt.
+    ///
+    /// Two kinds of state live here, and both were previously request-head bytes:
+    ///
+    /// - the memory fragments (`GLOBAL.md` + the recent daily logs), which change
+    ///   the moment the agent calls `memory_write`;
+    /// - the runtime facts (model, sandbox root, session, which tools are
+    ///   registered this turn), which change when a tool is toggled.
+    ///
+    /// Everything here is rebuilt per request and admitted as its own `user`
+    /// message immediately before the turn's own user message — upstream DSH's
+    /// position for its runtime-context snapshot
+    /// (`packages/core/agent-loop/src/runtime-context.ts`,
+    /// `RuntimeContextProjection.project`; admitted in `agent.ts` as
+    /// `{ kind: 'enter', messages: [...claimed, context] }`). Semantically it is
+    /// the same text in front of the same user message; byte-wise the system
+    /// prompt stops changing, so the engine's cached prefix survives.
+    ///
+    /// - Returns: the block, or nil when there is nothing volatile to report.
+    func dshVolatileTurnContext(toolNames: [String]) -> String? {
+        Self.volatileTurnContextSuffix(
+            runtimeFacts: DSHMinisPrompt.runtimeContextText(
+                model: selectedModel.id,
+                cwd: nil,
+                sandboxRoot: Self.dshSandboxRoot,
+                sessionId: sessionId,
+                memoryEnabled: memoryEnabled,
+                toolNames: toolNames
+            ),
+            memoryEnabled: memoryEnabled
+        )
+    }
 }
 
 // MARK: - Tool Roster

@@ -60,6 +60,14 @@ struct CollectionViewMessageListV3: UIViewControllerRepresentable {
     var maxContentWidth: CGFloat
     var floatingBarHeight: CGFloat
     var inputBarHeight: CGFloat
+    /// [T-panel-bottom-inset] Combined measured height of the composer-context
+    /// bars that sit between the floating tool preview and the composer — the
+    /// todo/plan bar and the goal bar. They are inside the same bottom overlay
+    /// as the composer, so without this the list reserved space for the composer
+    /// and the tool preview only, and drew the last message or two under the two
+    /// bars (operator report 2026-10-18). 0 when neither bar is drawing, so a
+    /// session with no goal/todo reserves exactly what it did before.
+    var panelHeights: CGFloat
 
     func makeUIViewController(context: Context) -> MessageListViewController {
         let vc = MessageListViewController()
@@ -113,7 +121,15 @@ struct CollectionViewMessageListV3: UIViewControllerRepresentable {
         // heights now accurate the +16 breathing room becomes pure
         // dead space — observed as ~100pt gap between the last bubble
         // and the composer top. Restored to the historical +8.
-        let bottomPad: CGFloat = inputBarHeight + floatingBarHeight + 8
+        //
+        // [T-panel-bottom-inset] `panelHeights` is the todo/goal bars' measured
+        // height, added for exactly the reason `floatingBarHeight` is here: the
+        // whole composer stack is an `.overlay(alignment: .bottom)` on this
+        // list, and this inset is the list's ONLY knowledge of how tall it is.
+        // Same trailing-edge behaviour as the other two — a height that changes
+        // re-pins a bottom-pinned reader (see the shrink branch below), and a
+        // bar that hides shrinks the base back by its own height.
+        let bottomPad: CGFloat = inputBarHeight + floatingBarHeight + panelHeights + 8
         let baseChanged = abs(coord.baseBottomInset - bottomPad) > 0.5
         if baseChanged {
             let cv = vc.collectionView!
