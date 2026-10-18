@@ -295,7 +295,7 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
         if messages[idx].usage != stamped {
             messages[idx].usage = stamped
         }
-        DSHContextBreakdownStore.shared.recordUsage(stamped)
+        DSHContextBreakdownStore.shared.recordUsage(stamped, sessionKey: sessionId)
         // One line per model response, and the only place the panel's inputs are
         // visible on a device: `cache_reported=false` is the proof that this
         // backend names no cache bucket at all (so the panel's cache row is
@@ -317,16 +317,39 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
         )
         dshLastCompaction = outcome
 
-        // Resolve the durable anchor now, while the shadowed rows are still in
+        // Capture the durable anchor now, while the shadowed rows are still in
         // `agentHistory` — the anchor is a database id that only lives there, and
         // the reconcile that runs at the end of the turn replaces that array with
-        // the session surface. The write itself is awaited at the end of the turn.
+        // the session surface. The write itself happens after the persistence pass
+        // at the end of the turn, because a mid-turn range ends inside this turn's
+        // own rows.
         dshResolveCompactionMarker(outcome)
 
-        // Surface the compaction in the transcript. A silent context rewrite is
-        // indistinguishable from the model forgetting, so the row says what was
-        // replaced and what it cost.
+        // Surface the compaction in the transcript, AT THE BOUNDARY it created.
         //
+        // [T-dsh-compact-divider-position] The divider used to be appended to the
+        // end of `messages`. That is the newest position in the array, so on a
+        // turn that compacts repeatedly the transcript showed the summary being
+        // pushed further down each time, below the replies it summarizes, and the
+        // rows it had just replaced were not greyed at all — the exact symptom the
+        // operator reported ("the compacted message always sits at the newest
+        // position instead of being wrapped by the messages after it").
+        //
+        // The replaced rows sit above the boundary, so the divider is inserted
+        // immediately after the newest shadowed row — the same placement the
+        // in-loop compactor uses (`compactBefore`'s `dividerInsertIdx`) and the same
+        // one the reload path reconstructs from the persisted marker
+        // (`AIChatViewModel+Persistence` Phase 2.5). Everything above it is
+        // flagged `isCompactedHistory`, which is what greys it, and the streaming
+        // bubble below it keeps writing into the active region.
+        //
+        // Old dividers are dropped first: one session shows one compaction, the
+        // latest — the same rule the in-loop path applies.
+        messages.removeAll { $0.role == .compactDivider }
+        let insertIdx = Self.dshDividerInsertIndex(
+            messages: messages, lastShadowedSeq: outcome.range.shadowedSeqs.last?.value
+        )
+
         // `content` is the divider's visible label and `compactSummary` sits
         // behind its info button — ChatMessageViews reads those two fields in
         // that order, so a summary written only to `compactSummary` renders as a
@@ -342,9 +365,41 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
         Summary writer: \(outcome.model) via \(outcome.provider)
         """
         row.systemIcon = "arrow.down.right.and.arrow.up.left"
-        messages.append(row)
+        messages.insert(row, at: insertIdx)
+        for above in 0..<insertIdx
+        where messages[above].role != .compactDivider && messages[above].role != .systemInfo {
+            messages[above].isCompactedHistory = true
+        }
+        AppLogger(category: "DSHLoop").warning(
+            "[DSH] compaction divider at \(insertIdx)/\(messages.count) "
+            + "lastShadowedSeq=\(outcome.range.shadowedSeqs.last.map { String($0.value) } ?? "nil")"
+        )
         publishUnlessTransitioning()
         scrollToBottomSignal.send()
+    }
+
+    /// Where the transcript divider goes for a compaction that shadowed
+    /// everything up to `lastShadowedSeq`.
+    ///
+    /// The boundary is the first row whose session seq is NEWER than the newest
+    /// shadowed one — i.e. the first row the compaction kept. Position is read from
+    /// the seq and never from an index: `messages` is rebuilt by reload, retry and
+    /// reconcile, so an index captured when the compaction landed would name a
+    /// different row by the time it is used. This is the same reason every other
+    /// DSH-side lookup goes through `dshSeq`.
+    ///
+    /// A row without a seq (a status row, a queued prompt) is not part of the
+    /// session, so it can never be the boundary; it stays where it is.
+    ///
+    /// Falls back to the end of the list only when no seq at all names the
+    /// boundary — an unresolvable position must not hide rows the model can still
+    /// see.
+    static func dshDividerInsertIndex(messages: [ChatMessage], lastShadowedSeq: Int?) -> Int {
+        guard let lastShadowedSeq else { return messages.count }
+        if let idx = messages.firstIndex(where: { ($0.dshSeq ?? Int.min) > lastShadowedSeq }) {
+            return idx
+        }
+        return messages.count
     }
 
     public func driver(_ driver: DSHTurnDriver, didEndTurn reason: DSHTurnEndReason) {

@@ -26,14 +26,28 @@
 //  describe a different request than the one that was sent.
 //
 //  ON SCREEN, the panel says NOTHING about which of the two figures it is
-//  showing, and nothing takes the place of an empty slot. It used to say it four
+//  showing WHILE BOTH ARE PROVIDER COUNTS — a labelled estimate is the one
+//  exception, see below. It used to say it four
 //  times — a "WHO MEASURED WHAT" paragraph, a "measured by the provider" caption
 //  under the header figure, a "Measured / Provider" pair at the bottom, and a
 //  one-line note under the rows ("Estimated from character count at 3.6
 //  characters per token…"). The operator had each of them removed, one round at a
 //  time, and the last one came with the instruction that no other words may take
-//  its place in this window. None of them may come back; the provenance lives in
-//  this comment instead.
+//  its place in this window.
+//
+//  THE ONE EXCEPTION, added 2026-10-18: a figure that is NOT a provider count is
+//  labelled as its own kind. The defect that round was about was not a missing
+//  caption — it was a request-envelope ESTIMATE rendered exactly like a measured
+//  occupancy ("~60K used" while the provider charged 189,546 for every step of
+//  the same turn, and "~13K used" in a chat with no messages in it). Silence
+//  about provenance is only honest while the provenance is uniform. The labels
+//  are the sheet's section heading and its total row, they appear only in the
+//  estimated state, and the measured state is worded exactly as the operator left
+//  it.
+//
+//  The provenance of the FIGURES lives in `DSHContextUsage.swift`: a provider
+//  count or nothing, with the estimator demoted to a labelled, expiring fallback
+//  that is never published as the context's occupancy.
 //
 //  A THIRD FIGURE, and the only measured ROW in the sheet, sits under the total:
 //  the provider's cache-hit share for its newest response
@@ -264,9 +278,7 @@ enum DSHCacheHitFormat {
 
 // MARK: - Reading
 
-/// One reading of "how full is the context": the provider's own figure for the
-/// last call, or — until one has arrived — our estimate of the request that is
-/// already in flight.
+/// One reading of "how full is the context", and the kind of figure it is.
 ///
 /// Derived at the call site rather than taken from a ViewModel property, because
 /// the iOS 26 line's `AIChatViewModel.contextUsage` does not exist on the iOS 15
@@ -279,8 +291,19 @@ struct DSHContextReading: Equatable {
     /// 0 when the model's window is unknown — the ring then draws nothing and
     /// the panel says so rather than showing a percentage of zero.
     var windowTokens: Int
+    /// Which figure `usedTokens` is. Never inferred from the two numbers above:
+    /// the whole 2026-10-18 defect was two different kinds of figure rendered
+    /// identically, so the kind travels with the value.
+    var source: DSHContextUsageSource = .providerMeasured
 
     var hasWindow: Bool { windowTokens > 0 }
+
+    /// True while the figure is the app's own estimate of the request envelope
+    /// rather than a provider count. The ring's accessibility text says so, and
+    /// the sheet's heading and total row say so; `fraction` deliberately does
+    /// not change, because an estimate of an over-window request is still a real
+    /// overflow signal.
+    var isEstimate: Bool { source == .requestEnvelopeEstimate }
 
     var fraction: Double {
         guard windowTokens > 0 else { return 0 }
@@ -291,49 +314,98 @@ struct DSHContextReading: Equatable {
 
     /// Newest provider-reported context size among these messages, or nil when
     /// no assistant row carries usage yet.
-    static func latest(messages: [ChatMessage], window: Int?) -> DSHContextReading? {
+    ///
+    /// The database row is a durable receipt, so this answers for a session
+    /// restored after a relaunch even though the in-process store is empty then.
+    /// It is a real count for the request it describes — the request that
+    /// produced that row — and `occupancy` supersedes it as soon as this process
+    /// has one it measured itself.
+    static func reported(messages: [ChatMessage], window: Int?) -> DSHContextReading? {
         let reported = messages.last {
             $0.role == .assistant && ($0.usage?.latestContextTokens ?? 0) > 0
         }
         guard let used = reported?.usage?.latestContextTokens, used > 0 else { return nil }
-        return DSHContextReading(usedTokens: used, windowTokens: window ?? 0)
+        return DSHContextReading(
+            usedTokens: used, windowTokens: window ?? 0, source: .providerMeasured
+        )
     }
 
-    /// What the ring and the sheet's header show: the provider's figure when a
-    /// receipt has arrived, and our own estimate of the request in flight when it
-    /// has not.
+    /// What the ring and the sheet's header show, in priority order:
     ///
-    /// The fallback is not a second estimator. `estimatedTotal` is the same value
-    /// the panel's `Total (estimated)` row renders, so the ring, the header and
-    /// that row are one number in all three places. A receipt wins outright: as
-    /// soon as an assistant row carries usage the estimate is dropped, never
-    /// averaged with the reported figure.
-    /// - Note: `@MainActor` because it reads `DSHContextBreakdownStore.shared`,
-    ///   which is main-actor isolated. Every caller is a view body.
+    ///  1. the newest provider count for THIS session, carried forward by the
+    ///     conversation's growth since it was reported (`DSHContextUsageStore`);
+    ///  2. the durable receipt on the newest usage-bearing row, which is how a
+    ///     conversation restored from the database answers — those rows ARE the
+    ///     transcript the caller is showing, so they belong to this conversation
+    ///     by construction, and this branch states no session of its own;
+    ///  3. the app's estimate of the request envelope — while a request is
+    ///     actually in flight, and only then. It is labelled as an estimate
+    ///     wherever it is rendered.
+    ///
+    /// A brand-new conversation answers with nil at every step, and the callers
+    /// render that as "no figure" rather than as zero or as a request envelope's
+    /// size: before the first message this app has sent, no request envelope
+    /// describes anything the user has done, which is why a fresh chat used to
+    /// open on "~13K used".
+    ///
+    /// - Parameters:
+    ///   - messages: the transcript, for the durable receipt.
+    ///   - window: the serving model's window, or nil when unknown.
+    ///   - sessionId: the conversation the reading describes. The measured store
+    ///     and the request breakdown are both session-scoped, so a value that
+    ///     belongs to another conversation is refused rather than shown.
+    ///   - requestInFlight: whether a turn is running. The estimate is admitted
+    ///     only here — it describes the request being streamed, which no receipt
+    ///     covers yet.
+    /// - Returns: the reading, or nil when this session has no figure at all.
+    /// - Note: `@MainActor` because it reads `DSHContextBreakdownStore.shared`
+    ///   and `DSHContextUsageStore.shared`, which are main-actor isolated. Every
+    ///   caller is a view body.
     @MainActor
-    static func display(messages: [ChatMessage], window: Int?, streaming: Bool = false) -> DSHContextReading? {
-        // While a turn runs, the provider's last figure describes the PREVIOUS
-        // request, not the one being streamed — so it answers the wrong question and
-        // its number sits still. The estimate is measured from the request assembled
-        // for the turn in flight, so it is both the right request and live. When
-        // nothing is running, the provider's own count wins: it is measured, the
-        // estimate is modelled.
-        if streaming, let inFlight = estimated(window: window) { return inFlight }
-        if let reported = latest(messages: messages, window: window) { return reported }
-        return estimated(window: window)
+    static func display(
+        messages: [ChatMessage],
+        window: Int?,
+        sessionId: String? = nil,
+        requestInFlight: Bool = false
+    ) -> DSHContextReading? {
+        let windowTokens = window ?? 0
+        let breakdown = DSHContextBreakdownStore.shared.latest
+        let breakdownIsThisSession = breakdown?.sessionKey != nil && breakdown?.sessionKey == sessionId
+
+        if let envelopeNow = breakdownIsThisSession ? breakdown?.estimatedTotal : nil,
+           let occupancy = DSHContextUsageStore.shared.occupancy(envelopeTokensNow: envelopeNow) {
+            return DSHContextReading(
+                usedTokens: occupancy, windowTokens: windowTokens, source: .providerMeasured
+            )
+        }
+        if let reported = reported(messages: messages, window: window) { return reported }
+        guard requestInFlight, breakdownIsThisSession,
+              let estimate = breakdown?.estimatedTotal, estimate > 0 else { return nil }
+        return DSHContextReading(
+            usedTokens: estimate, windowTokens: windowTokens, source: .requestEnvelopeEstimate
+        )
     }
 
     /// Our estimate alone: the request `DSHTurnDriver.buildRequest()` measured
     /// last, which is the request the token currently being streamed belongs to.
     ///
-    /// nil until this process has assembled one request. A session whose
-    /// conversation was loaded from the database after a relaunch has messages
-    /// but no breakdown, and the panel has a line that says exactly that.
+    /// nil until this process has assembled one request for this session. A
+    /// session whose conversation was loaded from the database after a relaunch
+    /// has messages but no breakdown, and the panel has a line that says exactly
+    /// that.
+    ///
+    /// - Parameter window: the serving model's window.
+    /// - Parameter sessionId: the conversation the estimate must belong to.
     @MainActor
-    static func estimated(window: Int?) -> DSHContextReading? {
+    static func estimated(window: Int?, sessionId: String? = nil) -> DSHContextReading? {
         guard let breakdown = DSHContextBreakdownStore.shared.latest,
+              breakdown.sessionKey != nil, breakdown.sessionKey == sessionId,
               breakdown.estimatedTotal > 0 else { return nil }
-        return DSHContextReading(usedTokens: breakdown.estimatedTotal, windowTokens: window ?? 0)
+        return DSHContextReading(
+            usedTokens: breakdown.estimatedTotal,
+            windowTokens: window ?? 0,
+            source: .requestEnvelopeEstimate
+        )
     }
 }
 
@@ -361,9 +433,47 @@ struct DSHContextBreakdown: Equatable {
     var sectionNames: [String]
     var model: String
     var provider: String
+    /// The conversation this request was assembled for.
+    ///
+    /// The store is process-global and the app switches conversations, so a
+    /// breakdown without an owner is a breakdown from whichever chat was last
+    /// open. `nil` is a session that has no id yet (a draft), which never matches
+    /// a bound session and therefore never leaks either.
+    var sessionKey: String?
     var capturedAt: Date
 
     var estimatedTotal: Int { systemPromptTokens + toolTokens + surfaceTokens }
+
+    /// The envelope the newest provider count was taken against, or nil when no
+    /// provider has reported one for this session.
+    ///
+    /// The recorded envelope equals the current assembly's immediately after a
+    /// response lands, because the driver assembles once per step and reports
+    /// once per step — so an exact match identifies the sheet's figures as the
+    /// ones the provider counted. It drifts as soon as the next step's tool
+    /// result is appended, and the sheet then describes an estimate again.
+    var measuredEnvelopeTokens: Int?
+
+    /// True when the sheet's total is the envelope a provider counted, rather
+    /// than this app's estimate of one.
+    ///
+    /// Derived from the store's own record of what it measured — never inferred
+    /// from how close two numbers are — so the row's label and the header's
+    /// figure cannot disagree about the request they describe.
+    var isMeasured: Bool {
+        guard let measured = DSHContextUsageStore.shared.measured else { return false }
+        return measured.sessionKey == sessionKey && measured.envelopeTokens == estimatedTotal
+    }
+
+    /// "This request, estimated" · "This request, measured".
+    var sectionTitle: String {
+        isMeasured ? "This request, measured" : "This request, estimated"
+    }
+
+    /// "Total (estimated)" · "Total (measured)".
+    var totalLabel: String {
+        isMeasured ? "Total (measured)" : "Total (estimated)"
+    }
 }
 
 /// The provider's own accounting for ONE response, in the two numbers a
@@ -417,13 +527,25 @@ final class DSHContextBreakdownStore: ObservableObject {
     /// measured over the DSH surface — the same list `maybeCompact` measures —
     /// rather than over the provider-facing projection, so this row and the
     /// compaction decision can never disagree about the conversation's size.
+    ///
+    /// The same assembly re-bases the measured store's growth baseline, because
+    /// this is the only point that knows the envelope the NEXT receipt will cover:
+    /// the response's tokens are appended to the surface before a later receipt
+    /// arrives, so a baseline left where the previous request put it would count
+    /// that append twice.
+    ///
+    /// - Parameters:
+    ///   - sessionKey: the conversation being assembled for. A change of
+    ///     conversation drops the previous one's receipt here as well, so a
+    ///     value from another chat cannot be paired with this request's rows.
     func record(
         systemPrompt: String,
         tools: [DSHToolSchema],
         surface: [DSHLogEntry],
         sectionNames: [String],
         model: String,
-        provider: String
+        provider: String,
+        sessionKey: String?
     ) {
         let next = DSHContextBreakdown(
             systemPromptTokens: DSHTokenEstimate.tokens(forText: systemPrompt),
@@ -435,9 +557,16 @@ final class DSHContextBreakdownStore: ObservableObject {
             sectionNames: sectionNames,
             model: model,
             provider: provider,
+            sessionKey: sessionKey,
             capturedAt: Date()
         )
+        let moved = latest?.sessionKey != sessionKey
         if next != latest { latest = next }
+        if moved {
+            if latestUsage != nil { latestUsage = nil }
+        }
+        DSHContextUsageStore.shared.bind(sessionKey: sessionKey)
+        DSHContextUsageStore.shared.rebase(envelopeTokens: next.estimatedTotal)
     }
 
     /// Record one response's own accounting.
@@ -452,7 +581,16 @@ final class DSHContextBreakdownStore: ObservableObject {
     /// the previous one standing. Keeping it would put a stale cache share beside a
     /// newer occupancy figure — the panel draws them together — and the pair would
     /// silently describe two different requests.
-    func recordUsage(_ usage: TokenUsage) {
+    ///
+    /// The same receipt is the app's one measured context figure, so it is also
+    /// handed to `DSHContextUsageStore` with the envelope this sheet is showing —
+    /// one write, two readers, no second derivation of the number.
+    ///
+    /// - Parameter usage: the response's own accounting.
+    /// - Parameter sessionKey: the conversation the response belongs to. A
+    ///   response for a session the measured store is not bound to is refused
+    ///   there (it belongs to the chat the user just left).
+    func recordUsage(_ usage: TokenUsage, sessionKey: String?) {
         let next = usage.cacheReported && usage.latestContextTokens > 0
             ? DSHUsageReading(
                 promptTokens: usage.latestContextTokens,
@@ -460,15 +598,47 @@ final class DSHContextBreakdownStore: ObservableObject {
             )
             : nil
         if next != latestUsage { latestUsage = next }
+
+        // Bind first, so a report from the legacy agent loop — which assembles no
+        // DSH request and therefore records no breakdown — still counts as this
+        // session's measurement rather than being dropped for want of an owner.
+        // The binding is idempotent and only wipes a value that belonged to
+        // another conversation.
+        bind(sessionKey: sessionKey)
+
+        // The measured figure and its growth baseline are `DSHContextUsageStore`'s
+        // to own: this method reports ONE receipt and nothing else, and the
+        // baseline is re-based by `record()` on the next assembly, which is the
+        // only place that knows the envelope the receipt covers.
+        DSHContextUsageStore.shared.record(
+            promptTokens: usage.latestContextTokens,
+            envelopeTokens: latest?.sessionKey == sessionKey ? (latest?.estimatedTotal ?? 0) : 0,
+            sessionKey: sessionKey
+        )
     }
 
     /// Drop the measurement, so a later session cannot open the panel on the
-    /// previous session's request. Not wired to a call site yet: the next turn of
-    /// any session overwrites it, and the panel is opened from a composer whose
-    /// own turn has assembled at least one request.
+    /// previous session's request.
+    ///
+    /// - Parameter sessionKey: the conversation to bind to, or nil to unbind.
+    ///   Binding is what makes the previous session's value unusable: the
+    ///   measured store drops its own value on a move, and a breakdown stamped
+    ///   with another key is refused by every reader. `DSHContextUsageStore` is
+    ///   the authority for the binding; this only follows it so the sheet's rows
+    ///   cannot outlive the figure above them.
+    func bind(sessionKey: String?) {
+        DSHContextUsageStore.shared.bind(sessionKey: sessionKey)
+        if latest?.sessionKey != sessionKey {
+            if latest != nil { latest = nil }
+            if latestUsage != nil { latestUsage = nil }
+        }
+    }
+
+    /// Drop the measurement unconditionally, keeping the session binding.
     func clear() {
         if latest != nil { latest = nil }
         if latestUsage != nil { latestUsage = nil }
+        DSHContextUsageStore.shared.clearMeasurement()
     }
 }
 
@@ -552,13 +722,20 @@ struct DSHContextRingButton: View {
         // process yet, which is also the only state in which the panel below is
         // empty. Name the control and stop: this slot used to read "no usage
         // reported yet", the operator removed the sentence from both here and the
-        // panel's title row, and in practice there is always a context figure to
-        // report.
+        // panel's title row.
+        //
+        // Since 2026-10-18 an empty slot is a REAL state again rather than a
+        // corner case: a conversation that has sent nothing reads nil here, and
+        // reading it as "0 tokens used" would be the same class of fabrication as
+        // the request-envelope figure this round removed.
         guard let reading else { return AppLocalized("Context") }
         let ratio = DSHContextFormat.ratio(used: reading.usedTokens, window: reading.windowTokens)
-        // One key with two arguments, the same shape the iOS 26 line already uses
-        // for the reading of this ring.
-        return String(format: AppLocalized("Context %lld%% used — %@"), reading.percent, ratio)
+        // An estimate is announced as one. The key is shared with the measured
+        // reading so the two states cannot drift apart in wording, and the
+        // qualification is appended rather than substituted because a screen
+        // reader must hear the number either way.
+        let used = String(format: AppLocalized("Context %lld%% used — %@"), reading.percent, ratio)
+        return reading.isEstimate ? used + " · " + AppLocalized("estimated request envelope") : used
     }
 }
 
@@ -688,9 +865,16 @@ struct DSHContextPanel: View {
     /// The one line under "Context": how full the window is, and nothing else.
     ///
     /// `""` — no line at all — when there is no percentage to state: no reading
-    /// (no request assembled in this process yet) or an unknown window. The
-    /// operator asked for exactly that, and with the estimate fallback the slot
-    /// carries the percentage in every state that can actually occur.
+    /// (this session has sent nothing and been told nothing) or an unknown
+    /// window. The operator asked for exactly that.
+    ///
+    /// ONE qualification is appended when the figure is the estimate rather than
+    /// a provider count, and only then. The operator's removals were of captions
+    /// that sat there in EVERY state — including the measured one, where they
+    /// said nothing the number did not already mean. This one exists because the
+    /// alternative it replaces did: the same slot rendered a request-envelope
+    /// estimate as "~60K used / 262K" while the provider was charging 189,546
+    /// per step, and no wording anywhere on the sheet distinguished the two.
     ///
     /// Built as a `String` through `AppLocalized`/`String(format:)` rather than as
     /// a `LocalizedStringKey`: the sentence is assembled from a format and a name,
@@ -698,14 +882,20 @@ struct DSHContextPanel: View {
     /// so a composed key could not be handed to `AppLocalized` there.
     private var headerSubtitle: String {
         guard let reading, reading.hasWindow else { return "" }
-        return String(format: AppLocalized("%lld%% of the window"), reading.percent)
+        let percent = String(format: AppLocalized("%lld%% of the window"), reading.percent)
+        guard reading.isEstimate else { return percent }
+        return percent + " · " + AppLocalized("estimated request envelope")
     }
 
     // MARK: Rows
 
     private var components: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("This request, estimated")
+            // "estimated" while the envelope has not been priced by a provider,
+            // "measured" once it has — one word that tells the reader whether the
+            // rows below are what the model was charged or what this app thinks it
+            // will be charged.
+            Text(LocalizedStringKey(breakdowns.latest?.sectionTitle ?? "This request, estimated"))
                 .font(Font(AppFont.ui(11, weight: .semibold, category: .ui)))
                 .foregroundStyle(.secondary)
 
@@ -726,8 +916,11 @@ struct DSHContextPanel: View {
                     detail: count(b.surfaceMessageCount, .entry)
                 )
                 Divider()
+                // Measured or estimated — the row says which, from the store's own
+                // record of what it measured (`DSHContextBreakdown.isMeasured`),
+                // never from a rule of thumb about the two numbers being close.
                 ContextRow(
-                    label: "Total (estimated)",
+                    label: LocalizedStringKey(b.totalLabel),
                     value: DSHContextFormat.approx(b.estimatedTotal),
                     detail: nil,
                     emphasised: true

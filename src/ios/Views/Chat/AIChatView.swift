@@ -1077,14 +1077,16 @@ struct AIChatView: View {
         // the token-usage sheet: both are "look at the numbers" sheets opened
         // from the same row.
         //
-        // `DSHContextReading.display` and not `.latest`: the sheet must show the
-        // local estimate of the request in flight while a turn runs, and `.latest`
-        // is nil until the provider has reported once.
+        // `DSHContextReading.display` and not `.reported`: the sheet must show
+        // the measured occupancy of THIS conversation once one exists, and while
+        // a request is in flight the app's own enveloped estimate — labelled as
+        // an estimate, which `.reported` alone cannot say.
         .sheet(isPresented: $showContextPanel) {
             DSHContextPanel(reading: DSHContextReading.display(
                 messages: cached.vm.messages,
                 window: cached.vm.currentModelContextWindow,
-                streaming: cached.vm.isProcessing
+                sessionId: cached.vm.sessionId,
+                requestInFlight: cached.vm.isProcessing
             ))
             .compatDetents([.fraction(0.8), .large])
         }
@@ -3343,18 +3345,18 @@ struct AIChatView: View {
     /// are added as a single opaque subview rather than as more inline
     /// modifiers.
     ///
-    /// `DSHContextReading.display` and not `.latest`: the provider's own figure
-    /// only exists after a call has been answered, and the ring would then sit
-    /// empty for the whole first turn. `.display` falls back to the estimate of
-    /// the request that is already in flight — the same value the panel's
-    /// `Total (estimated)` row shows — and switches to the reported figure as soon
-    /// as one arrives.
+    /// `DSHContextReading.display` and not `.reported`: a conversation that has
+    /// sent nothing must draw an EMPTY ring rather than a figure, and the ring
+    /// must then fill from the provider's own count — with the app's labelled
+    /// estimate standing in only while a request is in flight and no receipt
+    /// covers it yet.
     private var contextRingButton: some View {
         DSHContextRingButton(
             reading: DSHContextReading.display(
                 messages: vm.messages,
                 window: vm.currentModelContextWindow,
-                streaming: vm.isProcessing
+                sessionId: vm.sessionId,
+                requestInFlight: vm.isProcessing
             )
         ) { showContextPanel = true }
     }
