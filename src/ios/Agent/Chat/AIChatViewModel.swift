@@ -6214,7 +6214,6 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
         let contextTokens = estimateContextTokens("runAgentLoop(baseline)")
         let measuredTokens = DSHContextUsageStore.shared.measured?.promptTokens
         logger.info("📐 Context baseline: agentHistory=\(self.agentHistory.count) msgs, occupancy=\(contextTokens) (measured provider count when one exists for this session; this app's character lower bound otherwise — 2.44× low on the 2026-10-18 log), measuredPrompt=\(measuredTokens.map { String($0) } ?? "nil"), turnUsage.latestContextTokens=\(turnUsage.latestContextTokens) (model window: \(ProviderConfigStore.shared.entry(for: entry.id)?.model.contextWindowTokens ?? 0))")
-        logger.info("📐 Context baseline: agentHistory=\(self.agentHistory.count) msgs, estimated ~\(estimatedTokens) tokens, turnUsage.latestContextTokens=\(turnUsage.latestContextTokens) (model window: \(ProviderConfigStore.shared.entry(for: entry.id)?.model.contextWindowTokens ?? 0))")
 
         // Safety: scan the entire agentHistory for assistant messages with tool_use
         // that lack corresponding tool_result messages. This can happen when:
