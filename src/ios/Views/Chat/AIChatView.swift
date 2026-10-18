@@ -6626,7 +6626,7 @@ private struct AttachmentDocumentPicker: UIViewControllerRepresentable {
 
 /// The chains that use this call it with dot syntax on a `View`, so it has to
 /// be a `View` extension rather than a member of the view struct.
-private extension View {
+fileprivate extension View {
 ///    reserving them forever. `onDisappear` is the other half of that.
 private func measuredPanelHeight(_ height: Binding<CGFloat>,
                                  latest: Binding<CGFloat>,
