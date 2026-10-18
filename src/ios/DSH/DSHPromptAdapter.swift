@@ -68,8 +68,11 @@ extension AIChatViewModel {
         // conversation (`cache` 99.5% → 0.0% on the next request, measured).
         //
         // They travel in `dshVolatileTurnContext` instead, which the request
-        // builders admit as a message before the turn's own user message — the
-        // position upstream DSH gives its runtime-context snapshot
+        // builders admit at the head of the conversation
+        // (`historyWithVolatileTurnContext`) — an index the conversation's own
+        // growth cannot move, which is what this engine's KV cache needs before it
+        // reuses anything. Upstream DSH holds the same invariant by admitting its
+        // runtime-context snapshot once and never moving it
         // (`packages/core/agent-loop/src/runtime-context.ts`).
 
         // The assembly is unchanged; only the boundary between prompt and message
@@ -191,12 +194,18 @@ extension AIChatViewModel {
     ///   registered this turn), which change when a tool is toggled.
     ///
     /// Everything here is rebuilt per request and admitted as its own `user`
-    /// message immediately before the turn's own user message — upstream DSH's
-    /// position for its runtime-context snapshot
-    /// (`packages/core/agent-loop/src/runtime-context.ts`,
-    /// `RuntimeContextProjection.project`; admitted in `agent.ts` as
-    /// `{ kind: 'enter', messages: [...claimed, context] }`). Semantically it is
-    /// the same text in front of the same user message; byte-wise the system
+    /// message at the head of the conversation — before its first genuine user
+    /// turn, an index the conversation's own growth cannot move. Upstream DSH holds
+    /// the same invariant for its runtime-context snapshot by admitting it once and
+    /// never moving it (`RuntimeContextProjection.project` in
+    /// `packages/core/agent-loop/src/runtime-context.ts`, committed in `agent.ts`
+    /// as `{ kind: 'enter', messages: [...claimed, context] }` with
+    /// `{ surfaceOp: 'append' }`). It matters here because the engine reuses a
+    /// cached prompt only while the request extends one it still holds: a block
+    /// whose index advanced by one message per turn re-prefilled the whole
+    /// conversation on every turn (measured `cache 13,443 / 57,329`, 23.4%).
+    /// Semantically it is the same text the model read before P1-2, when it sat at
+    /// the head of the request as system-prompt sections; byte-wise the system
     /// prompt stops changing, so the engine's cached prefix survives.
     ///
     /// - Returns: the block, or nil when there is nothing volatile to report.
