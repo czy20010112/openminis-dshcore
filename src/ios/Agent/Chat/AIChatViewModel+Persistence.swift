@@ -320,7 +320,19 @@ extension AIChatViewModel {
             if raw.role == .user && raw.isToolResultOnly {
                 // Tool-result user messages: apply results to the current assistant's tool blocks
                 if let assistant = currentAssistant {
+                    let blocksBefore = assistant.blocks.count
                     Self.applyToolResults(from: raw, to: assistant, mediaResolver: resolver)
+                    // [P1-c] Per-block provenance, kept aligned with locks. The
+                    // tool block itself was created by the assistant row that asked
+                    // for the tool (so it already carries THAT row's sort order), and
+                    // this pass only fills its result in — the delta is 0 today. The
+                    // append is here so a version that DOES add a block cannot leave
+                    // a silent gap in the provenance, which would make the compaction
+                    // boundary's block arithmetic wrong by one.
+                    assistant.blockSortOrders.append(
+                        contentsOf: Array(repeating: raw.sortOrder,
+                                          count: assistant.blocks.count - blocksBefore)
+                    )
                 }
                 // Don't create a UI message for tool results
                 continue
@@ -344,6 +356,12 @@ extension AIChatViewModel {
                     for block in continuation.blocks {
                         assistant.blocks.append(block)
                     }
+                    // [P1-c] The blocks just folded in came from THIS raw row, and
+                    // the boundary decision needs that per-block (see
+                    // `blockSortOrders`).
+                    assistant.blockSortOrders.append(
+                        contentsOf: Array(repeating: raw.sortOrder, count: continuation.blocks.count)
+                    )
                     if let usage = continuation.usage {
                         assistant.usage = usage
                         // [T-usage-capsule-time] Carry the completion clock with
@@ -390,6 +408,8 @@ extension AIChatViewModel {
                     let msg = raw.toChatMessage(mediaResolver: resolver, showThinking: showThinking)
                     msg.sourceSortOrder = raw.sortOrder
                     msg.lastSourceSortOrder = raw.sortOrder
+                    // [P1-c] Per-block provenance, in block order.
+                    msg.blockSortOrders = Array(repeating: raw.sortOrder, count: msg.blocks.count)
                     currentAssistant = msg
                     loadedUIMessages.append(msg)
                 }
@@ -413,6 +433,9 @@ extension AIChatViewModel {
             }
             msg.sourceSortOrder = raw.sortOrder
             msg.lastSourceSortOrder = raw.sortOrder
+            // [P1-c] A user bubble can carry blocks too (attachments, an inline
+            // image), so it gets the same per-block provenance.
+            msg.blockSortOrders = Array(repeating: raw.sortOrder, count: msg.blocks.count)
             loadedUIMessages.append(msg)
         }
 
@@ -468,7 +491,7 @@ extension AIChatViewModel {
         self.cachedLatestMarker = compactMarker
         if let marker = compactMarker {
             logger.info("[Compact] ━━━ Phase 2.5: restore (Phase B id-first) ━━━")
-            logger.info("[Compact] marker: id=\(marker.id.prefix(8)) fkmId=\(marker.firstKeptMessageId?.prefix(8) ?? "nil") bmId=\(marker.boundaryMessageId?.prefix(8) ?? "nil") lcmId=\(marker.lastCompactedMessageId?.prefix(8) ?? "nil") fkSO=\(marker.firstKeptSortOrder) compactedCount=\(marker.compactedCount) summary=\(marker.summary.count)chars createdAt=\(marker.createdAt)")
+            logger.info("[Compact] marker: id=\(marker.id.prefix(8)) version=\(marker.version) fkmId=\(marker.firstKeptMessageId?.prefix(8) ?? "nil") bmId=\(marker.boundaryMessageId?.prefix(8) ?? "nil") lcmId=\(marker.lastCompactedMessageId?.prefix(8) ?? "nil") fkSO=\(marker.firstKeptSortOrder) compactedCount=\(marker.compactedCount) summary=\(marker.summary.count)chars createdAt=\(marker.createdAt)")
             logger.info("[Compact] DB: totalRaw=\(rawMessages.count) range=\(rawMessages.first?.sortOrder ?? -1)...\(rawMessages.last?.sortOrder ?? -1)")
             logger.info("[Compact] Memory: history=\(loadedHistory.count) uiMessages=\(loadedUIMessages.count)")
             // Diag: locate marker.lcmId in rawMessages so we can see the exact
@@ -553,14 +576,27 @@ extension AIChatViewModel {
                     DSHCompactUIRow(
                         firstSortOrder: ui.sourceSortOrder,
                         lastSortOrder: ui.lastSourceSortOrder,
-                        role: ui.role == .user ? "user" : (ui.role == .assistant ? "assistant" : "other"),
-                        hasText: !ui.content.isEmpty
+                        // [P1-c] `systemInfo` keeps its own name: the greying loop
+                        // below skips exactly those rows, and a block accounting
+                        // that described the loop differently from the loop would
+                        // be a readout measuring itself.
+                        role: ui.role == .user
+                            ? "user"
+                            : (ui.role == .assistant
+                                ? "assistant"
+                                : (ui.role == .systemInfo ? "systemInfo" : "other")),
+                        hasText: !ui.content.isEmpty,
+                        // [P1-c] Phase 2 stamped each block with the sort order of
+                        // the raw row that produced it, so the boundary can tell a
+                        // bubble that is FULLY compacted from one the anchor lands
+                        // in the middle of.
+                        blockSortOrders: ui.blockSortOrders
                     )
                 },
                 historyDbIds: Set(loadedHistory.compactMap { $0.dbMessageId })
             )
             let insertIdx = boundaryDecision.insertIndex
-            logger.info("[Compact] boundary decision path=\(boundaryDecision.resolutionPath) insertIdx=\(insertIdx)/\(loadedUIMessages.count) grays=\(boundaryDecision.greysAnything) anchor=\(boundaryDecision.resolvedAnchorId?.prefix(8) ?? "nil") healed=\(boundaryDecision.healedMarkerAnchorId?.prefix(8) ?? "nil")")
+            logger.info("[Compact] boundary decision path=\(boundaryDecision.resolutionPath) insertIdx=\(insertIdx)/\(loadedUIMessages.count) grays=\(boundaryDecision.greysAnything) anchor=\(boundaryDecision.resolvedAnchorId?.prefix(8) ?? "nil") healed=\(boundaryDecision.healedMarkerAnchorId?.prefix(8) ?? "nil") degraded=\(boundaryDecision.degradedAnchor) grayedBlocks=\(boundaryDecision.uiGrayedBlockCount)/\(boundaryDecision.grayedBlockCount) deferredBlocks=\(boundaryDecision.deferredBlockCount) overClaimedBlocks=\(boundaryDecision.overClaimedBlockCount)")
 
             // A healed anchor has to reach the store, or the next launch repeats
             // the same repair — and `effectiveAgentHistory()` keeps degrading to
@@ -581,6 +617,23 @@ extension AIChatViewModel {
                 logger.warning("[Compact] Phase2.5 restored a divider that greys nothing (path=\(boundaryDecision.resolutionPath)) — the marker describes no position this transcript can resolve; use revert to clear it")
             }
 
+            // [P1-b] The other two states that must not pass as a correct restore.
+            //
+            // Both were previously reported as success. A degraded anchor used to
+            // land on the transcript's own last row (its `createdAt` is later than
+            // every row it covers, so the clock heal always named the newest one),
+            // which put the divider at the BOTTOM and greyed EVERYTHING — and
+            // because that state greys something, the warning above never fired and
+            // the log was indistinguishable from a correct restore. The resolver now
+            // refuses that land, so both conditions below mean "the position was
+            // guessed", and they say so with the operands that caused it.
+            if boundaryDecision.degradedAnchor {
+                logger.warning("[Compact] Phase2.5 restored from a marker whose anchor is NOT a stored row (path=\(boundaryDecision.resolutionPath) insertIdx=\(insertIdx)/\(loadedUIMessages.count) markerVersion=\(marker.version) lcmId=\(marker.lastCompactedMessageId?.prefix(8) ?? "nil")) — the divider is on the kept tail, not at the marker's own boundary; the model seed degrades to the same tail")
+            }
+            if boundaryDecision.greysEverything(uiRowCount: loadedUIMessages.count) {
+                logger.warning("[Compact] Phase2.5 greys the WHOLE transcript (path=\(boundaryDecision.resolutionPath) insertIdx=\(insertIdx) rows=\(loadedUIMessages.count)) — every row is above the divider. Legitimate only for an EXACT anchor that names the newest row; any other path here is the 'whole transcript dimmed, divider at the bottom' bug")
+            }
+
             // The decision above replaced the old branch ladder that used to live
             // here. Its last rung was "insertIdx = 0, grey nothing", which is the
             // state the operator reported as "the compaction record is gone" —
@@ -594,6 +647,13 @@ extension AIChatViewModel {
             let divider = ChatMessage(role: .compactDivider, content: "\(compactedUICount) messages compacted")
             divider.compactSummary = marker.summary
             loadedUIMessages.insert(divider, at: insertIdx)
+            // [P1-c] Message-granular, and deliberately the CONSERVATIVE subset of
+            // what the marker covers: `insertIdx` never lands past a bubble the
+            // anchor only reached the middle of (that bubble stays active), so this
+            // loop can only dim less than the marker covers, never more. The exact
+            // number is in the decision (`grayedBlocks=` above); block-granular
+            // dimming needs a per-block flag in the view layer, which is why the
+            // per-block data (`ChatMessage.blockSortOrders`) is now carried.
             for i in 0..<insertIdx {
                 if loadedUIMessages[i].role != .systemInfo {
                     loadedUIMessages[i].isCompactedHistory = true
@@ -1997,7 +2057,23 @@ extension AIChatViewModel {
         //   [first_post_anchor_user with summary as part-0]
         //   [m_post_anchor_rest]
         //   [the new user input the caller is about to append]
-        if marker.version >= 2 {
+        //
+        // ─── degraded anchors (v3) ─────────────────────────────────────
+        //
+        // [P1-b] A `degradedAnchorVersion` marker says "a compaction happened, and
+        // its anchor names no store row". There is no exact kept tail to slice at,
+        // so it takes the compactAll rule the v1 branch below implements — summary
+        // plus the last `compactKeepRecentUserTurns` user turns — which is EXACTLY
+        // what `DSHCompactBoundary` restores for the same marker, so the greyed
+        // region on screen and the model's context cannot disagree.
+        //
+        // Deliberately NOT the "anchor unresolvable → full history (no summary)"
+        // degradation just below: that would leave the summary on screen while
+        // dropping it from the model's context, i.e. the model would be the only
+        // party that cannot see the conversation was compacted — and the surface
+        // would then be over the threshold again on the next step, compacting in a
+        // loop.
+        if marker.version >= 2 && marker.version < DSHCompactMarkerFacts.degradedAnchorVersion {
             guard let anchorId = marker.lastCompactedMessageId,
                   let anchorIdx = agentHistory.lastIndex(where: { $0.dbMessageId == anchorId }) else {
                 // Anchor unresolvable → degrade safely. Don't emit a

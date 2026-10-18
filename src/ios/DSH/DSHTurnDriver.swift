@@ -41,6 +41,19 @@ public enum DSHTurnEndReason: Sendable {
     case maxSteps
     /// A tool result concluded the turn early.
     case concluded
+    /// The model's own output ceiling cut a response short.
+    ///
+    /// A reason of its own, not the step ceiling it used to be mapped onto. DSH
+    /// lists `max-tokens` separately from every other outcome
+    /// (`packages/core/session/src/types.ts`, `TurnEndReason`) because the two
+    /// facts are different: the step ceiling means the loop chose to stop, this
+    /// means the MODEL was truncated mid-answer and the text is incomplete. The
+    /// two also point at different fixes (Resume continues a truncated answer; a
+    /// step-ceiling hit means the turn fanned out for too long), so an end reason
+    /// cannot stand in for the other.
+    ///
+    /// Sticky for the turn: see `sawTruncatedStep`.
+    case maxTokens
 }
 
 // MARK: - Delegate
@@ -266,6 +279,17 @@ public final class DSHTurnDriver {
 
     /// Provider-confirmed overflow recoveries spent in this turn.
     private var overflowRetries = 0
+    /// Whether a step of this turn was cut off by the model's output ceiling.
+    ///
+    /// [P1-2] DSH's `max-tokens` is STICKY for the whole turn — "max-tokens is
+    /// sticky: once any step hits the ceiling, later steps that complete normally
+    /// must not downgrade the turn outcome" (`packages/core/agent-loop/src/agent.ts`).
+    /// A per-step variable cannot carry that: this driver resets `stopReason` for
+    /// every attempt, which is exactly where the fact used to be lost — a turn
+    /// whose seventh step was truncated and whose eighth step completed normally
+    /// reported `.completed`, and the truncation vanished from both the UI and the
+    /// session log. One flag per turn, reset with the other per-turn counters.
+    private var sawTruncatedStep = false
     /// Routes whose pressure configuration has already been reported.
     private var warnedPressureTargets = Set<String>()
     /// Skip reasons already reported this turn, so a surface that repeats the same
@@ -362,6 +386,9 @@ public final class DSHTurnDriver {
         // A new turn starts a fresh overflow-recovery sequence: DSH clears the
         // same counter when the agent goes idle.
         overflowRetries = 0
+        // The truncation fact belongs to a turn for the same reason its end
+        // reason does: it is what this turn reports about itself.
+        sawTruncatedStep = false
         reportedSkips.removeAll()
         // Prime the priced envelope before the first step, so a turn that opens
         // on an already-over-threshold conversation compacts before its first
@@ -450,6 +477,10 @@ public final class DSHTurnDriver {
                         } catch {
                             // Cancelled during the backoff — Stop, or session teardown.
                             delegate?.driver(self, streamRetryCountdown: 0)
+                            // Nothing can have streamed yet on this attempt, so this
+                            // settles nothing; it is here because every terminal exit
+                            // of an attempt settles its visible prefix in one place.
+                            settleInterruptedAttempt(assistantParts, turn: turn)
                             delegate?.driver(self, didEndTurn: .cancelled)
                             return .cancelled
                         }
@@ -461,6 +492,10 @@ public final class DSHTurnDriver {
                             request = buildRequest()
                             continue attemptLoop
                         }
+                        // A request that never opened streamed nothing, so this is
+                        // normally a no-op. See the mid-stream catch below for why
+                        // every terminal attempt exit settles its visible prefix.
+                        settleInterruptedAttempt(assistantParts, turn: turn)
                         delegate?.driver(self, didFail: failure)
                         return .cancelled
                     }
@@ -558,11 +593,34 @@ public final class DSHTurnDriver {
                         request = buildRequest()
                         continue attemptLoop
                     }
+                    // [P1-1] Whatever this attempt already streamed is on screen, so
+                    // it is also a fact of the conversation: the user can read it, and
+                    // a model that cannot see its own half-sentence repeats it or
+                    // answers "the part above" as if it had said something else. DSH
+                    // commits the same prefix when a stream dies mid-answer — a
+                    // cancelled attempt's `live.interruptedBlocks()` is appended as an
+                    // `assistant/message` with `interrupted: true`
+                    // (`packages/core/agent-loop/src/agent.ts`), and a non-cancelled
+                    // provider error ends the turn with that prefix still in the log.
+                    //
+                    // Until this line existed the driver committed only a COMPLETED
+                    // stream, so this text lived exclusively in the UI's `ChatMessage`:
+                    // `dshReconcileFromSession` rebuilt `agentHistory` from the surface
+                    // at the end of the turn and the text was not in it, and
+                    // `dshPersistSurface` had nothing to write — the answer vanished on
+                    // the next launch. Appending here is what puts it in the log before
+                    // either of those runs.
+                    settleInterruptedAttempt(assistantParts, turn: turn)
                     delegate?.driver(self, didFail: failure)
                     return .cancelled
                 }
                 break attemptLoop
             }
+
+            // [P1-2] Truncation is sticky for the turn (see `sawTruncatedStep`).
+            // Recorded here, after the attempt finished streaming its terminal
+            // event and before the turn-level reason is chosen below.
+            if stopReason == .maxTokens { sawTruncatedStep = true }
 
             // Refine the priced envelope with what the provider itself counted.
             // DSH's meter reuses provider-reported usage when the request carried
@@ -590,8 +648,13 @@ public final class DSHTurnDriver {
             if toolCalls.isEmpty {
                 let reason: DSHTurnEndReason
                 switch stopReason {
-                case .endTurn, .refusal, .toolUse: reason = .completed
-                case .maxTokens: reason = .maxSteps
+                case .endTurn, .refusal, .toolUse:
+                    // [P1-2] A truncation earlier in this turn outranks a step that
+                    // completed normally — that is what sticky means upstream. The
+                    // reply the user is looking at is short either way.
+                    reason = sawTruncatedStep ? .maxTokens : .completed
+                case .maxTokens:
+                    reason = .maxTokens
                 }
                 delegate?.driver(self, didEndTurn: reason)
                 return reason
@@ -683,8 +746,80 @@ public final class DSHTurnDriver {
             await Task.yield()
         }
 
+        // The step ceiling reports itself, even when a step of this turn was also
+        // truncated: this ceiling is the loop's OWN decision to stop (`maxSteps` has
+        // no upstream counterpart — DSH's turn loop is a `while (true)` whose only
+        // exit is an empty next step), and it is the more actionable of the two facts
+        // for the user. Stickiness exists to keep a truncation from being reported as
+        // a clean completion, not to erase a budget stop.
         delegate?.driver(self, didEndTurn: .maxSteps)
         return .maxSteps
+    }
+
+    // MARK: - Attempt Settlement
+
+    /// The prefix of an attempt the session can keep when its stream dies.
+    ///
+    /// DSH's `BlockAssembler.interruptedBlocks()` is the authority, and it is
+    /// deliberately narrow: text/reasoning blocks with non-whitespace content, in
+    /// stream order — "Tool calls are omitted because interruption precedes
+    /// dispatch; retaining one would require a fabricated result."
+    /// (`packages/llm/llm/src/assembler.ts`.)
+    ///
+    /// The tool-call half is not cosmetic. An assistant message carrying a
+    /// `tool_use` block with no `tool_result` after it is a request the provider
+    /// REJECTS, and an interrupted attempt's calls were never dispatched, so they
+    /// cannot have a result to go with them. This driver announces its tool blocks
+    /// as soon as their arguments finish streaming, so a stream that dies after a
+    /// call completed leaves a `DSHToolCallBlock` in `parts` — exactly the block
+    /// that must not be committed.
+    ///
+    /// - Parameter parts: the attempt's accumulated blocks.
+    /// - Returns: the subset that may be appended, possibly empty.
+    private func interruptedContent(_ parts: [DSHContentBlock]) -> [DSHContentBlock] {
+        parts.compactMap { block -> DSHContentBlock? in
+            switch block {
+            case let text as DSHTextBlock:
+                return text.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    ? nil : text
+            case let reasoning as DSHReasoningBlock:
+                return reasoning.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    ? nil : reasoning
+            default:
+                return nil
+            }
+        }
+    }
+
+    /// Append an interrupted attempt's visible prefix to the session.
+    ///
+    /// [P1-1] Called from every terminal exit of an attempt that is not a completed
+    /// stream — the mid-stream failure, the failure to open one, and cancellation —
+    /// and BEFORE `didFail`, so the log holds the text before the UI is told the
+    /// turn failed. What the user already read is then also what the model reads on
+    /// the next turn, and what `dshPersistSurface` writes to the database.
+    ///
+    /// DSH records the equivalent entry with `interrupted: true` on the
+    /// `assistant/message` event (`packages/core/agent-loop/src/agent.ts`).
+    /// `DSHMessage` carries no such flag and this driver does not invent one: the
+    /// same fact is expressed by the entry's shape and position — it is the last
+    /// entry of a turn whose end reason is `.cancelled`, it never carries a
+    /// `tool_use` block, and it is the only assistant entry this driver appends
+    /// without a terminal stream event behind it. Adding the flag would require a
+    /// field on the shared message type, whose persistence and projection both
+    /// ignore unknown fields, so the flag would be dropped on the way to the
+    /// database and read back as a false negative.
+    ///
+    /// - Parameter parts: the attempt's accumulated blocks.
+    /// - Parameter turn: enclosing turn, recorded on the entry.
+    private func settleInterruptedAttempt(_ parts: [DSHContentBlock], turn: Int) {
+        let content = interruptedContent(parts)
+        guard !content.isEmpty else { return }
+        session.append(DSHMessage(role: .assistant, blocks: content), turn: turn)
+        AppLogger(category: "DSHLoop").warning(
+            "[DSH] settled interrupted attempt: kept \(content.count) block(s) "
+            + "of \(parts.count) in turn=\(turn)"
+        )
     }
 
     // MARK: - Compaction
@@ -716,7 +851,7 @@ public final class DSHTurnDriver {
         let measuredSource: DSHContextUsageSource =
             price.isProviderCount ? .providerMeasured : .requestEnvelopeEstimate
 
-        let spec: DSHCompactionSpec
+        var spec: DSHCompactionSpec
         do {
             spec = try resolveSpec(reservedCompletionTokens: price.reservedCompletionTokens)
         } catch let error as DSHCompactionConfigError {
@@ -735,6 +870,57 @@ public final class DSHTurnDriver {
         }
 
         guard measured >= spec.thresholdTokens else { return }
+
+        // [P1-3] The gate above and the selection below must count with the SAME
+        // meter, and they did not.
+        //
+        // `measured` is the provider's own count of the request envelope once a
+        // response has reported usage, and `thresholdTokens` is derived from the
+        // model's window — so both are provider tokens. `retainTokens` comes from
+        // the same resolved window and is therefore provider tokens too, but the
+        // selection that SPENDS it counts with `DSHTokenEstimate.tokens(for:)`
+        // (`DSHCompaction.swift`, `select`), a character-proportional estimator
+        // that understated this corpus's real count by a factor of ~2.5 (device
+        // log 2026-10-18: `measured=191820` against a 76,551-token estimate of the
+        // same surface, and the very next request charged `prompt=115980` for a
+        // ~42.6k-estimate surface). A budget expressed in provider tokens, spent by
+        // an accumulator reading estimates, buys ~2.5x the tail it names — so every
+        // compaction shadowed less than the policy asked for, and the request that
+        // followed each of the turn's five compactions was still charged 115,980 …
+        // 118,210 provider tokens against a 40,632-token tail budget.
+        //
+        // Upstream has no such split: `compaction-basic` compares the threshold and
+        // accumulates the retained tail from the SAME meter —
+        // `const pricedNodes = measurement.nodes` in both
+        // (`packages/compaction/compaction-basic/src/region.ts`). One meter, one
+        // currency. This app has two, so the budget is converted into the units the
+        // selection actually reads; the threshold formula and the retained-tail
+        // POLICY are untouched.
+        //
+        // The conversion divides by `measured / surfaceEstimate`, which is the
+        // ratio between the two meters over the same content. It is only applied
+        // when `measured` really is a provider count: with an estimated envelope
+        // both sides come from the estimator and converting would move the budget
+        // by the ratio between two estimates of different scopes.
+        //
+        // The policy's own figure is kept for the diagnostic line: after the
+        // conversion below, `spec.retainTokens` is in the estimator's units.
+        let retainProviderTokens = spec.retainTokens
+        spec = spec.replacingRetainTokens(Self.calibratedRetainBudget(
+            retainTokens: retainProviderTokens,
+            measuredTokens: measured,
+            surfaceEstimate: surfaceNow,
+            isProviderCount: price.isProviderCount
+        ))
+
+        // One rendering of the budget facts, shared by every line this decision
+        // can produce: the same figures have to appear whichever outcome the
+        // retry loop reaches, and a per-site call is what let two of the three
+        // lines drift in the past.
+        let facts = specFacts(
+            spec, measured: measured, source: measuredSource,
+            retainProviderTokens: retainProviderTokens
+        )
 
         // The system prompt and tool roster are part of the request the provider
         // prices but cannot be shadowed by a compaction, so they are carried
@@ -771,7 +957,7 @@ public final class DSHTurnDriver {
                 AppLogger(category: "CompactDiag").warning(
                     "[CompactDiag] mid-turn compaction at \(position): \(tokens) "
                     + "shadowed=\(shadowed) reason=pressure "
-                    + specFacts(spec, measured: measured, source: measuredSource)
+                    + facts
                     + " attempt=\(attempt) reserved=\(spec.reservedCompletionTokens)"
                 )
                 delegate?.driver(self, didCompact: outcome)
@@ -798,7 +984,7 @@ public final class DSHTurnDriver {
                     let entries = session.surfaceCount
                     AppLogger(category: "CompactDiag").warning(
                         "[CompactDiag] mid-turn compaction skipped at \(position): "
-                        + "reason=\(reason) \(specFacts(spec, measured: measured, source: measuredSource)) "
+                        + "reason=\(reason) \(facts) "
                         + "surfaceEntries=\(entries)"
                     )
                 }
@@ -809,8 +995,53 @@ public final class DSHTurnDriver {
         let attempts = spec.compactionRetries + 1
         AppLogger(category: "CompactDiag").warning(
             "[CompactDiag] mid-turn compaction still above threshold at turn=\(turn) step=\(step) "
-            + "after \(attempts) attempt(s): \(specFacts(spec, measured: measured, source: measuredSource))"
+            + "after \(attempts) attempt(s): \(facts)"
         )
+    }
+
+    /// Translate a retained-tail budget into the units the selection reads.
+    ///
+    /// [P1-3] `retainTokens` and `thresholdTokens` are provider tokens — both are
+    /// derived from the model's declared window, and the threshold is compared
+    /// against the provider's own count of the request. `DSHCompactionSelection`
+    /// spends the budget with `DSHTokenEstimate`, which counts characters, and on
+    /// this app's corpus that estimate is ~2.5x low (device log 2026-10-18:
+    /// `measured=191820` for a surface the estimator called 76,551 tokens; the next
+    /// request after that compaction was charged `prompt=115980` for a surface the
+    /// estimator called 42,599). Spending a provider budget through the estimator
+    /// therefore retains ~2.5x the tail the policy names.
+    ///
+    /// The correction is a ratio and not a constant: which way, and by how much,
+    /// the estimator is off depends on the content (CJK prose, tool JSON and
+    /// base64 are all mispriced differently), so it is measured per compaction from
+    /// the two numbers the decision already has.
+    ///
+    /// Deliberately conservative in three ways: nothing changes when the priced
+    /// envelope is itself an estimate (one currency, nothing to convert), nothing
+    /// changes when the provider's count is not above the estimate (ratio ≤ 1 —
+    /// there is no split to correct, and a ratio below 1 would GROW the tail), and
+    /// the result is clamped to `[1, retainTokens]`, so a wild ratio can only make
+    /// the retained tail smaller than the policy asked, never larger.
+    ///
+    /// - Parameters:
+    ///   - retainTokens: the resolved retained-tail budget, in provider tokens.
+    ///   - measuredTokens: the priced envelope the threshold was compared against.
+    ///   - surfaceEstimate: `DSHTokenEstimate.total(surface)` — the selection's own
+    ///     units for the same content.
+    ///   - isProviderCount: whether `measuredTokens` is the provider's own count.
+    /// - Returns: the budget expressed in the estimator's units.
+    static func calibratedRetainBudget(
+        retainTokens: Int,
+        measuredTokens: Int,
+        surfaceEstimate: Int,
+        isProviderCount: Bool
+    ) -> Int {
+        guard isProviderCount, retainTokens > 0 else { return retainTokens }
+        let estimate = max(1, surfaceEstimate)
+        guard measuredTokens > estimate else { return retainTokens }
+        let ratio = Double(measuredTokens) / Double(estimate)
+        let converted = Int((Double(retainTokens) / ratio).rounded(.down))
+        return max(1, min(retainTokens, converted))
     }
 
     /// The budget facts one compaction line reports.
@@ -822,6 +1053,14 @@ public final class DSHTurnDriver {
     /// log reader never has to guess — that guess is what made a 2.44×-low
     /// estimate look like the engine's measurement.
     ///
+    /// `retain` is the OTHER currency on the same line, and it says so. Since
+    /// [P1-3] the retained-tail budget this compaction actually spent is in
+    /// `DSHTokenEstimate` units — the same units as `beforeEst`/`afterEst` — while
+    /// the policy's own figure is in provider tokens. Both are printed, labelled,
+    /// because the two differ by the estimator's error (~2.5x on this corpus) and a
+    /// single unlabelled number here is what let "it compacted but the prompt did
+    /// not shrink" be diagnosed as a compaction failure instead of a currency one.
+    ///
     /// A named piece rather than one long `+` chain: a single chain holding a
     /// dozen interpolations over mixed `Int`/`Double`/`String` operands makes the
     /// type checker search every overload combination, and the whole expression
@@ -829,18 +1068,22 @@ public final class DSHTurnDriver {
     /// failure that a local syntax check cannot see.
     ///
     /// - Parameters:
-    ///   - spec: the resolved trigger budget.
+    ///   - spec: the resolved trigger budget, retained-tail figure already
+    ///     converted into estimator units.
     ///   - measured: the priced envelope the threshold was compared against.
     ///   - source: whether that envelope carries a provider count.
+    ///   - retainProviderTokens: the policy's retained-tail budget, unconverted.
     /// - Returns: one line's worth of threshold, window, and retention facts.
     private func specFacts(
         _ spec: DSHCompactionSpec,
         measured: Int,
-        source: DSHContextUsageSource = .requestEnvelopeEstimate
+        source: DSHContextUsageSource = .requestEnvelopeEstimate,
+        retainProviderTokens: Int
     ) -> String {
         let kind = source == .providerMeasured ? "provider" : "estimated"
         return "measured=\(measured)(\(kind)) threshold=\(spec.thresholdTokens)"
-            + " window=\(spec.contextWindow) retain=\(spec.retainTokens)"
+            + " window=\(spec.contextWindow) retain=\(spec.retainTokens)(est)"
+            + " retainProvider=\(retainProviderTokens)"
     }
 
     /// DSH's `agent/request-error` context-overflow recovery.
@@ -1368,5 +1611,37 @@ public final class DSHTurnDriver {
             return [:]
         }
         return object
+    }
+}
+
+// MARK: - Currency Conversion
+
+extension DSHCompactionSpec {
+    /// The same resolved budget with a different retained-tail figure.
+    ///
+    /// [P1-3] `DSHCompactionSpec` is a value type whose fields are all `let`, and
+    /// the driver has to hand the selection a budget expressed in the units that
+    /// selection counts with — see `DSHTurnDriver.calibratedRetainBudget`. Only
+    /// `retainTokens` moves: the threshold, the capacity, the headroom, and both
+    /// retry budgets are the policy's own and are not the driver's to reinterpret.
+    ///
+    /// Kept here rather than as a method on the type so that the one place which
+    /// knows WHY the budget is converted is also the one place that builds the
+    /// converted value, and so `DSHCompaction.swift` — shared byte-for-byte by both
+    /// trees and owned by another change — keeps no driver-specific helper.
+    ///
+    /// - Parameter tokens: retained-tail budget in the caller's units.
+    /// - Returns: the same spec with that budget.
+    func replacingRetainTokens(_ tokens: Int) -> DSHCompactionSpec {
+        DSHCompactionSpec(
+            contextWindow: contextWindow,
+            reservedCompletionTokens: reservedCompletionTokens,
+            thresholdRatio: thresholdRatio,
+            headroomTokens: headroomTokens,
+            thresholdTokens: thresholdTokens,
+            retainTokens: tokens,
+            compactionRetries: compactionRetries,
+            maxOverflowRetries: maxOverflowRetries
+        )
     }
 }

@@ -261,12 +261,37 @@ public enum DSHToolScheduler {
             // Bounded rolling pool: fill up to `maxParallel` in flight, then
             // refill as calls settle. Awaiting a real task group keeps the
             // thread suspended instead of spinning on `Task.yield()`.
-            var inFlight = [Task<Void, Never>]()
+            //
+            // [T-dsh-scheduler-pool-drain] The pool is keyed by the call's own
+            // model index and a settle REMOVES its entry. The shipped version
+            // kept a bare `[Task<Void, Never>]` and only ever appended to it, so
+            // after the first fill `inFlight.count` was pinned at `maxParallel`:
+            // the fill loop below could never run again (so `nextToStart` stopped
+            // advancing), and `waitForAny` returned immediately because every
+            // task in the array had already finished. Nothing was left to await
+            // and nothing could ever be committed, so the step never completed:
+            // `driver.run()` never returned and the six results never reached the
+            // model, while the loop re-raced a task group over tasks that were
+            // already done. One step with `maxParallel + 1` (5) or more
+            // `.parallel` calls was enough.
+            //
+            // (`await waitForAny` is still a suspension point, so the `aborted`
+            // check below stayed reachable: tapping Stop did end such a turn, as
+            // `.cancelled` and with the step's results lost. Without a tap the
+            // turn never ended at all.)
+            //
+            // Upstream (`agent-loop/src/tool-calls.ts`: `Promise.race(inFlight.values())`
+            // followed by `inFlight.delete(settledIndex)`, then `fillPool()`)
+            // dequeues on every settle and refills; the dictionary keys here are
+            // the same call indices it deletes by, which is also why the loop
+            // condition now has to test the pool as well as `nextToStart`: the
+            // last few calls drain after the model has asked for everything.
+            var inFlight = [Int: Task<Void, Never>]()
 
-            while nextToStart < group.count && !aborted {
+            while (nextToStart < group.count || !inFlight.isEmpty) && !aborted {
                 // Re-read later modes after ordered commits so a registry
                 // change can create a barrier.
-                if nextToStart > 0
+                if nextToStart < group.count, nextToStart > 0
                     && registry.executionMode(name: group[nextToStart].block.name) != .parallel {
                     break
                 }
@@ -274,17 +299,20 @@ public enum DSHToolScheduler {
                 while inFlight.count < maxParallel && nextToStart < group.count {
                     let index = nextToStart
                     nextToStart += 1
-                    inFlight.append(Task { await runCall(index) })
+                    inFlight[index] = Task { await runCall(index) }
                 }
 
                 // Suspend until at least one in-flight call finishes, then
-                // commit every result that is ready in model order.
-                await waitForAny(inFlight)
+                // commit every result that is ready in model order. The settled
+                // call leaves the pool, which is what lets the fill above run
+                // again on the next pass.
+                let settled = await waitForAny(inFlight)
+                if settled >= 0 { inFlight.removeValue(forKey: settled) }
                 commitReady()
                 if signal.isCancelled { aborted = true }
             }
 
-            for task in inFlight { await task.value }
+            for task in inFlight.values { await task.value }
             commitReady()
         } else {
             // Exclusive barrier: one call at a time, committed in order.
@@ -305,13 +333,19 @@ public enum DSHToolScheduler {
 
     /// Suspend until at least one of `tasks` has finished.
     ///
+    /// Reports the *key* of the call that settled, not a position in some
+    /// snapshot array: the caller drops exactly that entry from the pool, and a
+    /// positional answer would name the wrong task the moment anything leaves
+    /// (the shipped caller never removed anything, which is what turned the pool
+    /// into a busy loop — see `runGroup`).
+    ///
     /// Each task installs its own continuation resumption, so the caller is
     /// woken exactly once by whichever call completes first rather than polling
     /// for completion.
-    private static func waitForAny(_ tasks: [Task<Void, Never>]) async -> Int {
+    private static func waitForAny(_ tasks: [Int: Task<Void, Never>]) async -> Int {
         guard !tasks.isEmpty else { return -1 }
         return await withTaskGroup(of: Int.self) { group in
-            for (index, task) in tasks.enumerated() {
+            for (index, task) in tasks {
                 group.addTask {
                     await task.value
                     return index

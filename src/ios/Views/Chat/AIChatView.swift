@@ -38,6 +38,7 @@ private final class CachedViewModel: ObservableObject {
             if !isNew, ViewModelCache.shared.consumeStaleFlag(sessionId: sessionId) {
                 minisLogger.info("🔑DRAFT CachedViewModel.init sessionId=\(sessionId) — STALE flag consumed, scheduling reload")
                 Task { @MainActor [weak vm = cached] in
+                    vm?.dshInvalidateSession()  // [T-ios-revert-compact-reseed] merged rows -> reseed
                     await vm?.loadSession()
                 }
             }
