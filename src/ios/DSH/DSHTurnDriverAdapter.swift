@@ -481,6 +481,19 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
             handleUserCancelledCleanup()
         case .maxSteps:
             reportTurnFailure("Reached the step limit for this turn.")
+        case .maxTokens:
+            // Truncation, not a budget stop.
+            //
+            // [P1-2] This reason used to be reported as `.maxSteps` — "Reached the
+            // step limit for this turn" — which is the opposite of what happened:
+            // the model did not fan out for too long, its answer was cut off mid
+            // sentence. The two also need different words and different arms: a
+            // truncated reply is CONTINUABLE, so Resume is armed here, which is
+            // exactly what the legacy loop does for the same stop reason
+            // (`AIChatViewModel.swift`: `stopReason == .maxTokens` → warn
+            // "Response truncated (max tokens reached)" + `canResume = true`).
+            reportTurnFailure("Response truncated (max tokens reached). Tap Resume to continue.")
+            canResume = true
         }
     }
 

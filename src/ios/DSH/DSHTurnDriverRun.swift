@@ -110,11 +110,37 @@ extension AIChatViewModel {
         for idx in doomed.reversed() { messages.remove(at: idx) }
     }
 
-    /// Capture a DSH compaction into a marker that still has to be written.
+    /// Capture a DSH compaction into a marker, and get it written NOW.
     ///
     /// Called from the driver's `didCompact`, which is synchronous and runs while
-    /// the shadowed rows are still in `agentHistory`. The write itself is async (the
-    /// store is an actor) and happens at the end of the turn.
+    /// the shadowed rows are still in `agentHistory`.
+    ///
+    /// [P1-a] THE WRITE STARTS HERE, NOT AT THE END OF THE TURN.
+    ///
+    /// The end-of-turn write (`runDSHTurn`: persist → `dshWriteCompactionMarker`)
+    /// is the EXACT one, and it stays: a mid-turn range ends inside the rows this
+    /// turn just appended, so only that pass knows their ids. But the compaction
+    /// fires on every step of a long turn, and a turn is minutes long — so
+    /// "record written at the end of the turn" meant "no record at all" whenever
+    /// the app was killed (user swipe, iOS jetsam, a crash) between the
+    /// compaction and the end of the turn. The operator's report is exactly that:
+    /// the transcript had been rewritten on screen (summary, divider, greyed
+    /// prefix) and the next launch showed the whole conversation back, live.
+    ///
+    /// So a FIRST write is queued from here, inside the compaction callback,
+    /// before the turn runs another step. It anchors on the newest shadowed row
+    /// that already has a database row — which for a prefix compaction is a row
+    /// from an earlier turn, persisted long ago — and it is idempotent with the
+    /// end-of-turn write (both are delete-then-insert of the same record, and
+    /// `dshEnqueueMarkerWrite` serialises them).
+    ///
+    /// What this does NOT do is persist the shadowed prefix itself. Those rows are
+    /// the turn's OWN newest rows only in the rare case where the retained tail is
+    /// shorter than the turn's own output, and writing them early would make the
+    /// end-of-turn pass (`dshPersistSurface`, which re-walks everything from
+    /// `logCountBeforeTurn`) write them a SECOND time — the conversation would
+    /// arrive twice, which is a worse failure than a coarse anchor. De-duplicating
+    /// that needs a per-turn "already persisted" set on the view model.
     ///
     /// [T-dsh-compact-anchor-walkback] The anchor is SEARCHED FOR, not demanded of
     /// the last shadowed row.
@@ -158,15 +184,85 @@ extension AIChatViewModel {
             + "range=\(seed.value)...\(outcome.range.shadowedSeqs.last?.value ?? seed.value)"
         )
         // Recorded even when nothing has an id YET: the persistence pass at the end of
-        // this turn is what gives the range's own tail its ids, and the write resolves
-        // against that pass. Giving up here is what produced a compaction that
-        // rendered but was never durable.
-        dshPendingMarker = DSHPendingCompaction(
+        // this turn is what gives the range's own tail its ids, and the end-of-turn
+        // write resolves against that pass. Giving up here is what produced a
+        // compaction that rendered but was never durable.
+        let pending = DSHPendingCompaction(
             candidates: candidates,
             summary: summaryEntry.message.text,
             count: outcome.range.shadowedSeqs.count,
             lastShadowedSeq: outcome.range.shadowedSeqs.last?.value ?? seed.value
         )
+        dshPendingMarker = pending
+
+        // [P1-a] …and get it on disk HERE. This call is synchronous on the main
+        // actor, so between the compaction and the queued write there is no
+        // suspension point at all: what used to be a window of "the rest of the
+        // turn" (minutes, many steps, an arbitrarily large chance of a jetsam)
+        // is now three lines of straight-line code and a Task that starts on the
+        // next turn of the run loop.
+        dshFlushCompactionMarkerNow(pending)
+    }
+
+    /// Queue the FIRST write of a compaction marker, from inside the compaction.
+    ///
+    /// Deliberately not `async`: `didCompact` is synchronous, and making this a
+    /// suspension point would put an `await` back between the compaction and the
+    /// write. Everything the write needs is in `pending`; the store call happens
+    /// inside the queued task, serialised behind any write already in flight.
+    ///
+    /// A plain `Task`, and NOT `dshEnqueueMarkerWrite` here: the enqueue lives
+    /// inside `dshWriteCompactionMarker`, and enqueueing from INSIDE the queue
+    /// would make that call wait for the very task it is running on — a
+    /// self-deadlock that would freeze the turn's remaining persistence. The window
+    /// this closes is "the rest of the turn"; one run-loop hop is not a window.
+    ///
+    /// ORDERING against the end-of-turn write: this task enqueues its write at the
+    /// first suspension after the compaction, which is the turn's own persistence
+    /// pass (`dshPersistSurface`; it always awaits, because a compaction appended a
+    /// summary entry so its `fromIndex` guard passes). The end-of-turn write is
+    /// enqueued after that pass, so the exact anchor lands LAST and wins. Even if
+    /// the two were ever inverted, the outcome would be the COARSER anchor winning
+    /// — a record that claims less than was compacted, never a lost record.
+    func dshFlushCompactionMarkerNow(_ pending: DSHPendingCompaction) {
+        AppLogger(category: "DSHLoop").warning(
+            "[DSH] compaction marker flush queued mid-turn shadowed=\(pending.count) "
+            + "candidates=\(pending.candidates.count) "
+            + "withDbId=\(pending.candidates.filter { $0.dbMessageId != nil }.count)"
+        )
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.dshWriteCompactionMarker(pending, trigger: "midTurn")
+        }
+    }
+
+    /// The queue every compaction-marker write goes through.
+    ///
+    /// [P1-a] There are now two writers for one session — the mid-turn flush and
+    /// the exact end-of-turn rewrite — and each is a delete-then-insert PAIR over
+    /// two separate actor calls (`ChatStore` has no transaction for this; see the
+    /// unfixed P2). Two pairs interleaving can leave two marker rows, or let the
+    /// coarser write land last and undo the exact one. Chaining them on the main
+    /// actor is what makes "one marker row per session, newest anchor wins" hold at
+    /// every instant.
+    ///
+    /// One queue for the whole app rather than one per session: these writes are
+    /// two SQL statements, and a per-session registry would need storage the view
+    /// model does not have. The cost is that a write in session A waits behind a
+    /// write in session B — microseconds, and only while both are compacting.
+    private static var dshMarkerWriteTail: Task<Void, Never>?
+
+    /// Queue `body` behind every marker write already in flight, and return its
+    /// task so a caller that must observe the result can await it.
+    @discardableResult
+    func dshEnqueueMarkerWrite(_ body: @escaping @MainActor () async -> Void) -> Task<Void, Never> {
+        let previous = Self.dshMarkerWriteTail
+        let task = Task { @MainActor in
+            await previous?.value
+            await body()
+        }
+        Self.dshMarkerWriteTail = task
+        return task
     }
 
     /// The anchor a compaction marker will carry, and how it was found.
@@ -248,11 +344,26 @@ extension AIChatViewModel {
     /// `unknownId` is the second half of [T-dsh-compact-marker-always-written].
     /// It is supplied by the caller (rather than invented here) because it has to
     /// be a POSITION, not an identifier: the newest transcript row inside the
-    /// shadowed prefix, whose id names no store row. A `version 2` marker carries
-    /// no position — that is the point of the id-only model — so such a marker
-    /// resolves nowhere and `effectiveAgentHistory()` falls to its documented
-    /// "keep the last N user turns" degradation, which is exactly the compactAll
-    /// semantics a DSH summary has. The trade is deliberate and one-sided:
+    /// shadowed prefix, whose id names no store row.
+    ///
+    /// [P1-b] IT IS NO LONGER WRITTEN AS THE MARKER'S ANCHOR.
+    ///
+    /// The previous shape stored this transcript UUID in `lastCompactedMessageId`
+    /// and called the marker `version 2`. Nothing resolves a transcript UUID — it
+    /// is not a store row id — so the reload's exact match always missed, the
+    /// clock-based heal then named the newest row (the marker is written after
+    /// it), and the transcript came back with EVERY row greyed and the divider at
+    /// the bottom. Worse, that state greys something, so the "restored nothing"
+    /// warning did not fire and the log looked like a correct restore.
+    ///
+    /// The position still exists — it is what tells the caller "the divider
+    /// belonged here" — but it is reported, not persisted as an id: a degraded
+    /// marker now carries `version 3` and NO `lastCompactedMessageId`
+    /// (`DSHCompactMarkerFacts.isDegradedAnchor`). `DSHCompactBoundary` then
+    /// resolves it on the kept tail — the same tail `effectiveAgentHistory()`
+    /// keeps for it — instead of guessing from the clock.
+    ///
+    /// The trade is unchanged and still one-sided:
     ///   * keep the record (this) → the transcript shows the summary and the
     ///     greyed prefix, the model's seed is the retained tail;
     ///   * drop the record (the old shape) → the live transcript has already been
@@ -285,9 +396,15 @@ extension AIChatViewModel {
     /// turn's own rows have been persisted: `stamped` is what that pass just learned
     /// (seq → row id), so a range that reaches into this turn's fresh tail resolves
     /// against it instead of looking anchorless.
+    ///
+    /// Two callers, one function: the mid-turn flush (`dshFlushCompactionMarkerNow`,
+    /// no `stamped`, so the anchor is the newest row that was already persisted) and
+    /// the end-of-turn rewrite (`runDSHTurn`, with this turn's ids). `trigger` is
+    /// what tells the two log lines apart on a device.
     func dshWriteCompactionMarker(
         _ pending: DSHPendingCompaction,
-        stamped: [Int: String] = [:]
+        stamped: [Int: String] = [:],
+        trigger: String = "turnEnd"
     ) async {
         guard let sid = sessionId else { return }
         let resolution = Self.dshCompactAnchorOutcome(
@@ -304,13 +421,17 @@ extension AIChatViewModel {
             AppLogger(category: "DSHLoop").warning(
                 "[DSH] compaction marker NOT written — the range named no transcript row "
                 + "(shadowed=\(pending.count) candidates=\(pending.candidates.count) "
-                + "stampedThisTurn=\(stamped.count) precision=\(resolution.precision))"
+                + "stampedThisTurn=\(stamped.count) precision=\(resolution.precision) "
+                + "trigger=\(trigger))"
             )
             return
         }
 
-        await ChatStore.shared.deleteCompactMarkers(sessionId: sid)
-        await ChatStore.shared.insertCompactMarker(CompactMarker(
+        // [P1-b] A degraded anchor is a POSITION, so it must not be stored in the
+        // column the range resolution reads. `version 3` is what marks it
+        // (`DSHCompactMarkerFacts.isDegradedAnchor`); the stand-in id stays in the
+        // log, where it is a diagnostic instead of a lie.
+        let marker = CompactMarker(
             id: UUID().uuidString,
             sessionId: sid,
             summary: pending.summary,
@@ -320,28 +441,62 @@ extension AIChatViewModel {
             uiBoundarySortOrder: nil,
             boundaryMessageId: nil,
             firstKeptMessageId: nil,
-            lastCompactedMessageId: anchor.id,
-            version: 2
-        ))
-        cachedLatestMarker = await ChatStore.shared.latestCompactMarker(sessionId: sid)
-        AppLogger(category: "DSHLoop").warning(
-            "[DSH] compaction marker written anchor=\(anchor.id.prefix(8)) seq=\(resolution.seq) "
-            + "precision=\(resolution.precision) degraded=\(anchor.degraded) "
-            + "shadowed=\(pending.count) candidates=\(pending.candidates.count) "
-            + "stampedThisTurn=\(stamped.count)"
+            lastCompactedMessageId: anchor.degraded ? nil : anchor.id,
+            version: anchor.degraded ? DSHCompactMarkerFacts.degradedAnchorVersion : 2
         )
-        if anchor.degraded {
-            // Named explicitly: the consequence lands in the MODEL's seed rather
-            // than in the transcript. The marker resolves nowhere, so
-            // `effectiveAgentHistory()` keeps the last N user turns instead of the
-            // marker's exact kept tail. The record itself — summary, divider,
-            // greyed prefix — is intact, which is the whole point.
+        let degraded = anchor.degraded
+        let anchorId = anchor.id
+        let seq = resolution.seq
+        let precision = resolution.precision
+        let stampedCount = stamped.count
+        let count = pending.count
+        let candidateCount = pending.candidates.count
+        let sessionKey = sid
+
+        // Serialised: a second writer (the other trigger, or a later compaction)
+        // must not interleave its delete with this insert — see
+        // `dshEnqueueMarkerWrite`.
+        //
+        // `cachedLatestMarker` is advanced only by the END-OF-TURN trigger. The
+        // mid-turn flush exists to survive a kill, not to change what this turn
+        // sees: the in-memory cache is read mid-turn by the offload slice and by
+        // the cache-warmup request (`effectiveAgentHistory()`), and moving it
+        // before the turn's own reconcile would make those two disagree with
+        // `agentHistory` for the rest of the turn. The store, which is what a
+        // relaunch reads, is written either way.
+        await dshEnqueueMarkerWrite { [weak self] in
+            await ChatStore.shared.deleteCompactMarkers(sessionId: sessionKey)
+            await ChatStore.shared.insertCompactMarker(marker)
+            let latest = await ChatStore.shared.latestCompactMarker(sessionId: sessionKey)
+            guard let self else { return }
+            if trigger == "turnEnd" {
+                self.cachedLatestMarker = latest
+            }
             AppLogger(category: "DSHLoop").warning(
-                "[DSH] the written marker's anchor names no store row (no shadowed row had one); "
-                + "the transcript restores from the marker, the model seed degrades to the "
-                + "last-N-user-turns rule until a later compaction resolves an exact anchor"
+                "[DSH] compaction marker written anchor=\(anchorId.prefix(8)) seq=\(seq) "
+                + "precision=\(precision) degraded=\(degraded) "
+                + "version=\(marker.version) trigger=\(trigger) "
+                + "shadowed=\(count) candidates=\(candidateCount) "
+                + "stampedThisTurn=\(stampedCount)"
             )
-        }
+            if degraded {
+                // Named explicitly: the consequence lands in the MODEL's seed and
+                // in the transcript's divider position rather than in the record
+                // itself. The marker resolves nowhere exactly, so both
+                // `effectiveAgentHistory()` and `DSHCompactBoundary` fall to the
+                // kept tail (the last N user turns) — which is the compactAll
+                // semantics a cumulative DSH summary actually has. The record
+                // itself — summary, divider, greyed prefix — is intact, which is
+                // the whole point, and the reload path warns again when it
+                // restores one of these.
+                AppLogger(category: "DSHLoop").warning(
+                    "[DSH] the written marker's anchor names no store row (no shadowed row had one); "
+                    + "version=\(DSHCompactMarkerFacts.degradedAnchorVersion) so it cannot be mistaken "
+                    + "for an exact anchor — the transcript and the model seed both fall to the "
+                    + "last-N-user-turns rule until a later compaction resolves an exact anchor"
+                )
+            }
+        }.value
     }
     /// Run one turn through the DSH driver.
     ///

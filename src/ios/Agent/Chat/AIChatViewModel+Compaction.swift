@@ -815,6 +815,33 @@ extension AIChatViewModel {
     ///     effectiveAgentHistory().
     ///   - cachedLatestMarker is updated so subsequent agent loop iterations see it.
 
+    /// Drop the driver's in-memory session, so the next turn reseeds it.
+    ///
+    /// [T-ios-revert-compact-reseed] The session is append-only and its surface
+    /// *is* the compaction: a summary entry shadows the range it replaced. Any
+    /// path that changes which compaction applies — the revert below, and an
+    /// iCloud merge that rewrites the rows underneath it — therefore has to
+    /// throw the session away. Reusing it leaves the surface describing the
+    /// compacted conversation while `agentHistory` (reloaded from the store)
+    /// holds the full one, and the two disagree in the worst possible way: the
+    /// rows loaded from the store carry no `dshSeq`, so
+    /// `syncAgentHistoryIntoSession` cannot recognise them as already present and
+    /// appends the whole conversation a second time behind the surviving
+    /// summary. `[DSH] turn start surface=` grows by every row the compaction had
+    /// removed, the model gets the history twice, and the end-of-turn reconcile
+    /// rebuilds `agentHistory` from that doubled surface, so the UI array and the
+    /// store stop describing the same conversation.
+    ///
+    /// Reseeding is the supported path, not a workaround: `dshSeedSession` stamps
+    /// a seq onto every seeded row and assigns `agentHistory` to exactly what it
+    /// seeded, and `effectiveAgentHistory()` applies whatever marker is still in
+    /// the store. So after a revert the seed is the full history (no marker), and
+    /// after a partial revert it is the previous marker's view.
+    func dshInvalidateSession() {
+        dshSession = nil
+        dshSessionOwner = nil
+    }
+
     /// Revert the most recent compact for this session.
     ///
     /// Drops the latest CompactMarker (its summary is discarded), refreshes
@@ -853,10 +880,29 @@ extension AIChatViewModel {
 
         logger.info("[Compact] ━━━ REVERT ━━━ session=\(sessionId.prefix(8)) markerId=\(marker.id.prefix(8)) v=\(marker.version) lcmId=\(marker.lastCompactedMessageId?.prefix(8) ?? "nil")")
 
+        // [T-ios-revert-compact-reseed] The compaction exists twice — as the
+        // summary entry in the driver's session, and as this store marker — and
+        // both halves have to go. The session half goes FIRST: it is the half
+        // that still knows which surface range the summary shadows, and it is
+        // what the driver reads. (`revertLastCompaction` restores the shadowed
+        // range rather than leaving a log the surface no longer explains.)
+        //
+        // Guarded by ownership because the session belongs to a conversation,
+        // not to the view model: reverting another chat's compaction would
+        // unshadow rows in a surface this revert has nothing to do with.
+        if dshSessionOwner == sessionId {
+            dshSession?.revertLastCompaction()
+        }
+
         let deleted = await ChatStore.shared.deleteCompactMarker(id: marker.id)
         guard deleted else {
             logger.error("[Compact] revert: deleteCompactMarker returned false (marker.id=\(marker.id.prefix(8)))")
             appendSystemInfo("Revert failed: marker not found in DB.", icon: "arrow.uturn.backward")
+            // The session half is already undone while the store half still
+            // stands. Rebuilding from the store on the next turn is what keeps
+            // the two from staying diverged (the marker is still cached, so the
+            // reseed applies it again).
+            dshInvalidateSession()
             return
         }
 
@@ -877,6 +923,16 @@ extension AIChatViewModel {
         // notice next to the divider is visually redundant — same anchor,
         // two stacked rows saying overlapping things.
         await loadSession()
+
+        // [T-ios-revert-compact-reseed] AFTER the reload, and unconditionally:
+        // `loadSession` replaced `agentHistory` with the rows the store now
+        // holds, so the in-memory session describes a conversation that no
+        // longer exists. Discarding it here is what makes the next turn reseed
+        // from `effectiveAgentHistory()` — full history when this was the last
+        // marker, the previous marker's view when it was not — instead of
+        // appending the freshly loaded rows on top of the compacted surface.
+        dshInvalidateSession()
+
         // [T-ctx-measure-outbound] The history just grew back. loadSession
         // re-seeded the calibration; show the restored size rather than the
         // report from the compacted context, which would under-read it.

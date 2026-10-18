@@ -88,6 +88,22 @@ final class ChatMessage: Identifiable, ObservableObject {
     /// landed on a continuation row would fail to resolve and the divider
     /// would slide to the top of the list.
     var lastSourceSortOrder: Int?
+    /// `sort_order` of the raw row that produced each entry of `blocks`, in block
+    /// order. Filled by Phase 2 (`loadSession`) as it merges rows into a bubble.
+    ///
+    /// [P1-c] The boundary question is "which of this bubble's blocks are at or
+    /// below the compaction anchor?", and a bubble is a MERGE of raw rows —
+    /// Phase 2 routinely folds a whole assistant/tool run into one message (a
+    /// device session measured 231 database rows becoming 15 UI rows), so the
+    /// anchor lands mid-bubble most of the time and `sourceSortOrder` /
+    /// `lastSourceSortOrder` can only answer "somewhere inside this bubble".
+    /// With per-block provenance the answer is exact, and the greying decision can
+    /// refuse to dim a bubble it cannot fully claim (`DSHCompactBoundary`).
+    ///
+    /// Empty for a LIVE row (nothing has loaded from the store yet) and for a row
+    /// built by a path that does not merge: the resolver then treats the bubble as
+    /// one opaque unit and never claims any of it is compacted.
+    var blockSortOrders: [Int] = []
     /// Links back to the QueuedPrompt so we can withdraw it.
     var queuedPromptId: UUID?
     /// Session-log seq this message was projected from, when the DSH agent core
