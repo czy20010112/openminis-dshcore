@@ -110,43 +110,95 @@ extension AIChatViewModel {
         for idx in doomed.reversed() { messages.remove(at: idx) }
     }
 
-    /// Resolve a DSH compaction into a marker that still has to be written.
+    /// Capture a DSH compaction into a marker that still has to be written.
     ///
     /// Called from the driver's `didCompact`, which is synchronous and runs while
-    /// the shadowed rows are still in `agentHistory`. The write itself is async
-    /// (the store is an actor) and happens at the end of the turn.
+    /// the shadowed rows are still in `agentHistory`. The write itself is async (the
+    /// store is an actor) and happens at the end of the turn.
+    ///
+    /// [T-dsh-compact-anchor-walkback] The anchor is SEARCHED FOR, not demanded of
+    /// the last shadowed row.
+    ///
+    /// The previous version required `shadowedSeqs.last` itself to carry a database
+    /// id and gave up otherwise — which is how a device session ended up with
+    /// "compaction has no persisted anchor row" on five consecutive mid-turn
+    /// compactions while the summary stayed live on screen. Nothing guarantees that
+    /// the last row a compaction shadows has a database id: a mid-turn compaction's
+    /// range reaches into rows the turn has only just appended, and those are written
+    /// by `dshPersistSurface` at the END of the turn.
+    ///
+    /// So the whole shadowed span is recorded as an ordered candidate list —
+    /// newest first, because that is the boundary closest to the range's end — and
+    /// the anchor is picked from it after persistence has run. Choosing the newest
+    /// row that HAS a row keeps the marker's own semantics ("everything up to and
+    /// including this row is compacted"): the entries after it are ones no database
+    /// row exists for, so they cannot be part of the transcript the marker hides.
+    ///
+    /// The newest shadowed seq is recorded too, because the transcript divider is
+    /// placed at it (see `didCompact`) and that lookup must not be degraded by the
+    /// walk-back.
     func dshResolveCompactionMarker(_ outcome: DSHCompactionOutcome) {
         guard let summaryEntry = dshSession?.entry(at: outcome.summarySeq) else { return }
-        guard let lastShadowed = outcome.range.shadowedSeqs.last,
-              let anchorId = agentHistory.last(where: { $0.dshSeq == lastShadowed.value })?.dbMessageId else {
+        guard let seed = outcome.range.shadowedSeqs.first else { return }
+
+        // Newest first: the closest boundary to the range's end. Each candidate
+        // carries both the row id known now and the seq, so the write can pick up an
+        // id that only the end-of-turn persistence produces.
+        let candidates: [DSHPendingCompaction.Candidate] = outcome.range.shadowedSeqs
+            .reversed()
+            .map { seq in
+                DSHPendingCompaction.Candidate(
+                    seq: seq.value,
+                    dbMessageId: agentHistory.last(where: { $0.dshSeq == seq.value })?.dbMessageId
+                )
+            }
+        AppLogger(category: "DSHLoop").warning(
+            "[DSH] compaction anchor candidates shadowed=\(outcome.range.shadowedSeqs.count) "
+            + "withDbId=\(candidates.filter { $0.dbMessageId != nil }.count) "
+            + "range=\(seed.value)...\(outcome.range.shadowedSeqs.last?.value ?? seed.value)"
+        )
+        // Recorded even when nothing has an id YET: the persistence pass at the end of
+        // this turn is what gives the range's own tail its ids, and the write resolves
+        // against that pass. Giving up here is what produced a compaction that
+        // rendered but was never durable.
+        dshPendingMarker = DSHPendingCompaction(
+            candidates: candidates,
+            summary: summaryEntry.message.text,
+            count: outcome.range.shadowedSeqs.count,
+            lastShadowedSeq: outcome.range.shadowedSeqs.last?.value ?? seed.value
+        )
+    }
+
+    /// Write a captured compaction marker, replacing any earlier one.
+    ///
+    /// Minis already has the right shape for this: a `CompactMarker` says "everything
+    /// up to and including `lastCompactedMessageId` is compacted, and here is its
+    /// summary", and `effectiveAgentHistory()` re-materializes that summary into the
+    /// next request. Writing one is what lets a DSH compaction outlive the process.
+    ///
+    /// DSH summaries are cumulative by construction — the previous summary sits inside
+    /// the range the next one shadows and is rendered into the summarizer's input —
+    /// which is exactly the "covers everything up to the anchor" semantics a v2 marker
+    /// assumes. Hence one marker at a time, replacing any earlier one.
+    ///
+    /// The anchor is picked HERE rather than in `didCompact`, because by now the
+    /// turn's own rows have been persisted: `stamped` is what that pass just learned
+    /// (seq → row id), so a range that reaches into this turn's fresh tail resolves
+    /// against it instead of looking anchorless.
+    func dshWriteCompactionMarker(
+        _ pending: DSHPendingCompaction,
+        stamped: [Int: String] = [:]
+    ) async {
+        guard let sid = sessionId else { return }
+        guard let anchor = Self.dshCompactAnchor(
+            candidates: pending.candidates, stamped: stamped
+        ) else {
             AppLogger(category: "DSHLoop").warning(
                 "[DSH] compaction has no persisted anchor row — the conversation "
                 + "will come back whole on the next launch"
             )
             return
         }
-        dshPendingMarker = (
-            anchorId: anchorId,
-            summary: summaryEntry.message.text,
-            count: outcome.range.shadowedSeqs.count
-        )
-    }
-
-    /// Write a resolved compaction marker, replacing any earlier one.
-    ///
-    /// Minis already has the right shape for this: a `CompactMarker` says
-    /// "everything up to and including `lastCompactedMessageId` is compacted,
-    /// and here is its summary", and `effectiveAgentHistory()` re-materializes
-    /// that summary into the next request. Writing one is what lets a DSH
-    /// compaction outlive the process.
-    ///
-    /// DSH summaries are cumulative by construction — the previous summary sits
-    /// inside the range the next one shadows and is rendered into the summarizer's
-    /// input — which is exactly the "covers everything up to the anchor"
-    /// semantics a v2 marker assumes. Hence one marker at a time, replacing any
-    /// earlier one rather than accumulating.
-    func dshWriteCompactionMarker(_ pending: (anchorId: String, summary: String, count: Int)) async {
-        guard let sid = sessionId else { return }
 
         await ChatStore.shared.deleteCompactMarkers(sessionId: sid)
         await ChatStore.shared.insertCompactMarker(CompactMarker(
@@ -159,16 +211,33 @@ extension AIChatViewModel {
             uiBoundarySortOrder: nil,
             boundaryMessageId: nil,
             firstKeptMessageId: nil,
-            lastCompactedMessageId: pending.anchorId,
+            lastCompactedMessageId: anchor.id,
             version: 2
         ))
         cachedLatestMarker = await ChatStore.shared.latestCompactMarker(sessionId: sid)
         AppLogger(category: "DSHLoop").warning(
-            "[DSH] compaction marker written anchor=\(pending.anchorId.prefix(8)) "
-            + "shadowed=\(pending.count)"
+            "[DSH] compaction marker written anchor=\(anchor.id.prefix(8)) seq=\(anchor.seq) "
+            + "shadowed=\(pending.count) candidates=\(pending.candidates.count) "
+            + "stampedThisTurn=\(stamped.count)"
         )
     }
 
+    /// The newest shadowed row that actually has a database row.
+    ///
+    /// Order is load-bearing: the candidates arrive newest-first, so the first one
+    /// that resolves is the boundary closest to the range's end. A row this turn has
+    /// just persisted resolves through `stamped`, which is why the pick cannot happen
+    /// before the persistence pass.
+    static func dshCompactAnchor(
+        candidates: [DSHPendingCompaction.Candidate],
+        stamped: [Int: String]
+    ) -> (id: String, seq: Int)? {
+        for candidate in candidates {
+            if let id = candidate.dbMessageId { return (id, candidate.seq) }
+            if let id = stamped[candidate.seq] { return (id, candidate.seq) }
+        }
+        return nil
+    }
     /// Run one turn through the DSH driver.
     ///
     /// Callers replace the body of `runAgentLoop()` with this. The ViewModel
@@ -418,14 +487,6 @@ extension AIChatViewModel {
         let logCountBeforeTurn = session.logCount
         _ = await driver.run()
 
-        // Write any compaction marker now, while `agentHistory` still holds the
-        // shadowed rows — the anchor is one of their database ids, and the
-        // reconcile below replaces that array with the session surface.
-        if let pending = dshPendingMarker {
-            await dshWriteCompactionMarker(pending)
-            dshPendingMarker = nil
-        }
-
         // Persist what this turn added, then rebuild the UI array from the
         // surface. The driver owns conversation identity but not storage:
         // nothing under src/ios/DSH/ writes to ChatStore, so without this the
@@ -436,6 +497,22 @@ extension AIChatViewModel {
             fromIndex: logCountBeforeTurn,
             modelEntryId: entry.id
         )
+
+        // Write any compaction marker now, while `agentHistory` still holds the
+        // shadowed rows' database ids — the reconcile below replaces that array with
+        // the session surface, which keeps only the rows the compaction did not
+        // shadow. The summary itself stays on the captured value; nothing here reads
+        // the surface.
+        //
+        // [T-dsh-compact-anchor-walkback] AFTER the persistence pass, not before: a
+        // mid-turn compaction's range ends inside the rows this turn just appended,
+        // so their ids only exist here. `persisted` is that pass's seq → id map, and
+        // it is what lets the anchor resolve instead of reporting "no persisted
+        // anchor row".
+        if let pending = dshPendingMarker {
+            dshPendingMarker = nil
+            await dshWriteCompactionMarker(pending, stamped: persisted)
+        }
 
         // Reconcile the UI array against the session surface, so agentHistory
         // reflects any compaction the driver applied.
