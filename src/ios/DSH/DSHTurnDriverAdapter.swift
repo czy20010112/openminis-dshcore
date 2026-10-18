@@ -347,7 +347,9 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
         // latest — the same rule the in-loop path applies.
         messages.removeAll { $0.role == .compactDivider }
         let insertIdx = Self.dshDividerInsertIndex(
-            messages: messages, lastShadowedSeq: outcome.range.shadowedSeqs.last?.value
+            messages: messages,
+            lastShadowedSeq: outcome.range.shadowedSeqs.last?.value,
+            liveStreamingRowId: dshLiveStreamingRowId
         )
 
         // `content` is the divider's visible label and `compactSummary` sits
@@ -416,14 +418,24 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
     /// Falls back to the end of the list only when no seq at all names the
     /// boundary — an unresolvable position must not hide rows the model can still
     /// see.
-    static func dshDividerInsertIndex(messages: [ChatMessage], lastShadowedSeq: Int?) -> Int {
+    static func dshDividerInsertIndex(
+        messages: [ChatMessage],
+        lastShadowedSeq: Int?,
+        liveStreamingRowId: UUID? = nil
+    ) -> Int {
         guard let lastShadowedSeq else {
-            return Self.dshDividerPosition(messages: messages, boundary: messages.count)
+            return Self.dshDividerPosition(
+                messages: messages, boundary: messages.count,
+                liveStreamingRowId: liveStreamingRowId)
         }
         if let idx = messages.firstIndex(where: { ($0.dshSeq ?? Int.min) > lastShadowedSeq }) {
-            return Self.dshDividerPosition(messages: messages, boundary: idx)
+            return Self.dshDividerPosition(
+                messages: messages, boundary: idx,
+                liveStreamingRowId: liveStreamingRowId)
         }
-        return Self.dshDividerPosition(messages: messages, boundary: messages.count)
+        return Self.dshDividerPosition(
+            messages: messages, boundary: messages.count,
+            liveStreamingRowId: liveStreamingRowId)
     }
 
     /// Keep the divider ABOVE the row this turn is streaming into.
@@ -445,8 +457,12 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
     /// Nothing is greyed by the move: the live row is never in the replacement
     /// region, because the compaction selected its range from a surface the live
     /// row had not been appended to yet.
-    static func dshDividerPosition(messages: [ChatMessage], boundary: Int) -> Int {
-        guard let liveId = messages.dshLiveStreamingRowId else { return boundary }
+    static func dshDividerPosition(
+        messages: [ChatMessage],
+        boundary: Int,
+        liveStreamingRowId: UUID? = nil
+    ) -> Int {
+        guard let liveId = liveStreamingRowId else { return boundary }
         guard let liveIdx = messages.firstIndex(where: { $0.id == liveId }) else { return boundary }
         return min(boundary, liveIdx)
     }
