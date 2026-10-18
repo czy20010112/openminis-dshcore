@@ -2140,13 +2140,31 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
 
     var dshPendingMarker: DSHPendingCompaction?
 
-    /// Index of the assistant message the driver is streaming into, or -1 when
-    /// no turn is streaming.
+    /// Identity of the assistant row the driver is streaming into.
     ///
-    /// Resolved by seq before use. The driver commits each assistant entry to
-    /// the session, so the UI entry carrying that seq is the streaming target
-    /// regardless of how the array was rebuilt meanwhile.
-    var dshStreamingMsgIdx: Int = -1
+    /// [T-dsh-compact-divider-index-drift] The row's UUID, not its offset. The
+    /// offset form below is a cache of this; the row itself is the truth.
+    ///
+    /// A mid-turn compaction INSERTS the divider into `messages` at the seq
+    /// boundary, which moves every row below it down by one — including the
+    /// streaming assistant row. With only an offset stored, the loop kept
+    /// writing at the pre-insert offset, which is now the DIVIDER row, so:
+    ///
+    ///   * `didEmitText` (role guard), `willRunTool`, `dshRenderToolResult`,
+    ///     `dshExecuteMinisTool` and `commitStreamText` all rejected their write
+    ///     ("no streaming assistant row to attach the result to"), so the
+    ///     reply's own text and tool calls were dropped;
+    ///   * `dshSealStreamingTurn` then sealed the DIVIDER, so the assistant row
+    ///     that the user sees came back empty and stayed empty;
+    ///   * and the divider — being the row the transcript wrote into — was the
+    ///     last thing on screen, which reads as "everything new is above the
+    ///     compaction line" with nothing below it.
+    var dshStreamingRowId: UUID?
+
+    /// Cached offset of `dshStreamingRowId`. Never read directly: read
+    /// `dshStreamingMsgIdx`, which re-derives it after any array mutation.
+    /// -1 means "no turn is streaming".
+    private var dshStreamingMsgIdxRaw: Int = -1
 
     /// Reasoning text awaiting delivery to the thinking block.
     var dshPendingReasoning = ""

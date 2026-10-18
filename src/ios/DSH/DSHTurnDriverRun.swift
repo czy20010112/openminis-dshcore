@@ -169,6 +169,106 @@ extension AIChatViewModel {
         )
     }
 
+    /// The anchor a compaction marker will carry, and how it was found.
+    ///
+    /// `precision` is the diagnostic that turns "the compaction record vanished
+    /// on the next launch" into an attributable event. `walkedBack` is exact
+    /// (some shadowed row has a database row); `lastShadowedUnresolved` is the
+    /// honest degradation described on `dshCompactAnchorOutcome`.
+    struct DSHCompactAnchorResolution {
+        let id: String?
+        let seq: Int
+        let precision: String
+    }
+
+    /// The newest shadowed row that actually has a database row.
+    ///
+    /// Order is load-bearing: the candidates arrive newest-first, so the first one
+    /// that resolves is the boundary closest to the range's end. A row this turn has
+    /// just persisted resolves through `stamped`, which is why the pick cannot happen
+    /// before the persistence pass.
+    static func dshCompactAnchor(
+        candidates: [DSHPendingCompaction.Candidate],
+        stamped: [Int: String]
+    ) -> (id: String, seq: Int)? {
+        let resolution = dshCompactAnchorOutcome(candidates: candidates, stamped: stamped)
+        guard let id = resolution.id else { return nil }
+        return (id, resolution.seq)
+    }
+
+    /// The same pick, but it NEVER fails to produce a position.
+    ///
+    /// [T-dsh-compact-marker-always-written] A compaction that shadowed at least
+    /// one entry always gets a marker written. The earlier shape returned nil
+    /// when no shadowed row had a database row yet, and the caller then dropped
+    /// the whole compaction: the transcript had been rewritten, the summary was
+    /// live in the session, and on the next launch there was no record of any of
+    /// it — the conversation came back whole, and (because `isCompactedHistory`
+    /// is restored FROM the marker) every row the compaction had replaced came
+    /// back as live context. From the operator's side that is exactly "重新打开
+    /// 对话，压缩的记录没了，压缩之前的对话的 toolcall 的条一个都没了".
+    ///
+    /// Losing the compaction is not the honest failure it was documented as:
+    /// "the conversation comes back whole" is only true if the transcript also
+    /// comes back whole, and it does not — the user has already been shown the
+    /// summary and the greyed region.
+    ///
+    /// So when the walk-back finds nothing, the newest shadowed seq is used as the
+    /// anchor. Its row id is unknown, which means `effectiveAgentHistory()`
+    /// cannot resolve the marker and degrades to "keep the last N user turns"
+    /// — i.e. the marker is treated as compactAll, which is what a DSH summary
+    /// IS (it covers everything up to the range's end, cumulatively). Losing
+    /// precision in the MODEL's seed is recoverable and is reported by the
+    /// existing fallback warning; losing the record is not.
+    static func dshCompactAnchorOutcome(
+        candidates: [DSHPendingCompaction.Candidate],
+        stamped: [Int: String]
+    ) -> DSHCompactAnchorResolution {
+        for candidate in candidates {
+            if let id = candidate.dbMessageId {
+                return DSHCompactAnchorResolution(id: id, seq: candidate.seq, precision: "rowId")
+            }
+            if let id = stamped[candidate.seq] {
+                return DSHCompactAnchorResolution(id: id, seq: candidate.seq, precision: "stampedThisTurn")
+            }
+        }
+        guard let newest = candidates.first else {
+            return DSHCompactAnchorResolution(id: nil, seq: 0, precision: "noCandidates")
+        }
+        return DSHCompactAnchorResolution(
+            id: nil,
+            seq: newest.seq,
+            precision: "lastShadowedUnresolved"
+        )
+    }
+
+    /// Apply the resolution to a transcript: the anchor id to persist, and the
+    /// degraded id to persist when no shadowed row has a store row.
+    ///
+    /// `unknownId` is the second half of [T-dsh-compact-marker-always-written].
+    /// It is supplied by the caller (rather than invented here) because it has to
+    /// be a POSITION, not an identifier: the newest transcript row inside the
+    /// shadowed prefix, whose id names no store row. A `version 2` marker carries
+    /// no position — that is the point of the id-only model — so such a marker
+    /// resolves nowhere and `effectiveAgentHistory()` falls to its documented
+    /// "keep the last N user turns" degradation, which is exactly the compactAll
+    /// semantics a DSH summary has. The trade is deliberate and one-sided:
+    ///   * keep the record (this) → the transcript shows the summary and the
+    ///     greyed prefix, the model's seed is the retained tail;
+    ///   * drop the record (the old shape) → the live transcript has already been
+    ///     rewritten (greyed region, divider), and after a relaunch both are gone
+    ///     while the database still holds every shadowed row.
+    /// The first is recoverable by "revert"; the second is not recoverable by
+    /// anything, which is why it is not the honest choice.
+    static func dshMarkerAnchor(
+        _ resolution: DSHCompactAnchorResolution,
+        unknownId: String?
+    ) -> (id: String, degraded: Bool)? {
+        if let id = resolution.id { return (id, false) }
+        if let unknownId { return (unknownId, true) }
+        return nil
+    }
+
     /// Write a captured compaction marker, replacing any earlier one.
     ///
     /// Minis already has the right shape for this: a `CompactMarker` says "everything
@@ -190,12 +290,21 @@ extension AIChatViewModel {
         stamped: [Int: String] = [:]
     ) async {
         guard let sid = sessionId else { return }
-        guard let anchor = Self.dshCompactAnchor(
+        let resolution = Self.dshCompactAnchorOutcome(
             candidates: pending.candidates, stamped: stamped
-        ) else {
+        )
+        // The newest shadowed transcript row, used as a POSITION stand-in anchor
+        // when no shadowed row has a store row yet. [T-dsh-compact-marker-always-
+        // written]: the record must survive a relaunch either way.
+        let unknownId = messages.last(where: {
+            $0.role != .compactDivider && $0.role != .systemInfo
+                && ($0.dshSeq ?? Int.max) <= pending.lastShadowedSeq
+        })?.id.uuidString
+        guard let anchor = Self.dshMarkerAnchor(resolution, unknownId: unknownId) else {
             AppLogger(category: "DSHLoop").warning(
-                "[DSH] compaction has no persisted anchor row — the conversation "
-                + "will come back whole on the next launch"
+                "[DSH] compaction marker NOT written — the range named no transcript row "
+                + "(shadowed=\(pending.count) candidates=\(pending.candidates.count) "
+                + "stampedThisTurn=\(stamped.count) precision=\(resolution.precision))"
             )
             return
         }
@@ -216,27 +325,23 @@ extension AIChatViewModel {
         ))
         cachedLatestMarker = await ChatStore.shared.latestCompactMarker(sessionId: sid)
         AppLogger(category: "DSHLoop").warning(
-            "[DSH] compaction marker written anchor=\(anchor.id.prefix(8)) seq=\(anchor.seq) "
+            "[DSH] compaction marker written anchor=\(anchor.id.prefix(8)) seq=\(resolution.seq) "
+            + "precision=\(resolution.precision) degraded=\(anchor.degraded) "
             + "shadowed=\(pending.count) candidates=\(pending.candidates.count) "
             + "stampedThisTurn=\(stamped.count)"
         )
-    }
-
-    /// The newest shadowed row that actually has a database row.
-    ///
-    /// Order is load-bearing: the candidates arrive newest-first, so the first one
-    /// that resolves is the boundary closest to the range's end. A row this turn has
-    /// just persisted resolves through `stamped`, which is why the pick cannot happen
-    /// before the persistence pass.
-    static func dshCompactAnchor(
-        candidates: [DSHPendingCompaction.Candidate],
-        stamped: [Int: String]
-    ) -> (id: String, seq: Int)? {
-        for candidate in candidates {
-            if let id = candidate.dbMessageId { return (id, candidate.seq) }
-            if let id = stamped[candidate.seq] { return (id, candidate.seq) }
+        if anchor.degraded {
+            // Named explicitly: the consequence lands in the MODEL's seed rather
+            // than in the transcript. The marker resolves nowhere, so
+            // `effectiveAgentHistory()` keeps the last N user turns instead of the
+            // marker's exact kept tail. The record itself — summary, divider,
+            // greyed prefix — is intact, which is the whole point.
+            AppLogger(category: "DSHLoop").warning(
+                "[DSH] the written marker's anchor names no store row (no shadowed row had one); "
+                + "the transcript restores from the marker, the model seed degrades to the "
+                + "last-N-user-turns rule until a later compaction resolves an exact anchor"
+            )
         }
-        return nil
     }
     /// Run one turn through the DSH driver.
     ///
@@ -344,9 +449,14 @@ extension AIChatViewModel {
 
         // A fresh assistant row for this turn, and its seq once the driver
         // commits it.
+        //
+        // [T-dsh-compact-divider-index-drift] Bound by IDENTITY, not by the
+        // offset it happens to land on: a mid-turn compaction inserts the
+        // divider above it and moves it down, and an offset-only binding then
+        // points at the divider — swallowing the whole reply.
         let assistantMsg = ChatMessage(role: .assistant, content: "", blocks: [])
         messages.append(assistantMsg)
-        dshStreamingMsgIdx = messages.count - 1
+        dshSetStreamingRow(at: messages.count - 1)
         scrollToBottomSignal.send()
 
         let config = DSHTurnDriverConfig(
