@@ -330,6 +330,16 @@ public final class DSHTurnDriver {
     private var lastPricedRequest: PricedRequest?
 
     /// One routed request's priced envelope.
+    /// Why a provider-counted seed was refused.
+    ///
+    /// `Result` needs an `Error`, and the reasons here are sentences meant for the log line
+    /// rather than typed failures anything switches on.
+    private struct DSHSeedRefusal: Error, CustomStringConvertible {
+        let reason: String
+        init(_ reason: String) { self.reason = reason }
+        var description: String { reason }
+    }
+
     private struct PricedRequest {
         /// Prompt tokens the provider counted, or the estimated envelope total.
         let promptTokens: Int
@@ -1478,18 +1488,18 @@ public final class DSHTurnDriver {
     /// envelope.
     ///
     /// - Returns: the seeded request, or the reason it could not be built.
-    private func providerCountedEnvelope() -> Result<PricedRequest, String> {
+    private func providerCountedEnvelope() -> Result<PricedRequest, DSHSeedRefusal> {
         guard let measured = DSHContextUsageStore.shared.measured, measured.promptTokens > 0 else {
-            return .failure("no provider count for this session")
+            return .failure(DSHSeedRefusal("no provider count for this session"))
         }
         guard let breakdown = DSHContextBreakdownStore.shared.latest else {
-            return .failure("no assembled request to pair the count with")
+            return .failure(DSHSeedRefusal("no assembled request to pair the count with"))
         }
         guard breakdown.model == provider.model.id, breakdown.provider == provider.name else {
-            return .failure(
+            return .failure(DSHSeedRefusal(
                 "count is from \(breakdown.provider)/\(breakdown.model), this turn routes "
                     + "\(provider.name)/\(provider.model.id)"
-            )
+            ))
         }
         let surfaceNow = DSHTokenEstimate.total(session.surface())
         let baseline = breakdown.surfaceTokens > 0 ? breakdown.surfaceTokens : surfaceNow
@@ -1519,7 +1529,9 @@ public final class DSHTurnDriver {
     ///   - price: the seeded envelope.
     ///   - detail: the route, or why the counted seed was refused.
     /// - Returns: the line to log.
-    static func seedLine(turn: Int, source: String, price: PricedRequest, detail: String) -> String {
+    private static func seedLine(
+        turn: Int, source: String, price: PricedRequest, detail: String
+    ) -> String {
         let figures = "promptTokens=\(price.promptTokens) surfaceEst=\(price.surfaceTokens) "
             + "reserved=\(price.reservedCompletionTokens)"
         return "[CompactDiag] pressure seed at turn=\(turn): source=\(source) "

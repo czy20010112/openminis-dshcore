@@ -179,7 +179,7 @@ extension AIChatViewModel {
                 // driver's `compactForPressure` warns once and lets provider-confirmed
                 // overflow recovery handle it. Here there is no overflow to recover from,
                 // so the command declines and says why rather than silently doing nothing.
-                self.logger.warning(
+                logger.warning(
                     "[DSHCompact] no resolvable compaction budget for \(entry.model)")
                 self.appendSystemInfo(
                     "Cannot resolve a compaction budget for this route.",
