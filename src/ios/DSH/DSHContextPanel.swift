@@ -84,6 +84,18 @@
 //  has been assembled yet in this session" over a request it had assembled seconds
 //  earlier, with the cache-hit row gone for the same reason.
 //
+//  THE ROWS OUTLIVE THE PROCESS. That slot is one per process, and only an
+//  ASSEMBLY fills it — so after a relaunch, or after switching to a conversation
+//  this process had not assembled a request for (including one assembled a minute
+//  before the switch, whose slot another conversation had since taken), the sheet
+//  showed the empty sentence over a session that had a full breakdown. Each
+//  assembly is therefore also written under its own session key in
+//  `UserDefaults` and read back when the app binds that session
+//  (`DSHContextBreakdownStore.persist` / `.recall`). It is not a measurement and
+//  the sheet never presents it as one: a restored copy keeps the "Last request, …"
+//  heading even while a turn runs, because no request of THIS process produced it,
+//  and neither the provider receipt nor the measured store is restored with it.
+//
 //  The denominator is the model's WINDOW (`AIChatViewModel
 //  .currentModelContextWindow`), not the compaction pressure threshold. The
 //  threshold is a policy of ours — 80% of the window on the iOS 26 line — and a
@@ -441,7 +453,14 @@ struct DSHContextReading: Equatable {
 /// own count (the header) additionally carries request framing, cache accounting
 /// and its tokenizer, so the two are related but not equal, and neither side is
 /// adjusted to make them add up.
-struct DSHContextBreakdown: Equatable {
+///
+/// `Codable` because the store keeps one copy per session outside the process
+/// (`DSHContextBreakdownStore.persist`) — a fresh launch has no other way to answer
+/// for a conversation it has not assembled a request for yet. The encoding is the
+/// synthesized one, over the stored properties only (the computed ones below are
+/// derived from them), so a change to this field list is a change to a shape that is
+/// already on disk: that is what the version in the storage key's suffix is for.
+struct DSHContextBreakdown: Equatable, Codable {
     var systemPromptTokens: Int
     var systemPromptChars: Int
     var toolTokens: Int
@@ -474,10 +493,12 @@ struct DSHContextBreakdown: Equatable {
     /// Optional, and `nil` means "not stated" rather than zero: a config with no
     /// resolved capacity passes nil (0 is clamped to nil at
     /// `DSHTurnDriverConfig.init`), and a reader has to fall back rather than print 0.
-    /// The struct is not `Codable` and is never encoded or persisted — its only
-    /// producer is `record(...)` and its readers are the sheets — so an added field
-    /// carries no decoding compatibility of its own. (The one stored figure next to
-    /// it, `measuredEnvelopeTokens`, is still the field `isMeasured` compares.)
+    /// This struct IS `Codable` and its copies outlive the process, so an added field
+    /// changes a shape that is already on disk: the version in the storage key's
+    /// suffix is what such a change bumps, and a copy that no longer decodes is
+    /// treated as absent — the sheet then says nothing rather than something guessed
+    /// (`DSHContextBreakdownStore.recall`). (The one stored figure next to it,
+    /// `measuredEnvelopeTokens`, is still the field `isMeasured` compares.)
     var windowTokens: Int?
     var capturedAt: Date
 
@@ -561,12 +582,46 @@ struct DSHUsageReading: Equatable {
 /// this panel reads. It carries two things — this session's request measurement
 /// and the newest provider receipt — because between them they describe the one
 /// request the panel is about.
+///
+/// The measurement is a PROCESS slot, and this app outlives a process: each
+/// assembly is also written under its own session (`persist`) and read back when
+/// the app binds that session again (`recall`). That is what makes the sheet's rows
+/// answer for a conversation restored after a relaunch, or entered after another
+/// conversation had already taken the slot.
 @MainActor
 final class DSHContextBreakdownStore: ObservableObject {
 
     static let shared = DSHContextBreakdownStore()
 
-    @Published private(set) var latest: DSHContextBreakdown?
+    @Published private(set) var latest: DSHContextBreakdown? {
+        didSet {
+            // Written where it is PRODUCED. `record(...)` is the only writer of a
+            // real assembly and no reader can reconstruct one later, so an observer
+            // here is what keeps the persisted copy from depending on a caller
+            // remembering to save it. The nil assignments (a move to another
+            // session, `clear()`) are not values and have nothing to write, and
+            // `recall`'s own write of a copy it just read is skipped — re-stamping
+            // it would refresh the recency index for a session nobody assembled a
+            // request in.
+            guard let latest = latest, !restoringLatest else { return }
+            latestIsRestoredFromDisk = false
+            persist(latest)
+        }
+    }
+
+    /// True when `latest` is the persisted copy of an earlier assembly rather than
+    /// one this process measured.
+    ///
+    /// The sheet says which request its rows describe — "This request, …" while a
+    /// turn runs, "Last request, …" once it has finished — and a restored copy was
+    /// never the request being sent now: no assembly of THIS process produced it.
+    /// So the scope word follows this flag as well as the turn state, and a
+    /// breakdown read back at launch cannot claim the request that is streaming.
+    @Published private(set) var latestIsRestoredFromDisk = false
+
+    /// Set around `recall`'s write to `latest`, so the observer above does not
+    /// write a copy it has just read straight back out.
+    private var restoringLatest = false
 
     /// The newest provider receipt, which is the one measured figure the panel
     /// has: its cache-hit share. Written by whichever path is driving the turn,
@@ -589,6 +644,28 @@ final class DSHContextBreakdownStore: ObservableObject {
     /// seconds earlier, with the cache-hit row gone for the same reason.
     private(set) var boundSessionKey: String?
 
+    /// One session's newest assembly is stored here:
+    /// `minis.dsh.contextBreakdown.v1.<sessionKey>`.
+    ///
+    /// `UserDefaults`, deliberately, and not the conversation's database: a breakdown
+    /// records how a REQUEST was assembled (rendered system prompt, tool roster, size
+    /// of the surface), which is worthless the moment the history or the route
+    /// changes, and `ChatStore` holds the transcript — this panel must not write to
+    /// it. The version in the key is the SHAPE's, bumped when the field list above
+    /// changes; a copy that no longer decodes is treated as absent rather than
+    /// migrated, because a half-read breakdown would be a figure nobody measured.
+    private static let storagePrefix = "minis.dsh.contextBreakdown.v1."
+    /// The sessions that have a stored copy, newest first. A write moves its key to
+    /// the front; everything past `recentSessionLimit` is evicted along with its
+    /// value, so the number of copies is bounded by use rather than by the number of
+    /// conversations the app has ever opened.
+    private static let storageIndexKey = "minis.dsh.contextBreakdown.index.v1"
+    private static let recentSessionLimit = 8
+
+    private static func storageKey(for sessionKey: String) -> String {
+        storagePrefix + sessionKey
+    }
+
     private init() {}
 
     /// Record one assembled request.
@@ -604,6 +681,10 @@ final class DSHContextBreakdownStore: ObservableObject {
     /// the response's tokens are appended to the surface before a later receipt
     /// arrives, so a baseline left where the previous request put it would count
     /// that append twice.
+    ///
+    /// The stored value is also written outside the process — by the observer on
+    /// `latest`, not by a line here — so a session's rows survive the app being
+    /// relaunched (`recall` reads them back when the app binds that session).
     ///
     /// - Parameters:
     ///   - sessionKey: the conversation being assembled for, or nil when the
@@ -718,7 +799,8 @@ final class DSHContextBreakdownStore: ObservableObject {
 
     /// Point every readout at a conversation, dropping whatever belonged to
     /// another one — so a later session cannot open the panel on the previous
-    /// session's request.
+    /// session's request — and then restore THIS one's newest assembly, if any
+    /// (`recall`).
     ///
     /// - Parameter sessionKey: the conversation the next readout describes, or
     ///   nil to leave the binding where it is. nil states no session; it is not
@@ -735,6 +817,13 @@ final class DSHContextBreakdownStore: ObservableObject {
     ///   the authority for the binding; this only follows it so the sheet's rows
     ///   cannot outlive the figure above them. This is also the statement that
     ///   names the owner of a later unnamed report (`boundSessionKey`).
+    ///
+    ///   The `recall` at the end is the other half of the move, and it is here — on
+    ///   the one call every promotion path already makes (`AIChatViewModel.sessionId`
+    ///   's own choke point) — so no caller has to remember a second call. Without
+    ///   it the panel emptied on every move and stayed empty until the next
+    ///   assembly: a conversation that had been assembled a minute earlier showed
+    ///   no detail at all after a relaunch or after switching away and back.
     func bind(sessionKey: String?) {
         let effective = sessionKey ?? boundSessionKey
         DSHContextUsageStore.shared.bind(sessionKey: effective)
@@ -743,6 +832,110 @@ final class DSHContextBreakdownStore: ObservableObject {
             if latest != nil { latest = nil }
             if latestUsage != nil { latestUsage = nil }
         }
+        recall(sessionKey: effective)
+    }
+
+    /// Fill `latest` with one session's persisted assembly, if the process does not
+    /// already hold that session's own.
+    ///
+    /// `latest` is one slot for the whole process and only an ASSEMBLY fills it, so
+    /// the sheet's rows were empty exactly when they were most wanted: after a
+    /// relaunch, and after switching to a conversation this process had not
+    /// assembled a request for — including one assembled a minute before the switch,
+    /// because another conversation had taken the slot by then.
+    ///
+    /// Two things it deliberately does NOT touch, because both would turn a stored
+    /// estimate into a measurement:
+    ///
+    ///   * `latestUsage`. The cache-hit share belongs to one response, and this
+    ///     process has seen none for a restored session. A stored rate would put a
+    ///     MEASURED row under estimated ones — the pairing the sheet's own comments
+    ///     forbid;
+    ///   * `DSHContextUsageStore`, including `rebase`. That store holds what the
+    ///     provider counted and the envelope the count was taken against; a
+    ///     persisted envelope is not a receipt, and re-basing it would make later
+    ///     receipts read as measured against a request nobody sent. The header keeps
+    ///     falling back to the durable receipt on the newest assistant row
+    ///     (`DSHContextReading.reported`) until a real response lands.
+    ///
+    /// The restored value is flagged (`latestIsRestoredFromDisk`) so the sheet keeps
+    /// saying "Last request, …" over rows this process did not assemble — a heading
+    /// that says "This request" over a copy from a previous launch is the one lie
+    /// available here.
+    ///
+    /// Fail-soft by construction: a missing copy, a corrupt value, or a shape from
+    /// another version all decode to nil and this returns with `latest` exactly as it
+    /// was — no partial restore, no invented zeroes, and nothing deleted (the copy is
+    /// evicted by the recency index like any other, or overwritten by the next
+    /// assembly of that session).
+    ///
+    /// - Parameter sessionKey: the conversation to restore. nil or empty states no
+    ///   session, and that is NOT "restore the last one written": filling the slot
+    ///   from an unnamed request would put one conversation's rows under another
+    ///   one's header.
+    func recall(sessionKey: String?) {
+        guard let sessionKey = sessionKey, !sessionKey.isEmpty else { return }
+        // The process already holds THIS session's newest assembly, which is newer
+        // than anything on disk by construction: `record` writes both.
+        guard latest?.sessionKey != sessionKey else { return }
+        guard let restored = persisted(sessionKey: sessionKey),
+              restored.sessionKey == sessionKey else { return }
+        restoringLatest = true
+        latest = restored
+        restoringLatest = false
+        latestIsRestoredFromDisk = true
+    }
+
+    /// Write one assembly under its session and keep the recency index that bounds
+    /// the number of copies.
+    ///
+    /// Called from the observer on `latest`, i.e. for every assembly `record(...)`
+    /// actually stores. An unnamed record has no key to write under and is skipped:
+    /// a copy filed under "" could only be restored into an unrelated conversation.
+    ///
+    /// One `JSONEncoder` default strategy for the date (seconds since the reference
+    /// date); `persisted` names the alternatives a reader also tolerates.
+    private func persist(_ breakdown: DSHContextBreakdown) {
+        guard let sessionKey = breakdown.sessionKey, !sessionKey.isEmpty else { return }
+        guard let data = try? JSONEncoder().encode(breakdown) else { return }
+        let defaults = UserDefaults.standard
+        defaults.set(data, forKey: Self.storageKey(for: sessionKey))
+        var recent = defaults.stringArray(forKey: Self.storageIndexKey) ?? []
+        recent.removeAll { $0 == sessionKey }
+        recent.insert(sessionKey, at: 0)
+        if recent.count > Self.recentSessionLimit {
+            for stale in recent[Self.recentSessionLimit...] {
+                defaults.removeObject(forKey: Self.storageKey(for: stale))
+            }
+            recent = Array(recent.prefix(Self.recentSessionLimit))
+        }
+        defaults.set(recent, forKey: Self.storageIndexKey)
+    }
+
+    /// One session's persisted assembly, or nil when nothing readable is there.
+    ///
+    /// The writer uses `JSONEncoder`'s default date strategy, so the first attempt is
+    /// the same one; the two fallbacks are the strategies a copy written by another
+    /// encoder (or by an older build) could plausibly carry, and they are named
+    /// rather than guessed at. Nothing here is a migration: a value that decodes
+    /// under none of them is corrupt, and corrupt means absent.
+    private func persisted(sessionKey: String) -> DSHContextBreakdown? {
+        guard let data = UserDefaults.standard.data(forKey: Self.storageKey(for: sessionKey)) else {
+            return nil
+        }
+        let decoder = JSONDecoder()
+        if let decoded = try? decoder.decode(DSHContextBreakdown.self, from: data) {
+            return decoded
+        }
+        for strategy in [JSONDecoder.DateDecodingStrategy.iso8601,
+                         .secondsSince1970,
+                         .millisecondsSince1970] {
+            decoder.dateDecodingStrategy = strategy
+            if let decoded = try? decoder.decode(DSHContextBreakdown.self, from: data) {
+                return decoded
+            }
+        }
+        return nil
     }
 
     /// Drop the measurement unconditionally, keeping the session binding.
@@ -1014,9 +1207,20 @@ struct DSHContextPanel: View {
     /// assembly the rows were measured from is the request being sent; once it
     /// has finished, it is the newest one this session completed, and calling
     /// that "this request" is what the operator reported as wrong.
+    ///
+    /// A RESTORED breakdown takes the second wording whatever the turn state is.
+    /// Its rows come from `DSHContextBreakdownStore.recall`, i.e. from a copy an
+    /// EARLIER run of the app wrote, so they were never the request this process is
+    /// sending: "This request, estimated" over them would be the same class of lie
+    /// the scope words exist to prevent, only spread across a relaunch (or across a
+    /// switch to a session the running turn's conversation replaced in the slot).
+    /// `latestIsRestoredFromDisk` is that provenance, stated by the store rather than
+    /// guessed from `capturedAt`: a clock can say "old", only the writer can say
+    /// "not this process's".
     private var sectionHeading: String {
         guard let breakdown = breakdowns.latest else { return "This request, estimated" }
-        return requestInFlight ? breakdown.sectionTitle : breakdown.lastSectionTitle
+        let isThisRequest = requestInFlight && !breakdowns.latestIsRestoredFromDisk
+        return isThisRequest ? breakdown.sectionTitle : breakdown.lastSectionTitle
     }
 
     private var components: some View {
