@@ -181,13 +181,24 @@ enum DSHCompactionSettings {
     /// already on the main actor.
     @MainActor
     static var sessionContextWindow: Int? {
-        // The stamp is the answer whenever a request has been assembled in this
+        // The stamp is the answer whenever a request has been assembled in THIS
         // process. Read without filtering on a session key: the driver's config
         // carries `sessionKey == nil` on the device path, so a filter would reject
         // every real stamp (the same reason `DSHContextBreakdownStore` attributes an
         // unnamed assembly to its bound session), and the sheet this screen belongs
         // to is opened for the conversation on screen.
-        if let stamped = DSHContextBreakdownStore.shared.latest?.windowTokens, stamped > 0 {
+        //
+        // [T-dsh-breakdown-durable] A copy RESTORED from disk does not count: the
+        // store now remembers the last assembly per conversation across launches,
+        // and its `windowTokens` describes whichever route that run used. On a
+        // cold start this screen must say what the pool offers (or what the next
+        // turn will resolve), not what a previous run was routed to — the row is
+        // labelled with the session's window, and claiming one before this process
+        // has seen a request would be the same "stale readout" the composer's
+        // usage line had.
+        let store = DSHContextBreakdownStore.shared
+        if !store.latestIsRestoredFromDisk,
+           let stamped = store.latest?.windowTokens, stamped > 0 {
             return stamped
         }
         return widestPoolContextWindow
