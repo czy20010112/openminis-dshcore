@@ -326,6 +326,29 @@ public enum DSHCompactBoundary {
     /// Recent user turns kept active by the last-resort fallback.
     public static let keepRecentUserTurns = 3
 
+    /// The block indices a compaction covers inside ONE row.
+    ///
+    /// [F4-compaction-visibility] `DSHCompactUIRow.blocksAtOrBelow` counts the
+    /// covered blocks; this names them, because the count is a report and the
+    /// transcript has to know WHICH blocks to dim.
+    ///
+    /// It is the same predicate, applied to the same per-block provenance, so the
+    /// number the decision logs and the number of dimmed blocks cannot disagree.
+    /// A row with no provenance returns nothing: it is one opaque unit, and the
+    /// resolver already refuses to claim any of it.
+    ///
+    /// - Parameters:
+    ///   - blockSortOrders: `sortOrder` of the raw row that produced each block,
+    ///     in block order (`ChatMessage.blockSortOrders`).
+    ///   - anchorSortOrder: `sortOrder` of the raw row the marker names as the last
+    ///     COMPACTED one. Everything at or below it is compacted history.
+    public static func compactedBlockIndices(
+        blockSortOrders: [Int],
+        anchorSortOrder: Int
+    ) -> [Int] {
+        blockSortOrders.enumerated().compactMap { $0.element <= anchorSortOrder ? $0.offset : nil }
+    }
+
     public static func resolve(
         marker: DSHCompactMarkerFacts,
         rawRows: [DSHCompactRawRow],

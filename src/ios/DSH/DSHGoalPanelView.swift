@@ -23,6 +23,12 @@
 //  A rejected goal command is not drawn here at all: it comes back in the tool
 //  result the model reads, which is where the model can act on it.
 //
+//  SUPERSEDED BY `DSHStatusPanelView` (2026-10-18). Two bars stacked above the
+//  composer was the operator's report; the goal is now the top section of
+//  `DSHStatusPanelView`'s single card, so this view must NOT be mounted
+//  alongside it — that would draw the goal twice. It is kept in the tree only
+//  as the source of the goal's rows, which moved across unchanged.
+//
 
 import SwiftUI
 

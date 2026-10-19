@@ -327,6 +327,35 @@ extension AIChatViewModel {
         //
         // Then clamp by the global ceiling so a model claiming 200K output never
         // actually causes us to request 200K.
+        //
+        // [T-output-limit-three-hops] The three hops above are the WHOLE resolution
+        // chain, and each one is written to a different surface, so a report of
+        // "my model stops at N" has to name which hop produced N:
+        //
+        //   1. `ModelEntry.overrides.maxOutputTokens` — the user's own number.
+        //      Written by the model detail sheet's "Max Output Tokens" row
+        //      (`ProviderInstanceDetailView.maxTokensField()`, ~line 1551), and by
+        //      `minis config set models.<entryId>.maxOutputTokens <n>`
+        //      (`ModelsCollection.maxOutputTokensField`, `0` = clear). WINS over
+        //      everything below it — that precedence is the point of the override.
+        //   2. `ModelEntry.baseModel.maxOutputTokens` — a value the app learned, not
+        //      the user. Two producers: models.dev enrichment (`ModelsDevAPI
+        //      .applyDevData`) and an endpoint that states its own cap (OpenRouter's
+        //      `top_provider.max_completion_tokens`). Since
+        //      [T-modelsdev-output-is-not-a-cap] the enrichment only fills this when
+        //      it is authoritative for the model or when nothing else supplied one,
+        //      because a stage-2 catalog match describes a different publisher.
+        //   3. `provider.defaultMaxTokens` — this endpoint's own default
+        //      (16384 chat-completions / 32768 responses for OpenAI-compatible,
+        //      16384 Gemini, 64000 Anthropic, 16384 Antigravity). This is the
+        //      fallback, and it is deliberately a statement about the API rather
+        //      than about the model: the app has no per-model fact to use here.
+        //
+        // The result of this function is ONE number with TWO jobs, and both are
+        // downstream of it — the request's `max_tokens` and the output the
+        // compaction gate reserves (`DSHTurnDriverConfig.requestMaxOutputTokens` /
+        // `.reservedOutputTokens`). They must never be computed separately; see the
+        // contract note on those two fields.
         let modelOrProvider = model.maxOutputTokens ?? provider.defaultMaxTokens
         let upperBound = min(Self.globalMaxTokensCeiling, modelOrProvider)
 
@@ -400,6 +429,80 @@ extension AIChatViewModel {
         // means the bound entry has no override — check WHICH entry they edited.
         logger.info("📐 maxTokens=\(result) src=\(model.maxOutputTokens != nil ? "model(\(model.maxOutputTokens!))" : "providerDefault(\(provider.defaultMaxTokens))") ceiling=\(Self.globalMaxTokensCeiling) model=\(model.id)")
         return result
+    }
+
+    // MARK: - Effective output limit (for surfaces that must show the number)
+
+    /// The number a UI surface can honestly show for "how much can one reply be",
+    /// and where that number came from.
+    ///
+    /// [T-output-limit-three-hops] `dynamicMaxTokens` is the request path's
+    /// authority and it needs a live `AgentProvider`; a view has only a
+    /// `ModelEntry`. This is the read-only mirror of the SAME three hops, in the
+    /// SAME order, with the provider's own default supplied through
+    /// `providerDefaultMaxOutputTokens(for:)`.
+    ///
+    /// It is a mirror, not a second authority: nothing on the request path reads
+    /// it. That is exactly why the mapping in `providerDefaultMaxOutputTokens`
+    /// carries a `[T-output-limit-three-hops-selftest]` marker —
+    /// `f2-turn-semantics-selftest.cjs` re-derives every value from the four
+    /// provider declarations in this repo, so a changed default stops the gate
+    /// instead of silently making the settings screen quote a number the request
+    /// will not use.
+    ///
+    /// `source` is a short label for a subtitle ("your override" vs "the model or
+    /// the provider's default"); a plain String rather than a new enum type, so
+    /// nothing new is declared in an extension that other files also extend.
+    ///
+    /// The window clamp is deliberately NOT applied: the request is additionally
+    /// clamped by the tokens actually left, which a view cannot know. The returned
+    /// value is therefore the ceiling the user is configuring, which is the thing
+    /// the settings row is for.
+    static func effectiveMaxOutputTokens(
+        for entry: ModelEntry,
+        providerType: ProviderType
+    ) -> (tokens: Int, source: String) {
+        if let user = entry.overrides.maxOutputTokens {
+            return (min(Self.globalMaxTokensCeiling, user), "your override")
+        }
+        let catalogOrProvider = entry.model.maxOutputTokens
+            ?? providerDefaultMaxOutputTokens(for: providerType)
+        return (min(Self.globalMaxTokensCeiling, catalogOrProvider), "the model or provider default")
+    }
+
+    /// What each `AgentProvider` declares as its endpoint default. Mirrors
+    /// `defaultMaxTokens` in the four provider implementations:
+    ///
+    ///   * `AnthropicAgentProvider.defaultMaxTokens` → 64_000
+    ///   * `GeminiAgentProvider.defaultMaxTokens` → 16_384
+    ///   * `AntigravityAgentProvider.defaultMaxTokens` → 16_384
+    ///   * `OpenAIAgentProvider.defaultMaxTokens` →
+    ///     `provider.usesChatCompletionsAPI ? 16_384 : 32_768`
+    ///
+    /// The OpenAI branch is a property of the ROUTE, not of the provider type
+    /// alone: `usesChatCompletionsAPI` is false only for `forceResponsesAPI`
+    /// (`OpenAIProvider.swift:958`, set only by `makeOpenAIResponsesProvider`) and
+    /// for a Codex OAuth route with no custom base — every other case, including
+    /// the OpenAI-compatible relays, xAI, Kimi Code and OpenRouter, is 16_384.
+    /// `.unsupported` builds no agent provider at all, so nothing it returns can
+    /// reach a request.
+    ///
+    /// [T-output-limit-three-hops-selftest] keep in sync with the declarations above.
+    static func providerDefaultMaxOutputTokens(for providerType: ProviderType) -> Int {
+        switch providerType {
+        case .anthropic: return 64_000
+        case .gemini: return 16_384
+        case .antigravity: return 16_384
+        case .openAIResponses: return 32_768
+        // Codex OAuth (openAI + oauth + no custom base) also takes the 32_768
+        // branch; a custom-base OpenAI instance — which is what a local
+        // llama-swap / vLLM / LM Studio server is — takes 16_384.
+        case .openAI: return 16_384
+        case .openRouter: return 16_384
+        case .xAI: return 16_384
+        case .kimiCode: return 16_384
+        case .unsupported: return 16_384
+        }
     }
 
 }

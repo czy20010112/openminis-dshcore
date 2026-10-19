@@ -344,8 +344,10 @@ struct AIChatView: View {
     ///
     /// Written by `measuredPanelHeight` in the composer stack. 0 whenever the
     /// bar draws nothing, so the reservation falls back to zero with the bar.
-    @State private var todoPanelHeight: CGFloat = 0
-    @State private var goalPanelHeight: CGFloat = 0
+    /// [T-panel-merge] The composer-context card is ONE view now (goal above todo,
+    /// `DSHStatusPanelView`), so it registers ONE height. Two registrations into one
+    /// card would let the list reserve a figure neither bar owns.
+    @State private var statusPanelHeight: CGFloat = 0
     /// The FRESHEST height each bar's geometry callback reported. The debounced
     /// commit reads this rather than the value that armed its timer — the same
     /// correction `latestInputBarFrameH` makes for the composer, for the same
@@ -354,10 +356,8 @@ struct AIChatView: View {
     /// committing it would leave the list reserved against a half-open bar.
     ///
     /// One debounce + one `latest` per bar: they settle independently.
-    @State private var latestTodoPanelH: CGFloat = 0
-    @State private var latestGoalPanelH: CGFloat = 0
-    @State private var todoPanelHeightDebounce: Task<Void, Never>?
-    @State private var goalPanelHeightDebounce: Task<Void, Never>?
+    @State private var latestStatusPanelH: CGFloat = 0
+    @State private var statusPanelHeightDebounce: Task<Void, Never>?
     // [T-p2-agent-in-toolbar] Agent blocks now live in the floating tool bar
     // like every other tool; this sheet target only serves the notification-
     // tap / debug-RPC `openHelperSheet` route.
@@ -669,13 +669,11 @@ struct AIChatView: View {
                             // bar above the composer from OUTSIDE: inside the composer
                             // it competed with the input field for space, and as a
                             // floating sibling it read as a second card.
-                            measuredTodoPanel
-                            // [T-tools-goal] The goal, in DSH's own slot: its
-                            // composer-context stack is todo, then goal, then the
-                            // queue, all at the same panel elevation. Draws
-                            // nothing when there is no live goal, so this costs a
-                            // composer with no goal exactly one line of layout.
-                            measuredGoalPanel
+                            // [T-panel-merge] Goal above todo inside one card
+                            // (`DSHStatusPanelView`), the same dock clearance and
+                            // the same width as this composer's own surface. One
+                            // view, so the list reserves one height.
+                            measuredStatusPanel
                             #if DEBUG
                             if isReadOnly {
                                 forkBanner
@@ -5132,30 +5130,25 @@ struct AIChatView: View {
         return goal.phase.isLive
     }
 
-    /// Whether the todo bar occupies a slot in the composer stack right now.
+    /// Whether the card occupies a slot in the composer stack right now.
     ///
-    /// Same expression as `todoPanelVisible`, and it stays that way: the bars
-    /// are siblings of both branches of the `#if DEBUG` read-only fork, so a
-    /// read-only session reserves for them exactly like a normal one. Named
-    /// separately only so the list-facing property reads as what it is.
-    private var todoPanelForLayout: Bool {
-        todoPanelVisible
-    }
-
-    private var goalPanelForLayout: Bool {
-        goalPanelVisible
+    /// The card draws when either half would: same expressions as
+    /// `todoPanelVisible` / `goalPanelVisible`, and it stays that way. It is a
+    /// sibling of both branches of the `#if DEBUG` read-only fork, so a read-only
+    /// session reserves for it exactly like a normal one.
+    private var statusPanelForLayout: Bool {
+        todoPanelVisible || goalPanelVisible
     }
 
     /// [T-panel-bottom-inset] Points the message list must leave free at its
-    /// bottom for the two composer-context bars: their measured heights, or 0
-    /// when the bar is not drawing.
+    /// bottom for the composer-context card: its measured height, or 0 when the
+    /// card is not drawing.
     ///
-    /// Read by BOTH the geometry registrations and
+    /// Read by BOTH the geometry registration and
     /// `CollectionViewMessageListV3.panelHeights`, so the reservation and the
-    /// measurement can never disagree about which bars are up.
+    /// measurement can never disagree about whether the card is up.
     private var panelHeightsForLayout: CGFloat {
-        (todoPanelForLayout ? todoPanelHeight : 0)
-            + (goalPanelForLayout ? goalPanelHeight : 0)
+        statusPanelForLayout ? statusPanelHeight : 0
     }
 
     /// Measure a composer-context bar's height and hand it to `height`.
@@ -5184,11 +5177,11 @@ struct AIChatView: View {
     ///    gated — the callback itself still runs every pass.
     ///  * The debounced commit re-reads `contentVisible`, so a bar that hid or
     ///    unmounted while the timer slept hands its points back instead of
-    /// The todo bar with its dock clearance and its height registration.
-    /// Extracted from `body`: the builder chain plus the measurement closure put
-    /// the body past the type checker's time budget in CI.
-    private var measuredTodoPanel: some View {
-        DSHTodoPanelView()
+    /// The composer-context card (goal above todo) with its dock clearance and its
+    /// height registration. Extracted from `body`: the builder chain plus the
+    /// measurement closure put the body past the type checker's time budget in CI.
+    private var measuredStatusPanel: some View {
+        DSHStatusPanelView()
             .frame(maxWidth: maxContentWidth, alignment: .leading)
             // The composer's own inset, so the bar's width is the
             // input box's width and not a second opinion about it.
@@ -5209,22 +5202,10 @@ struct AIChatView: View {
             // [T-panel-bottom-inset] Measured AFTER the -4,
             // so the number the list reserves is the number
             // this VStack actually gives the bar.
-            .measuredPanelHeight($todoPanelHeight,
-                                 latest: $latestTodoPanelH,
-                                 contentVisible: todoPanelVisible,
-                                 debounce: $todoPanelHeightDebounce)
-    }
-
-    /// The goal bar, same treatment and for the same reason.
-    private var measuredGoalPanel: some View {
-        DSHGoalPanelView()
-            .frame(maxWidth: maxContentWidth, alignment: .leading)
-            .padding(.horizontal, 12)
-            .padding(.bottom, -4)
-            .measuredPanelHeight($goalPanelHeight,
-                                 latest: $latestGoalPanelH,
-                                 contentVisible: goalPanelVisible,
-                                 debounce: $goalPanelHeightDebounce)
+            .measuredPanelHeight($statusPanelHeight,
+                                 latest: $latestStatusPanelH,
+                                 contentVisible: statusPanelForLayout,
+                                 debounce: $statusPanelHeightDebounce)
     }
 
     /// Max content width — unconstrained in compact (portrait iPhone),

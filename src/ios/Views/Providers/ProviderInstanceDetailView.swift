@@ -1659,11 +1659,30 @@ struct ModelEntryDetailSheet: View {
 
     /// Placeholder text for the Max Output Tokens field — shows the API-reported value
     /// if one exists so users know what they'd get by leaving the field empty.
+    ///
+    /// [T-output-limit-three-hops] Falls back to the number the REQUEST will
+    /// actually carry, not to the word "Default". On the reported configuration the
+    /// remote `/v1/models` declares no output cap at all, so the old placeholder
+    /// read "Default" while the live request was capped at 8192 by a catalog default
+    /// nobody chose — the field looked configurable while giving no way to tell
+    /// 8192 from 16384. The resolver is the read-only mirror of the request chain
+    /// (`AIChatViewModel.effectiveMaxOutputTokens(for:providerType:)`).
+    private var effectiveMaxTokens: (tokens: Int, source: String) {
+        AIChatViewModel.effectiveMaxOutputTokens(
+            for: entry,
+            providerType: providerType ?? .unsupported
+        )
+    }
+
+    private var providerType: ProviderType? {
+        store.config.instances.first { $0.id == entry.providerInstanceId }?.providerType
+    }
+
     private var maxTokensPlaceholder: String {
         if let apiMax = entry.baseModel.maxOutputTokens {
             return "\(apiMax)"
         }
-        return AppLocalized("Default")
+        return "\(effectiveMaxTokens.tokens)"
     }
 
     /// True when the user has typed a value that exceeds the API-reported maximum.
@@ -1699,6 +1718,17 @@ struct ModelEntryDetailSheet: View {
                 .font(AppFont.sw(12, weight: .regular, category: .ui))
                 .foregroundStyle(.orange)
             }
+            // [T-output-limit-three-hops] Name the number that is in force so an
+            // empty field is a fact ("16384") rather than an absence ("Default").
+            // The `%lld` form is the repo's catalog convention for an Int
+            // interpolation (see "Version %@" / "%lld/%lld %@"), so the English
+            // literal IS the lookup key and the count arrives through `String(format:)`.
+            Text(String(
+                format: AppLocalized("Per reply, whatever the source; currently %lld tokens."),
+                effectiveMaxTokens.tokens
+            ))
+            .font(AppFont.sw(12, weight: .regular, category: .ui))
+            .foregroundStyle(.secondary)
         }
     }
 

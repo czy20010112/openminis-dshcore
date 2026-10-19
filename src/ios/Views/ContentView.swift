@@ -8270,6 +8270,19 @@ private struct SettingsSheet: View {
                         }
                     }
                     NavigationLink {
+                        DSHCompactionSettingsView()
+                    } label: {
+                        Label {
+                            Text("Context Compaction")
+                        } icon: {
+                            Image(systemName: "arrow.triangle.2.circlepath")
+                                .font(.system(size: 9))
+                                .foregroundStyle(.white)
+                                .frame(width: 21, height: 21)
+                                .background(.purple, in: Circle())
+                        }
+                    }
+                    NavigationLink {
                         AppFontSettingsView()
                     } label: {
                         Label {

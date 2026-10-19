@@ -660,6 +660,39 @@ extension AIChatViewModel {
                 }
             }
 
+            // [F4-compaction-visibility] Dim the exact BLOCKS, not just the rows.
+            //
+            // The loop above can only dim a whole bubble, and rule 10 above has to
+            // stop the divider BEFORE any bubble the anchor merely reaches into —
+            // so on a merged transcript the blocks the compaction DID cover were
+            // presented as live context, on purpose. That is the under-claim the
+            // decision reports as `deferredBlocks`, and on the device it is the
+            // operator's 「上面变灰」 complaint: Phase 2 folds a whole turn into one
+            // bubble, the anchor lands inside it, and nothing on screen dims.
+            //
+            // Per-block provenance answers "which of this bubble's blocks" exactly,
+            // so both halves are now available at once: the divider still stops
+            // where a bubble cannot be claimed whole, and the blocks the compaction
+            // really covers — inside that same bubble — are dimmed individually.
+            // The view ORs the two flags, so a block is dimmed once, never twice.
+            let anchorSortOrder = boundaryDecision.resolvedAnchorId
+                .flatMap { id in rawMessages.first(where: { $0.id == id })?.sortOrder }
+            if let anchorSortOrder {
+                var dimmedBlocks = 0
+                for ui in loadedUIMessages where !ui.blockSortOrders.isEmpty {
+                    for idx in DSHCompactBoundary.compactedBlockIndices(
+                        blockSortOrders: ui.blockSortOrders,
+                        anchorSortOrder: anchorSortOrder
+                    ) where idx < ui.blocks.count {
+                        ui.blocks[idx].isCompactedHistory = true
+                        dimmedBlocks += 1
+                    }
+                }
+                logger.info("[Compact] block-level dimming: \(dimmedBlocks) block(s) at or below sortOrder=\(anchorSortOrder) — the bubbles the divider stopped before included")
+            } else {
+                logger.info("[Compact] block-level dimming: skipped — the marker resolved to no stored row, so no block has a provable sortOrder")
+            }
+
             let keptUICount = loadedUIMessages.count - insertIdx - 1
             logger.info("[Compact] History (Phase B): full-retain, loadedHistory=\(loadedHistory.count) (no trim, no summary injection)")
             logger.info("[Compact] ━━━ Phase 2.5 DONE: \(compactedUICount) compacted + divider + \(keptUICount) active ━━━")
