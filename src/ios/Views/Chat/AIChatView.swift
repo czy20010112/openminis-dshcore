@@ -3021,11 +3021,25 @@ struct AIChatView: View {
 
     // MARK: - Floating Tool Preview
 
+    // [T-ios-block-compacted-no-actions] One predicate for "this tool block is
+    // still actionable", shared by `floatingToolPreview` and `hasAnyToolBlocks`
+    // so the two gates cannot drift apart.
+    //
+    // Compaction greys out at BLOCK granularity: the anchor lands mid-bubble, so
+    // `AssistantBlock.isCompactedHistory` — not just `ChatMessage.isCompactedHistory`
+    // — is what marks the read-only region there (see
+    // `CollectionViewMessageListV3`'s per-block opacity). The action surface has
+    // to honour the same rule, otherwise a card the transcript already dims stays
+    // tappable in the floating tool bar.
+    private static func isActionableToolBlock(_ block: AssistantBlock) -> Bool {
+        block.toolStatus != nil && !block.isCompactedHistory
+    }
+
     @ViewBuilder
     private var floatingToolPreview: some View {
         let allToolBlocks = vm.messages
             .filter { $0.role == .assistant && !$0.isCompactedHistory }
-            .flatMap { $0.blocks.filter { $0.toolStatus != nil } }
+            .flatMap { $0.blocks.filter(AIChatView.isActionableToolBlock) }
         if !allToolBlocks.isEmpty {
             // [T-ios-crash-objectdestroy-composer-uaf] Capture `vm` itself, not
             // `self`: these closures are stored in FloatingToolBar, and a
@@ -3059,7 +3073,8 @@ struct AIChatView: View {
     /// Whether the floating tool preview is visible.
     private var hasAnyToolBlocks: Bool {
         vm.messages.contains(where: {
-            $0.role == .assistant && !$0.isCompactedHistory && $0.blocks.contains { $0.toolStatus != nil }
+            $0.role == .assistant && !$0.isCompactedHistory
+                && $0.blocks.contains(where: AIChatView.isActionableToolBlock)
         })
     }
 

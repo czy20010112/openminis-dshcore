@@ -1057,6 +1057,26 @@ fileprivate final class MarkdownNSRenderer {
 
     // MARK: HTML Block
 
+    /// Replace break tags in raw HTML with a newline.
+    ///
+    /// [T-ios26-br-inline-html] cmark hands inline HTML — and HTML blocks — over
+    /// as raw source, so `text<br>more` used to paint those four characters, and
+    /// a `<br>` alone on a line (which cmark classifies as a block, not an
+    /// inline node) painted them too. The iOS 15 line normalizes break tags at
+    /// the parse layer (`InlineNode.isBreakTag`) and again in its own
+    /// `renderHTMLBlock`; this tree has neither, so the same regex the iOS 15
+    /// tree ships (`MarkdownStripper.swift:29`, `SelectableMarkdownView.swift`
+    /// there) is applied at paint time, in one place, for every raw-HTML path.
+    /// Every other tag is still passed through verbatim (upstream behavior) —
+    /// this is an adapter, not a sanitizer.
+    private static func breakTagNormalized(_ text: String) -> String {
+        text.replacingOccurrences(
+            of: "<\\s*/?\\s*br\\b[^>]*>",
+            with: "\n",
+            options: .regularExpression
+        )
+    }
+
     private func renderHTMLBlock(_ content: String, quoteDepth: Int) -> RenderedBlock {
         var attrs = baseAttributes(quoteDepth: quoteDepth)
         let style: NSMutableParagraphStyle
@@ -1068,7 +1088,8 @@ fileprivate final class MarkdownNSRenderer {
         style.lineSpacing = bodyLineSpacing
         attrs[.paragraphStyle] = style
         return RenderedBlock(
-            attributed: NSAttributedString(string: content, attributes: attrs),
+            attributed: NSAttributedString(
+                string: Self.breakTagNormalized(content), attributes: attrs),
             topMargin: 0,
             bottomMargin: 16
         )
@@ -1309,7 +1330,10 @@ fileprivate final class MarkdownNSRenderer {
             }
 
         case .html(let html):
-            return NSAttributedString(string: html, attributes: attrs)
+            // Raw inline HTML: break tags become newlines, everything else is
+            // passed through verbatim. See `breakTagNormalized(_:)`.
+            return NSAttributedString(
+                string: Self.breakTagNormalized(html), attributes: attrs)
 
         case .softBreak:
             return NSAttributedString(string: " ", attributes: attrs)
