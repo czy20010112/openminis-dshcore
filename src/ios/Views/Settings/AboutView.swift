@@ -5,7 +5,8 @@ struct AboutView: View {
     private let appVersion: String = {
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
         let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1"
-        return "\(version) (\(build))"
+        // [T-build-in-version] `build<CFBundleVersion>` is the CI run number; see the iOS 26 line's twin for why this is not cosmetic.
+        return "\(version) build\(build)"
     }()
 
     /// When this binary was built, from the executable's modification date.
@@ -64,7 +65,7 @@ struct AboutView: View {
 
             // MARK: - Links
             Section("Links") {
-                Link(destination: URL(string: "https://github.com/OpenMinis")!) {
+                Link(destination: URL(string: "https://github.com/czy20010112/openminis-dshcore")!) {
                     Label {
                         HStack {
                             Text("GitHub Repository")
@@ -78,7 +79,7 @@ struct AboutView: View {
                         Image(systemName: "link.circle.fill")
                     }
                 }
-                Link(destination: URL(string: "https://github.com/OpenMinis/OpenMinis/issues")!) {
+                Link(destination: URL(string: "https://github.com/czy20010112/openminis-dshcore/issues")!) {
                     Label {
                         HStack {
                             Text("Report an Issue")

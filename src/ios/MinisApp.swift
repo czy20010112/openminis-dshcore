@@ -131,6 +131,21 @@ struct MinisApp: App {
         //
         // `install` is idempotent, so the later onAppLaunch() call is a no-op.
         CrashSignalHandler.install()
+        // [T-env-diagnostic-line] Name the binary in the log, once per launch.
+        //
+        // Nothing else in a device log says which build produced it: the version
+        // keys are absent from Info.plist, so they come from the build settings,
+        // and before CI stamped CURRENT_PROJECT_VERSION every rebuild looked
+        // identical. "Is the fix actually running on that device?" was therefore
+        // unanswerable from the log alone. `build-ipa.yml` passes the run number,
+        // which is the same number the About screen shows.
+        do {
+            let plist = Bundle.main.infoDictionary
+            let appVersion = plist?["CFBundleShortVersionString"] as? String ?? "?"
+            let appBuild = plist?["CFBundleVersion"] as? String ?? "?"
+            let os = ProcessInfo.processInfo.operatingSystemVersionString
+            AppLogger(category: "App").info("[App] version=\(appVersion) build=\(appBuild) os=\(os)")
+        }
         // [T-auto-grouping-default-on] Auto-grouping ships ON. `bool(forKey:)`
         // returns false for an unregistered key, so the default has to be
         // registered here rather than expressed at the (multiple) read sites —
