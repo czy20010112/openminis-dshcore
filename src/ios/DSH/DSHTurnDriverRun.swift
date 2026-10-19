@@ -338,6 +338,68 @@ extension AIChatViewModel {
         )
     }
 
+    /// The seqs of the entries a compaction KEPT — the surface it left, minus the
+    /// summary itself.
+    ///
+    /// [T-dsh-compact-kept-head] This is where the marker's forward boundary is
+    /// read from, and it is deliberately NOT `lastShadowedSeq + 1`.
+    ///
+    /// On a range that shadows only fresh appends the two answers agree — the kept
+    /// region is exactly the surface above the range. On a range that swallowed the
+    /// PREVIOUS summary they do not: the surface then reads
+    /// `[summary, retained-tail, this turn's appends]`, whose seqs are not
+    /// ascending (the summary carries the newest seq of the OLD log and sits
+    /// first), so the first seq above the range's last names the summary — an entry
+    /// with no store row, which the walk would then have to skip by hand. Asking
+    /// the shadow set instead is exact by construction: what the range did not
+    /// shadow is what the surface still shows, and the summary is skipped by NAME
+    /// (`shadows != nil`) rather than by position.
+    ///
+    /// - Parameters:
+    ///   - surface: seqs of the current surface, in surface order, with the entries
+    ///     that are themselves a compaction summary flagged.
+    ///   - shadowed: every seq the compaction's range named.
+    static func dshKeptSurfaceSeqs(
+        surface: [(seq: Int, isSummary: Bool)],
+        shadowed: Set<Int>
+    ) -> [Int] {
+        surface.filter { !$0.isSummary && !shadowed.contains($0.seq) }.map(\.seq)
+    }
+
+    /// The first KEPT entry that names a store row — the marker's forward boundary.
+    ///
+    /// [T-dsh-compact-kept-head] FORWARD, which is the opposite of the backward
+    /// anchor's order and the reason the field exists at all.
+    ///
+    /// `lastCompactedMessageId` is picked NEWEST-first because the marker's
+    /// semantics are "everything up to and including this row is compacted", so the
+    /// anchor has to be the newest shadowed row that a relaunch can actually
+    /// address. The forward boundary is the other end of the same range — the first
+    /// row the compaction KEPT — and that row is the one a reload puts the divider
+    /// immediately BEFORE. Walking FORWARD is what makes a marker resolvable at all
+    /// when the shadowed span is entirely this turn's own rows: the device's third
+    /// compaction shadowed 59 entries (`range=121...161`) and not one of them had a
+    /// store row, while the rows it kept were persisted by the end of the same turn.
+    ///
+    /// A kept entry with no row is stepped over rather than blocking the record: the
+    /// boundary then names the first kept row that IS addressable, which claims a
+    /// few kept rows as compacted. That over-claim is reported (`skipped`) and it is
+    /// bounded by the rows this turn appended before the first persisted one — far
+    /// cheaper than the v3 position-only marker it replaces, which greys the whole
+    /// kept tail on every reader.
+    ///
+    /// - Returns: the id and seq of that row, and how many kept entries had no store
+    ///   row before it. nil when not one kept entry is addressable yet.
+    static func dshKeptHeadAnchor(
+        keptSeqs: [Int],
+        storeIds: [Int: String]
+    ) -> (id: String, seq: Int, skipped: Int)? {
+        for (offset, seq) in keptSeqs.enumerated() {
+            if let id = storeIds[seq] { return (id, seq, offset) }
+        }
+        return nil
+    }
+
     /// Apply the resolution to a transcript: the anchor id to persist, and the
     /// degraded id to persist when no shadowed row has a store row.
     ///
@@ -427,10 +489,63 @@ extension AIChatViewModel {
             return
         }
 
+        // [T-dsh-compact-kept-head] THE FORWARD BOUNDARY — resolved here, beside the
+        // backward anchor, and written even when the walk-back found nothing.
+        //
+        // The device log's third compaction is the shape this exists for
+        // (F:\smb\log\minis-2026-10-19.log, 09:33:11):
+        //
+        //   compaction anchor candidates shadowed=59 withDbId=0 range=121...161
+        //   compaction marker written anchor=87A3B9DD seq=161
+        //     precision=lastShadowedUnresolved degraded=true version=3
+        //
+        // Every row the range shadowed was this turn's own — 121 was the PREVIOUS
+        // summary's seq and 122…161 the steps since — so no row it names backwards
+        // had a store row, and the record was written as a POSITION. The rows the
+        // compaction KEPT are rows of the same turn, and at this point they ARE
+        // persisted, which is exactly what makes them nameable. Naming the first kept
+        // row is the boundary both readers want first anyway: `DSHCompactBoundary`
+        // resolves `firstKeptMessageId` (rule 1) ahead of any backward anchor, and
+        // `effectiveAgentHistory()` resolves the same row for the model's seed — so
+        // the greyed region on screen and the context the model is handed describe
+        // the same conversation.
+        //
+        // The kept set comes from the SURFACE minus the range (`dshKeptSurfaceSeqs`),
+        // where the summary is skipped by name: see that function for why
+        // `lastShadowedSeq + 1` is not the same question.
+        let shadowedSeqs = Set(pending.candidates.map(\.seq))
+        var storeIds: [Int: String] = [:]
+        for message in agentHistory {
+            guard let seq = message.dshSeq, let id = message.dbMessageId else { continue }
+            storeIds[seq] = id
+        }
+        // This turn's own persistence pass wins where the two disagree: it is the
+        // newer truth about the rows it wrote, and at the mid-turn trigger the
+        // register is still the previous turn's array.
+        for (seq, id) in stamped { storeIds[seq] = id }
+        let keptHead = Self.dshKeptHeadAnchor(
+            keptSeqs: Self.dshKeptSurfaceSeqs(
+                surface: (dshSession?.surface() ?? []).map {
+                    (seq: $0.seq.value, isSummary: $0.shadows != nil)
+                },
+                shadowed: shadowedSeqs
+            ),
+            storeIds: storeIds
+        )
+
         // [P1-b] A degraded anchor is a POSITION, so it must not be stored in the
         // column the range resolution reads. `version 3` is what marks it
         // (`DSHCompactMarkerFacts.isDegradedAnchor`); the stand-in id stays in the
         // log, where it is a diagnostic instead of a lie.
+        //
+        // [T-dsh-compact-kept-head] v3 ALSO means "no forward boundary": both readers
+        // act on the VERSION before they read a field (`DSHCompactBoundary` rule 0
+        // runs ahead of rule 1; `effectiveAgentHistory()` sends a v3 marker down its
+        // compactAll rung). So a record that does name the first row it kept is not
+        // one of these — writing v3 there would make both readers walk past a
+        // boundary the record really has, and the transcript would grey the whole
+        // kept tail while its divider claimed exactly that.
+        let positionOnly = anchor.degraded && keptHead == nil
         let marker = CompactMarker(
             id: UUID().uuidString,
             sessionId: sid,
@@ -440,14 +555,19 @@ extension AIChatViewModel {
             createdAt: Date(),
             uiBoundarySortOrder: nil,
             boundaryMessageId: nil,
-            firstKeptMessageId: nil,
+            firstKeptMessageId: keptHead?.id,
             lastCompactedMessageId: anchor.degraded ? nil : anchor.id,
-            version: anchor.degraded ? DSHCompactMarkerFacts.degradedAnchorVersion : 2
+            version: positionOnly ? DSHCompactMarkerFacts.degradedAnchorVersion : 2
         )
-        let degraded = anchor.degraded
+        let degraded = positionOnly
         let anchorId = anchor.id
+        let keptHeadId = keptHead?.id
+        let keptHeadSeq = keptHead?.seq
+        let keptHeadSkipped = keptHead?.skipped ?? -1
         let seq = resolution.seq
-        let precision = resolution.precision
+        // Named when the forward boundary is what saved the record: the backward
+        // walk-back found no store row and the kept head did.
+        let precision = (resolution.id == nil && keptHead != nil) ? "keptHead" : resolution.precision
         let stampedCount = stamped.count
         let count = pending.count
         let candidateCount = pending.candidates.count
@@ -474,12 +594,25 @@ extension AIChatViewModel {
             }
             AppLogger(category: "DSHLoop").warning(
                 "[DSH] compaction marker written anchor=\(anchorId.prefix(8)) seq=\(seq) "
-                + "precision=\(precision) degraded=\(degraded) "
+                + "precision=\(precision) firstKept=\(keptHeadId?.prefix(8) ?? "nil") "
+                + "keptSeq=\(keptHeadSeq.map(String.init) ?? "nil") "
+                + "keptSkipped=\(keptHeadSkipped) "
+                + "degraded=\(degraded) "
                 + "version=\(marker.version) trigger=\(trigger) "
                 + "shadowed=\(count) candidates=\(candidateCount) "
                 + "stampedThisTurn=\(stampedCount)"
             )
             if degraded {
+                // [T-dsh-compact-kept-head] This branch is now the LAST resort it was
+                // meant to be: it fires only when neither end of the range could be
+                // named — not one shadowed row has a store row AND not one KEPT row
+                // does. That is the mid-turn flush of a range whose kept tail is
+                // entirely this turn's own rows (`stamped` is empty there); the
+                // end-of-turn rewrite of the same range resolves the kept head and
+                // lands as v2, and this early record is what survives a kill in
+                // between. The device's third compaction was this branch reached with
+                // a kept tail the store already had.
+                //
                 // Named explicitly: the consequence lands in the MODEL's seed and
                 // in the transcript's divider position rather than in the record
                 // itself. The marker resolves nowhere exactly, so both
@@ -490,7 +623,8 @@ extension AIChatViewModel {
                 // the whole point, and the reload path warns again when it
                 // restores one of these.
                 AppLogger(category: "DSHLoop").warning(
-                    "[DSH] the written marker's anchor names no store row (no shadowed row had one); "
+                    "[DSH] the written marker's anchor names no store row (no shadowed row had one, "
+                    + "and no KEPT row had one either); "
                     + "version=\(DSHCompactMarkerFacts.degradedAnchorVersion) so it cannot be mistaken "
                     + "for an exact anchor — the transcript and the model seed both fall to the "
                     + "last-N-user-turns rule until a later compaction resolves an exact anchor"

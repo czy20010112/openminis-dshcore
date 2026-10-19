@@ -529,6 +529,22 @@ extension AIChatViewModel {
     /// the anchor is folded into a new marker's summary; agentHistory is not
     /// mutated. The kept tail (live anchor for the next turn) is whatever the
     /// user types next — there is no "auto-keep last N user turns" magic.
+    ///
+    /// [T-command-compact-port] The DSH first refusal: when this conversation has a
+    /// DSH session (a turn has run in it), `/compact` runs through
+    /// `DSHCompaction.compact` — the SAME entry point the turn driver's automatic
+    /// compaction and its context-overflow recovery call — with the SAME
+    /// `DSHCompactionPolicy`, read from the same settings accessor. Before this,
+    /// the command and the engine compacted the same conversation under two
+    /// unrelated retention rules: this path's store-side marker and summary prompt
+    /// on one side, `DSHCompactionSettings.policy()` on the other.
+    ///
+    /// The store-side path below is not dead: a conversation with no DSH session
+    /// yet, or a route whose capacity cannot be resolved, has no engine-owned
+    /// surface for the policy to select a range from, and this is the only
+    /// compaction that knows about it. The decision lives here rather than in the
+    /// slash-command table so the long-press "Compact" menu — which calls this same
+    /// function — cannot end up in the other pipeline.
     func compactAll() {
         guard !isProcessing else {
             appendSystemInfo("Cannot compact while processing.", icon: "arrow.down.right.and.arrow.up.left")
@@ -541,6 +557,9 @@ extension AIChatViewModel {
             appendSystemInfo("Not enough messages to compact.", icon: "arrow.down.right.and.arrow.up.left")
             return
         }
+        // Reports its own outcome (including failures) and returns true once it has.
+        if compactThroughDSHPolicy() { return }
+
         guard let lastActive = activeMessages.last else { return }
         // includesBoundary=false: same path as long-press compactBefore. The
         // flag is preserved on the API for ABI compat with older v1 callers
@@ -1298,6 +1317,13 @@ extension AIChatViewModel {
         )
         logger.info("[Compact] Persisting v2 marker: id=\(marker.id.prefix(8)) lcmId=\(lastCompactedMessageId.prefix(8)) lcmHistoryIdx=\(lcmHistoryIdx ?? -1)/agentHistory.count=\(self.agentHistory.count) historyCount=\(historyCount) includesBoundary=\(includesBoundary)")
         await ChatStore.shared.insertCompactMarker(marker)
+        // [T-compact-marker-chars] The one figure that separates "a compaction
+        // landed" from "an empty summary landed": a marker row whose `summary` is
+        // nothing but the `<context-summary>` envelope shadows the range it names
+        // and hands the model no history at all. The generation side refuses that
+        // now (`generateCompactSummary`); this line is what makes the record
+        // checkable after the fact, from the device log alone.
+        logger.info("[Compact] marker written: id=\(marker.id.prefix(8)) summaryChars=\(marker.summary.count) version=\(marker.version) compactedCount=\(marker.compactedCount)")
 
         // Phase B: update cache so effectiveAgentHistory() starts using the new summary immediately.
         self.cachedLatestMarker = marker
@@ -1345,6 +1371,11 @@ extension AIChatViewModel {
         }.count
         let divider = ChatMessage(role: .compactDivider, content: "\(compactedUICount) messages compacted")
         divider.compactSummary = summary
+        // The injection side of the same figure: this is the text that stands in
+        // for everything above the divider, both on screen and in the seed the
+        // model reads next turn. `summaryChars` here and at the marker write must
+        // agree, and neither may be 0.
+        logger.info("[Compact] summary injected: summaryChars=\(divider.compactSummary?.count ?? 0) dividerIdx=\(dividerInsertIdx) compactedUICount=\(compactedUICount)")
         messages.insert(divider, at: dividerInsertIdx)
 
         // Gray out everything above the divider; the kept tail (below divider) stays active.
@@ -1789,6 +1820,12 @@ extension AIChatViewModel {
         } else {
             maxOutputTokens = 4096
         }
+        // [T-compact-request-budget] The same budget, reported as one line. The
+        // pre-flight above already refuses the request when the input cannot fit
+        // beside the output reservation; this records the numbers the refusal was
+        // based on, so a compaction that spends minutes splitting its input can be
+        // told apart from one that is stuck.
+        logger.info("[Compact] summary request budget: inputChars=\(conversationText.count) inputEstimate=\(inputEstimate) window=\(contextWindow) maxOutput=\(maxOutputTokens)")
 
         let compactUserMessage = """
         Compact this conversation into a context summary:
@@ -1904,6 +1941,15 @@ extension AIChatViewModel {
         }
 
         guard !responseText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            // [P0] The refusal, named and measured. An empty summary is not a
+            // small summary: `compactSummaryWrappedText` wraps it in a fixed
+            // envelope that always costs fewer tokens than the range it shadows,
+            // so a compaction that accepted one would write a marker, gray the
+            // prefix out of the transcript, and hand the model a `<context-summary>`
+            // with no content in it. Refusing throws instead, and every caller in
+            // this file treats a throw as "no marker, surface untouched" — the
+            // prefix stays live and the next attempt can still summarize it.
+            logger.error("[Compact] summary refused: summaryChars=0 (the model returned no text) — no marker written; inputChars=\(conversationText.count) window=\(contextWindow) maxOutput=\(maxOutputTokens)")
             throw NSError(domain: "Compact", code: -2, userInfo: [NSLocalizedDescriptionKey: "LLM returned empty summary"])
         }
 
