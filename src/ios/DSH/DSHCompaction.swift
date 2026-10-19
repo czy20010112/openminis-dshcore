@@ -725,7 +725,17 @@ public enum DSHCompaction {
             return .failure(.noShrink)
         }
 
-        let shadowedRange = range.shadowedSeqs.first!...range.shadowedSeqs.last!
+        // [T-nonmonotonic-seq-range] `shadowedSeqs` is in surface order, not seq order: a
+        // range that ends inside the previously kept tail yields descending values, and
+        // `first!...last!` would then trap in `ClosedRange.init` (a crash, not a throw).
+        // The range only means "the span of seqs this summary shadows", so take the
+        // extremes.
+        guard let shadowedLow = range.shadowedSeqs.min(),
+              let shadowedHigh = range.shadowedSeqs.max(),
+              shadowedLow <= shadowedHigh else {
+            return .failure(.noShrink)
+        }
+        let shadowedRange = shadowedLow...shadowedHigh
         let summarySeq = session.appendCompaction(
             summary: summaryMessage,
             shadows: shadowedRange,

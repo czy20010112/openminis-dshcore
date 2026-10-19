@@ -63,7 +63,11 @@ extension AIChatViewModel {
 
     /// Decode the pixel dimensions of an image blob without fully decoding it.
     /// Returns (width, height) or nil on failure.
-    private static func imagePixelSize(_ data: Data) -> (Int, Int)? {
+    ///
+    /// Internal rather than private since [T-image-offload-port]: the
+    /// request-budget path reports the same dimensions in the same placeholder
+    /// field, and a second copy of this decoder is what drifts.
+    static func imagePixelSize(_ data: Data) -> (Int, Int)? {
         guard let src = CGImageSourceCreateWithData(data as CFData, nil),
               let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any],
               let w = props[kCGImagePropertyPixelWidth] as? Int,
@@ -71,42 +75,76 @@ extension AIChatViewModel {
         return (w, h)
     }
 
-    private static let byteFormatter: ByteCountFormatter = {
-        let f = ByteCountFormatter()
-        f.countStyle = .file
-        f.allowedUnits = [.useKB, .useMB]
-        return f
-    }()
+    /// The byte count the placeholder reports, or nil when none is known.
+    ///
+    /// [T-image-offload-port] The placeholder wants the raw figure, not a rendered
+    /// unit: upstream prints no size at all (`content.ts:66`), so the field is this
+    /// app's own addition (see `DSHImageOmission`'s header) and it is deliberately
+    /// unit-less — "1234567 bytes" is unambiguous in a way "1.2 MB" is not, and the
+    /// model is the reader.
+    private static func imageOmissionByteCount(_ data: Data) -> Int? {
+        guard !data.isEmpty else { return nil }
+        return data.count
+    }
 
     /// Build the text placeholder that replaces an image omitted from the
-    /// sent context. Dimensions + byte size give the model enough semantic
-    /// context to recognize the image from memory, and the path hints let
-    /// it re-fetch the bytes via `read_image` when needed.
+    /// sent context.
     ///
-    /// Two forms:
+    /// [T-image-offload-port] The wording is `DSHImageOmission.text`, which is the
+    /// port of upstream's one builder for this text
+    /// (`packages/llm/llm/src/content.ts:108-122`, `offloadedImageText`) — so this
+    /// path and the request-budget path tell the model the same thing about the
+    /// same image. Before the port the two paths emitted two different sentences
+    /// (`[image omitted to save context — …]` here, `[image elided to fit 25MB
+    /// request budget …]` there) with different fields, and a model that had the
+    /// same image dropped by both was told two different stories about it.
+    ///
+    /// What the model is still told, in upstream's order: which image it was, how
+    /// big it was (`WxHpx`, media type, byte count), where the bytes are, and —
+    /// when they are nowhere — that they are not, with the re-attach instruction
+    /// upstream ships for exactly that case. The occurrence is never deleted, only
+    /// replaced: the block count the model reasons over does not change.
+    ///
+    /// Three forms, distinguished by which paths exist. `snapshot` is preferred
+    /// over `original` because the snapshot is the copy this app wrote and can
+    /// therefore guarantee; the original may be a `/tmp` path that has since been
+    /// reaped.
     /// - Stable original (no snapshot needed): `originalPath` set,
     ///   `snapshotPath` nil.
     /// - Volatile original (snapshot written as fallback): both set.
+    /// - Nothing addressable: both nil — upstream's "ask the user to attach it
+    ///   again" branch.
     static func imagePlaceholderText(
         data: Data,
         originalPath: String?,
-        snapshotPath: String?
+        snapshotPath: String?,
+        mimeType: String = "image/jpeg"
     ) -> String {
-        let size = byteFormatter.string(fromByteCount: Int64(data.count))
-        let dims: String
-        if let (w, h) = imagePixelSize(data) { dims = "\(w)×\(h), \(size)" }
-        else { dims = size }
+        DSHImageOmission.text(
+            identity: Self.imageOmissionIdentity(originalPath: originalPath, snapshotPath: snapshotPath),
+            path: snapshotPath ?? originalPath,
+            pixelSize: imagePixelSize(data).map { (width: $0.0, height: $0.1) },
+            mediaType: mimeType,
+            byteCount: Self.imageOmissionByteCount(data)
+        )
+    }
 
-        switch (originalPath, snapshotPath) {
-        case let (orig?, snap?):
-            return "[image omitted to save context — \(dims) — original: \(orig); snapshot: \(snap), use read_image on snapshot if original is unavailable]"
-        case let (orig?, nil):
-            return "[image omitted to save context — \(dims) — original: \(orig), use read_image to view again]"
-        case let (nil, snap?):
-            return "[image omitted to save context — \(dims) — saved to \(snap), use read_image to view again]"
-        case (nil, nil):
-            return "[image omitted to save context — \(dims)]"
-        }
+    /// Name the omitted image the way upstream's `imageIdentity` does
+    /// (`packages/llm/llm/src/content.ts:49-53`): the name it is actually known by,
+    /// quoted, before the durable handle.
+    ///
+    /// This app's trim path knows no attachment id for these occurrences (the
+    /// bytes arrived as a tool result or a message part, and the id is a Minis
+    /// attachment-store concept the DSH session never sees), so the handle is the
+    /// only durable thing available: the path the bytes can still be read from.
+    /// Reusing the path is deliberate — it is the one string both this app and the
+    /// model can resolve, and inventing a name here would read to the model as a
+    /// fact about the image that nobody established.
+    private static func imageOmissionIdentity(originalPath: String?, snapshotPath: String?) -> String {
+        let name = (snapshotPath ?? originalPath).map { ($0 as NSString).lastPathComponent }
+        let handle = snapshotPath ?? originalPath ?? DSHImageOmission.noIdentity
+        guard let name, !name.isEmpty else { return "\"\(handle)\"" }
+        return "\"\(name)\" (\(handle))"
     }
 
     /// Decide whether a file path (Linux view) or minis:// URL is backed by
@@ -249,7 +287,8 @@ extension AIChatViewModel {
                     let placeholder = Self.imagePlaceholderText(
                         data: data,
                         originalPath: originalPath,
-                        snapshotPath: snapshotPath
+                        snapshotPath: snapshotPath,
+                        mimeType: mime ?? "image/jpeg"
                     )
                     let newContent = content.isEmpty ? placeholder : "\(content)\n\n\(placeholder)"
                     newParts[pi] = .toolResult(
@@ -266,7 +305,7 @@ extension AIChatViewModel {
                     let snap = offloadContextImage(data, toolId: synthId, mimeType: mime)
                     snapshotsWritten += 1
                     let placeholder = Self.imagePlaceholderText(
-                        data: data, originalPath: nil, snapshotPath: snap
+                        data: data, originalPath: nil, snapshotPath: snap, mimeType: mime
                     )
                     newParts[pi] = .text(placeholder)
                     mutated = true

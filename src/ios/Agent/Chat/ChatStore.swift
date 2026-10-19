@@ -4910,7 +4910,7 @@ extension RawMessage {
     fileprivate static func stripAttachmentMarkers(_ s: String) -> String {
         let patterns = [
             #"\[attached [A-Za-z]+:[^\]]*\]"#,
-            #"\[image omitted to save context[^\]]*\]"#,
+            #"\[image omitted (?:to save context|to fit request image limits)[\s\S]*?\]"#,
         ]
         var out = s
         for p in patterns {
