@@ -125471,16 +125471,58 @@
     "The reply reached this model's output limit. The text so far is kept — send a message to continue.": {
       "extractionState": "manual",
       "localizations": {
-      "extractionState": {
+      "de": {
         "stringUnit": {
           "state": "translated",
-          "value": "manual"
+          "value": "Die Antwort hat das Ausgabelimit dieses Modells erreicht. Der bisherige Text bleibt erhalten – sende eine Nachricht, um fortzufahren."
         }
       },
-      "localizations": {
+      "en": {
         "stringUnit": {
           "state": "translated",
-          "value": {"en": {"stringUnit": {"state": "translated", "value": "The reply reached this model's output limit. The text so far is kept — send a message to continue."}}, "de": {"stringUnit": {"state": "translated", "value": "Die Antwort hat das Ausgabelimit dieses Modells erreicht. Der bisherige Text bleibt erhalten — senden Sie eine Nachricht, um fortzufahren."}}, "es": {"stringUnit": {"state": "translated", "value": "La respuesta alcanzó el límite de salida de este modelo. El texto ya generado se conserva: envía un mensaje para continuar."}}, "fr": {"stringUnit": {"state": "translated", "value": "La réponse a atteint la limite de sortie de ce modèle. Le texte déjà produit est conservé — envoyez un message pour continuer."}}, "ja": {"stringUnit": {"state": "translated", "value": "応答がこのモデルの出力上限に達しました。ここまでの文章は保持されています。続けるにはメッセージを送信してください。"}}, "ko": {"stringUnit": {"state": "translated", "value": "응답이 이 모델의 출력 한도에 도달했습니다. 지금까지의 텍스트는 유지됩니다 — 계속하려면 메시지를 보내세요."}}, "ru": {"stringUnit": {"state": "translated", "value": "Ответ достиг предельного объёма вывода этой модели. Уже созданный текст сохранён — отправьте сообщение, чтобы продолжить."}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "回复达到了此模型的输出上限。已生成的内容已保留 —— 发送一条消息即可继续。"}}, "zh-Hant": {"stringUnit": {"state": "translated", "value": "回覆已達此模型的輸出上限。已生成的內容已保留 —— 傳送一則訊息即可繼續。"}}}
+          "value": "The reply reached this model's output limit. The text so far is kept — send a message to continue."
+        }
+      },
+      "es": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "La respuesta alcanzó el límite de salida de este modelo. El texto hasta ahora se conserva: envía un mensaje para continuar."
+        }
+      },
+      "fr": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "La réponse a atteint la limite de sortie de ce modèle. Le texte déjà produit est conservé — envoyez un message pour continuer."
+        }
+      },
+      "ja": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "返答がこのモデルの出力上限に達しました。ここまでの文章は保持されています。メッセージを送ると続きから進みます。"
+        }
+      },
+      "ko": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "응답이 이 모델의 출력 한도에 도달했습니다. 지금까지의 내용은 유지됩니다. 메시지를 보내면 이어서 진행합니다."
+        }
+      },
+      "ru": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Ответ достиг предельного объёма вывода этой модели. Уже созданный текст сохранён — отправьте сообщение, чтобы продолжить."
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "回复达到了这个模型的输出上限。已有的内容会保留——再发一条消息即可继续。"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "回覆達到了這個模型的輸出上限。已產生的內容會保留——再傳一則訊息即可繼續。"
         }
       }
       }
