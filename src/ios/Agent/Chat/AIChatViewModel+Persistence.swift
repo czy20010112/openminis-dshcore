@@ -2063,6 +2063,36 @@ extension AIChatViewModel {
         return cleaned
     }
 
+    /// The summary plus the kept tail — the seed for a marker with no usable anchor.
+    ///
+    /// [T-dsh-compact-kept-head] Shared by every marker that has no exact boundary:
+    /// a v3 (degraded) anchor, a v2 marker whose own anchor resolves nowhere, and a
+    /// v1 compactAll marker whose `lastCompactedMessageId` is gone. It is the same
+    /// rule `DSHCompactBoundary` restores for them (the kept tail), so the greyed
+    /// region on screen and the context the model is handed cannot describe
+    /// different conversations.
+    ///
+    /// Deliberately NOT "full history, no summary" — the degradation two of those
+    /// rungs used to take. That shape leaves the summary visible on screen while
+    /// dropping it from the request: the model becomes the one party that cannot see
+    /// the conversation was compacted, and because the surface is still over the
+    /// threshold the next step compacts again, in a loop.
+    private func summaryPlusKeptTailSeed(_ marker: CompactMarker) -> [AgentMessage] {
+        let summaryMsg = Self.summaryAsAgentMessage(marker.summary)
+        var result: [AgentMessage] = [summaryMsg]
+        if let nthIdx = indexOfNthFromLastUserText(Self.compactKeepRecentUserTurns) {
+            result.append(contentsOf: agentHistory[nthIdx...])
+            logger.warning("[Compact] effectiveAgentHistory: marker v\(marker.version) has no usable anchor (fkmId=\(marker.firstKeptMessageId?.prefix(8) ?? "nil") lcmId=\(marker.lastCompactedMessageId?.prefix(8) ?? "nil")); falling back to last \(Self.compactKeepRecentUserTurns) user turns (anchorIdx=\(nthIdx), kept=\(self.agentHistory.count - nthIdx))")
+        } else {
+            // Not even N user-text turns available: keep the whole history rather
+            // than risk the empty-context loop — but with the summary in front of it,
+            // so both readers still see that a compaction happened.
+            result.append(contentsOf: agentHistory)
+            logger.warning("[Compact] effectiveAgentHistory: marker v\(marker.version) has no usable anchor AND <\(Self.compactKeepRecentUserTurns) user turns in agentHistory(count=\(self.agentHistory.count)); keeping the whole history behind the summary")
+        }
+        return result
+    }
+
     func effectiveAgentHistoryUncounted() -> [AgentMessage] {
         guard let marker = cachedLatestMarker else { return agentHistory }
 
@@ -2106,15 +2136,71 @@ extension AIChatViewModel {
         // party that cannot see the conversation was compacted — and the surface
         // would then be over the threshold again on the next step, compacting in a
         // loop.
+        //
+        // [T-dsh-compact-kept-head] Decided by VERSION, before any field is read —
+        // and that is load-bearing rather than tidy. A v3 marker's two id columns are
+        // NULL by construction, which is exactly the shape `ChatStore`'s legacy
+        // upgrade looks for: `repairSessionIfNeeded` (called on every session open,
+        // `AIChatView`) fills `firstKeptMessageId` into any marker whose id columns
+        // are both NULL, out of `firstKeptSortOrder` — a column DSH markers write as
+        // 0, i.e. the session's FIRST row. Read as a boundary that says "keep
+        // everything": the v1 branch below would hand the model the whole history, the
+        // compaction would stop shrinking anything, and the loop would compact again
+        // on every step. The version is the one field a repair cannot touch.
+        if marker.version >= DSHCompactMarkerFacts.degradedAnchorVersion {
+            logger.warning("[Compact] effectiveAgentHistory: degraded marker v\(marker.version) — kept tail + summary, decided by version (its fkmId=\(marker.firstKeptMessageId?.prefix(8) ?? "nil") lcmId=\(marker.lastCompactedMessageId?.prefix(8) ?? "nil") are not read)")
+            return summaryPlusKeptTailSeed(marker)
+        }
+
         if marker.version >= 2 && marker.version < DSHCompactMarkerFacts.degradedAnchorVersion {
+            // [T-dsh-compact-kept-head] THE FORWARD BOUNDARY COMES FIRST — the same
+            // order `DSHCompactBoundary` reads it in (rule 1 `firstKeptMessageId`
+            // before rule 2 `lastCompactedMessageId`).
+            //
+            // One record, two readers, and they have to agree: the transcript greys
+            // every row above the divider, so the seed must keep exactly what sits
+            // below it. This rung could never fire before, because every DSH marker
+            // was written with `firstKeptMessageId` = nil
+            // (`dshWriteCompactionMarker`) — which is also why a v2 marker whose
+            // `lastCompactedMessageId` was orphaned fell to "full history, no
+            // summary" below: the screen and the request described opposite
+            // conversations for the same marker (grey prefix + visible summary on
+            // screen; everything live, no summary, in context).
+            if let fkmId = marker.firstKeptMessageId ?? marker.boundaryMessageId,
+               let keepStart = agentHistory.firstIndex(where: { $0.dbMessageId == fkmId }) {
+                let kept = Array(agentHistory[keepStart...])
+                let summaryText = Self.compactSummaryWrappedText(marker.summary)
+                logger.info("[CompactDiag] eAH v2 forward boundary: fkmId=\(fkmId.prefix(8)) keepStart=\(keepStart) kept=\(kept.count) agentHistory.count=\(self.agentHistory.count) summaryChars=\(summaryText.count) markerId=\(marker.id.prefix(8))")
+                // The same splice the anchor path below uses: the summary rides on the
+                // first KEPT user turn, so strict role alternation is preserved and no
+                // synthetic turn is inserted mid-conversation.
+                if kept.first?.role == .user {
+                    var result: [AgentMessage] = []
+                    var injected = kept[0]
+                    injected.parts.insert(.text(summaryText), at: 0)
+                    result.append(injected)
+                    if kept.count > 1 { result.append(contentsOf: kept[1...]) }
+                    return result
+                }
+                // The kept region does not begin on a user turn, so the summary becomes
+                // its own leading turn — the v1 branch's shape, and the only one that
+                // keeps the request starting on a user message.
+                var result: [AgentMessage] = [Self.summaryAsAgentMessage(marker.summary)]
+                result.append(contentsOf: kept)
+                return result
+            }
             guard let anchorId = marker.lastCompactedMessageId,
                   let anchorIdx = agentHistory.lastIndex(where: { $0.dbMessageId == anchorId }) else {
-                // Anchor unresolvable → degrade safely. Don't emit a
-                // standalone summary message (creates the empty-context loop
-                // when paired with hot tools). Fall back to full history;
-                // the user can `revertCompact` if the marker is corrupt.
-                logger.warning("[Compact] effectiveAgentHistory v2: anchorId=\(marker.lastCompactedMessageId?.prefix(8) ?? "nil") not in agentHistory(count=\(self.agentHistory.count)) — degrading to full history (no summary)")
-                return agentHistory
+                // [T-dsh-compact-kept-head] No exact boundary anywhere on this marker:
+                // the kept tail WITH the summary — the rule `DSHCompactBoundary` falls
+                // to for the same record (rule 4), and the rule the v3 branch applies.
+                // NOT "full history, no summary" (this rung's shipped shape), which
+                // left the summary on screen and out of the request: the model was the
+                // one party that could not see the conversation had been compacted, and
+                // because the surface stayed over the threshold the next step compacted
+                // again.
+                logger.warning("[Compact] effectiveAgentHistory v2: no usable anchor (fkmId=\(marker.firstKeptMessageId?.prefix(8) ?? "nil") lcmId=\(marker.lastCompactedMessageId?.prefix(8) ?? "nil")) in agentHistory(count=\(self.agentHistory.count)) — falling to the kept tail, WITH the summary")
+                return summaryPlusKeptTailSeed(marker)
             }
 
             // Step 1: walk back from anchor collecting user-text turns. Stop
@@ -2341,16 +2427,11 @@ extension AIChatViewModel {
             }.joined(separator: " | ")
             logger.warning("[Compact] effectiveAgentHistory DIAG: marker.id=\(marker.id.prefix(8)) marker.lcmId=\(marker.lastCompactedMessageId?.prefix(8) ?? "nil") agentHistory.count=\(self.agentHistory.count) entriesWithDbId=\(withDbId) tail5=\(tailSlice)")
 
-            if let nthIdx = indexOfNthFromLastUserText(Self.compactKeepRecentUserTurns) {
-                result.append(contentsOf: agentHistory[nthIdx...])
-                logger.warning("[Compact] effectiveAgentHistory: lcmId=\(marker.lastCompactedMessageId?.prefix(8) ?? "nil") not in agentHistory(count=\(self.agentHistory.count)); falling back to last \(Self.compactKeepRecentUserTurns) user turns (anchorIdx=\(nthIdx), kept=\(self.agentHistory.count - nthIdx))")
-            } else {
-                // Not even N user-text turns available — append full history
-                // rather than risk the empty-context loop.
-                result.append(contentsOf: agentHistory)
-                logger.warning("[Compact] effectiveAgentHistory: lcmId unresolved AND <\(Self.compactKeepRecentUserTurns) user turns in agentHistory(count=\(self.agentHistory.count)); falling back to full history")
-            }
-            return result
+            // [T-dsh-compact-kept-head] The kept tail, from the one implementation of
+            // that rule (`summaryPlusKeptTailSeed`) — shared with the v2 and v3 rungs
+            // in `effectiveAgentHistoryUncounted` so the three cannot drift apart.
+            // The diagnostic dump above stays: it is what makes a stale lcmId visible.
+            return summaryPlusKeptTailSeed(marker)
         }
         // Stale / legacy marker with only sortOrder info. agentHistory entries
         // don't carry sort_order directly, so give up on marker filtering and

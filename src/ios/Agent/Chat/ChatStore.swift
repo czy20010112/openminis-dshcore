@@ -5924,7 +5924,7 @@ extension RawMessage {
     /// shared instance is safe for the concurrent callers here.
     private static let attachmentMarkerRes: [NSRegularExpression] = [
         #"\[attached [A-Za-z]+:[^\]]*\]"#,
-        #"\[image omitted to save context[^\]]*\]"#,
+        #"\[image omitted (?:to save context|to fit request image limits)[\s\S]*?\]"#,
     ].map { try! NSRegularExpression(pattern: $0) }
 
     fileprivate static func stripAttachmentMarkers(_ s: String) -> String {

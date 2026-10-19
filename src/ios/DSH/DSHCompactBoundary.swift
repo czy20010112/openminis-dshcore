@@ -419,6 +419,20 @@ public enum DSHCompactBoundary {
         // `effectiveAgentHistory()` keeps for such a marker, so the transcript's
         // greyed region and the model's view of it agree. Explicitly NOT the
         // clock heal: see rule 2 at the top of this file.
+        //
+        // [T-dsh-compact-kept-head] THIS RULE STAYS AHEAD OF RULE 1, and that is a
+        // decision rather than an oversight. A v3 marker may well carry a
+        // `firstKeptMessageId` that is not its own: `ChatStore`'s legacy upgrade
+        // (`repairSessionIfNeeded`, run on every session open) fills that column into
+        // any marker whose two id columns are NULL — which is exactly a degraded one —
+        // out of `firstKeptSortOrder`, a column DSH markers write as 0, i.e. the
+        // session's FIRST row. Reading that as a forward boundary would put the
+        // divider at the top of the transcript and grey nothing, which is the
+        // "restored nothing" state this file exists to make impossible.
+        //
+        // The writer therefore does not mark a record v3 when it HAS a forward
+        // boundary of its own (`dshWriteCompactionMarker`: `positionOnly`), rather
+        // than this resolver being taught to prefer a field a repair can forge.
         if marker.isDegradedAnchor {
             return tailDecision(
                 marker: marker,

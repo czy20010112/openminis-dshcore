@@ -332,18 +332,33 @@ extension AIChatViewModel {
 
     /// Check if the input text is a slash command and execute it instead of sending.
     /// Returns true if a command was matched and executed.
+    ///
+    /// [T-command-compact-port] A trailing argument no longer defeats the match.
+    /// Upstream matches `/compact` and then REJECTS the argument itself
+    /// (`packages/compaction/command-compact/src/index.ts:63-65`: `if
+    /// (invocation.rawInput.trim().length > 0) return { kind: 'error', text: USAGE }`),
+    /// and the difference matters: `/compact now` used to miss this table entirely
+    /// (the whole text after `/` was compared to a command title) and was sent to
+    /// the model as an ordinary message. The user's intent was a command, and the
+    /// engine's answer to an argument is a usage line, not a model turn.
     func tryExecuteInputAsSlashCommand() -> Bool {
         let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard text.hasPrefix("/") else { return false }
-        let name = String(text.dropFirst()).lowercased()
-        guard let cmd = Self.availableSlashCommands.first(where: { $0.title.lowercased() == name }) else {
-            return false
-        }
-        executeSlashCommand(cmd)
+        let body = String(text.dropFirst())
+        let name = body.prefix { !$0.isWhitespace }.lowercased()
+        guard !name.isEmpty,
+              let cmd = Self.availableSlashCommands.first(where: { $0.title.lowercased() == name })
+        else { return false }
+        let argument = body.dropFirst(name.count).trimmingCharacters(in: .whitespacesAndNewlines)
+        executeSlashCommand(cmd, argument: argument)
         return true
     }
 
-    func executeSlashCommand(_ cmd: SlashCommand) {
+    /// `argument` is what followed the command name in the composer, or empty for
+    /// the paths that execute a row directly (the picker's tap and Return handlers).
+    /// Handlers that take no arguments reject a non-empty one themselves
+    /// ([T-command-compact-port]) rather than being silently forgiving.
+    func executeSlashCommand(_ cmd: SlashCommand, argument: String = "") {
         // [T-slash-picker-recent] Record this use so the default `/`
         // picker (no filter) can rank by recency. Stored as
         // [id: lastUsedUnix] in UserDefaults — sub-ms, no persistence
@@ -410,6 +425,16 @@ extension AIChatViewModel {
         slashMenuSelectedIndex = -1
         switch cmd.id {
         case "compact":
+            // [T-command-compact-port] The command takes no arguments, and says so
+            // rather than guessing what the user meant — upstream's own contract
+            // (`command-compact/src/index.ts:14,63-65`: `Usage: /compact (no
+            // arguments)`). The check is here rather than inside `compactAll()` so
+            // the long-press "Compact" menu, which also calls `compactAll`, is not
+            // affected by a composer-typed argument.
+            guard argument.isEmpty else {
+                appendSystemInfo(Self.dshCompactUsage, icon: "arrow.down.right.and.arrow.up.left")
+                return
+            }
             compactAll()
         case "memory":
             memoryEnabled.toggle()
