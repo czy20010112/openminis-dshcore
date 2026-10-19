@@ -630,6 +630,22 @@ public final class DSHTurnDriver {
                         }
                         continue
                     } catch {
+                        // [T-dsh-stop-is-not-a-failure] Stop is not a provider
+                        // failure. A cancelled URLSession task throws
+                        // NSURLErrorCancelled (-999) and a cancelled Task throws
+                        // `CancellationError`; the old code mapped both to
+                        // `PROVIDER_ERROR` and reported a broken backend for a
+                        // deliberate stop (device 2026-10-19 21:22:36:
+                        // "failure code=PROVIDER_ERROR Code=-999 已取消", and that
+                        // turn recorded no turn end at all). The retry-backoff
+                        // exit below already answers a cancellation this way —
+                        // settle the visible prefix, end the turn as cancelled —
+                        // so a stop is one outcome regardless of where it landed.
+                        if cancelled || Self.isCancellation(error) {
+                            settleInterruptedAttempt(assistantParts, turn: turn)
+                            delegate?.driver(self, didEndTurn: .cancelled)
+                            return .cancelled
+                        }
                         let failure = error as? DSHFailure
                             ?? DSHFailure(message: String(describing: error), code: "PROVIDER_ERROR")
                         if await recoverFromContextOverflow(failure, turn: turn, step: step) {
@@ -1262,6 +1278,36 @@ public final class DSHTurnDriver {
         let ratio = Double(measuredTokens) / Double(estimate)
         let converted = Int((Double(retainTokens) / ratio).rounded(.down))
         return max(1, min(retainTokens, converted))
+    }
+
+    /// Whether a thrown error means "the user stopped", not "the backend broke".
+    ///
+    /// [T-dsh-stop-is-not-a-failure] A cancelled `URLSession` stream surfaces as
+    /// `NSURLErrorCancelled` (-999) and a cancelled `Task` as `CancellationError`;
+    /// both reach the attempt loop's `catch`, which used to relabel them
+    /// `PROVIDER_ERROR` and report a failure. Nothing about a stop is a provider
+    /// fault, so the terminal outcome is `.cancelled`, exactly as it is on the
+    /// retry-backoff exit.
+    ///
+    /// Deliberately narrow: only those two shapes. A transport error that merely
+    /// mentions "cancelled" is still a transport error.
+    ///
+    /// - Parameter error: the error one attempt threw.
+    /// - Returns: true when the attempt was cancelled rather than failed.
+    static func isCancellation(_ error: Error) -> Bool {
+        if error is CancellationError { return true }
+        let nsError = error as NSError
+        if nsError.domain == NSURLErrorDomain, nsError.code == NSURLErrorCancelled {
+            return true
+        }
+        // Some adapters wrap the URL error in their own type; unwrap one level
+        // rather than pattern-matching message text.
+        if let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? NSError,
+           underlying.domain == NSURLErrorDomain,
+           underlying.code == NSURLErrorCancelled {
+            return true
+        }
+        return false
     }
 
     /// The budget facts one compaction line reports.
