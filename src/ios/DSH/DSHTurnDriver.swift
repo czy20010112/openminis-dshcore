@@ -1073,9 +1073,7 @@ public final class DSHTurnDriver {
                 // envelope, not the provider's count of an older one, so it is
                 // reported as an estimate until the next response re-prices it —
                 // the same provenance the log line above names.
-                if let renewed = measureRequestEnvelope() {
-                    lastPricedRequest = renewed
-                }
+                lastPricedRequest = measureRequestEnvelope()
                 // Upstream's second gate: the pass was enough, so this step sends
                 // no summary request and pays nothing for one.
                 if skipsSummary { return }
