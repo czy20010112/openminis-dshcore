@@ -1578,6 +1578,14 @@ public final class DSHTurnDriver {
 
     /// Resolve this driver's trigger budget for one routed request.
     ///
+    /// The arithmetic and the override order live in
+    /// `DSHCompactionPolicy.resolvedSpec` (`DSHCompaction.swift`) — the ONE place a
+    /// policy meets a window, shared with `/compact`. What the driver owns is its
+    /// own four inputs: the route key, `config.contextWindow`, and the two
+    /// device-experiment overrides. Anything computed here a second time is drift:
+    /// before this forwarding, `/compact` resolved the same three inputs through its
+    /// own copy and the two were only equal by inspection.
+    ///
     /// - Parameter reservedCompletionTokens: output tokens the request reserves.
     /// - Returns: the pressure and retention budgets for this route.
     /// - Throws: `DSHCompactionConfigError` when no capacity is known, or when the
@@ -1587,24 +1595,13 @@ public final class DSHTurnDriver {
             provider: provider.name,
             model: provider.model.id
         )
-        guard let window = config.contextWindow else {
-            throw DSHCompactionConfigError(
-                targetKey: targetKey,
-                detail: "no context capacity for \(targetKey); the serving model "
-                    + "declares no context window"
-            )
-        }
-        var policy = config.compactionPolicy
-        if let retain = config.compactionRetainTokensOverride {
-            policy.retainTokens = retain
-        }
-        let spec = try policy.resolveSpec(
+        return try config.compactionPolicy.resolvedSpec(
             targetKey: targetKey,
-            contextWindow: window,
-            reservedCompletionTokens: reservedCompletionTokens
+            contextWindow: config.contextWindow,
+            reservedCompletionTokens: reservedCompletionTokens,
+            retainOverride: config.compactionRetainTokensOverride,
+            pressureThresholdOverride: config.compactionPressureTokensOverride
         )
-        guard let threshold = config.compactionPressureTokensOverride else { return spec }
-        return spec.overridingThreshold(threshold)
     }
 
     // MARK: - Summary Request Budget
@@ -1859,6 +1856,12 @@ public final class DSHTurnDriver {
 
     /// Ask the model to summarize the shadowed content.
     ///
+    /// The plan, the segmentation, the requests and the truncation/emptiness
+    /// refusals all live in `summarizeExcerpt` below, because `/compact` sends the
+    /// same summary request and must not own a second copy of it. What stays here
+    /// is the pair of facts THIS driver owns: which window its route has, and the
+    /// meter ratio measured from its own priced envelope.
+    ///
     /// [P0] Two things this call must not do, and both were observed on the
     /// device:
     ///
@@ -1878,13 +1881,14 @@ public final class DSHTurnDriver {
     ///     summary throws), and this app did not: `summarize` collected the
     ///     deltas and returned whatever it had.
     ///
-    /// Both are fixed here rather than at the call site, so every path that
-    /// summarizes — the pressure trigger and the provider-confirmed overflow
-    /// recovery — is bounded and every empty result is a failure. A failure
-    /// leaves `DSHCompaction.compact` BEFORE `appendCompaction`: no summary entry,
-    /// no surface change, no `didCompact`, and therefore no marker. The surface
-    /// that was over threshold stays over threshold, which is what makes the next
-    /// step's pressure check retry the compaction instead of losing the range.
+    /// Both are fixed in `summarizeExcerpt` rather than at the call site, so every
+    /// path that summarizes — the pressure trigger, the provider-confirmed
+    /// overflow recovery, and now the manual command — is bounded and every empty
+    /// or truncated result is a failure. A failure leaves `DSHCompaction.compact`
+    /// BEFORE `appendCompaction`: no summary entry, no surface change, no
+    /// `didCompact`, and therefore no marker. The surface that was over threshold
+    /// stays over threshold, which is what makes the next step's pressure check
+    /// retry the compaction instead of losing the range.
     ///
     /// - Parameter text: the rendered shadowed excerpt.
     /// - Returns: the summary, non-empty by construction.
@@ -1894,9 +1898,66 @@ public final class DSHTurnDriver {
         guard let window = config.contextWindow, window > 0 else {
             throw DSHCompactionError.summaryFailed("no context capacity to summarize against")
         }
+        return try await Self.summarizeExcerpt(
+            text,
+            contextWindow: window,
+            meterRatio: summaryMeterRatioNow(),
+            provider: provider,
+            logCategory: "CompactDiag"
+        )
+    }
+
+    /// One excerpt in, one summary out — the ONE summary request this app sends,
+    /// on either loop.
+    ///
+    /// WHY THIS IS SHARED RATHER THAN THE DRIVER'S OWN. `/compact` used to send
+    /// the whole shadowed range as ONE request with a fixed `maxTokens: 4096`
+    /// (`DSHCommandCompact.dshCompactSummarize`), while this driver had already
+    /// learned what that shape gets wrong: the output ceiling has to scale with the
+    /// route (`summarizeOutputCeiling`), a margin has to stay under the window
+    /// (`summarizeSafetyMargin`), the excerpt has to be split to fit what is left
+    /// after converting for the meter's error (`summarizeInputBudgetTokens`), and
+    /// past `summarizeMaxSegments` the middle has to be omitted EXPLICITLY
+    /// (`summaryHeadTailExcerpt`) rather than silently. Two implementations meant
+    /// the same span produced two different requests, and the manual one was the
+    /// unbounded one — the 1,783,917-byte request the engine rejected is exactly
+    /// that shape, one path over. So there is one implementation and two callers;
+    /// each caller supplies ONLY the pair of facts it owns: which provider to route
+    /// through, and which window to budget against.
+    ///
+    /// Upstream's analogue is `summarizeWithLlm` + the `SummarizationInput` it is
+    /// given (`packages/compaction/compaction-basic/src/summarizer.ts:120-181`):
+    /// one auxiliary call, replayed conversation where the excerpt is, the
+    /// compaction directive last (`:145-157`), the output ceiling as `maxTokens`
+    /// (`:158`), an empty summary thrown (`:169-171`) and a `max-tokens` finish
+    /// thrown (`:203-206`). The segmentation below is this app's addition — the
+    /// engine can send a region in one request because its meter is exact, and this
+    /// app's estimator is not — but every refusal upstream makes is made here.
+    ///
+    /// - Parameters:
+    ///   - text: the rendered shadowed excerpt.
+    ///   - window: capacity of the routed model.
+    ///   - ratio: provider tokens per `DSHTokenEstimate` token.
+    ///   - provider: the route the request is sent on.
+    ///   - logCategory: the `AppLogger` category the three diagnostic lines are
+    ///     written under, and the bracketed tag in front of each — `CompactDiag` for
+    ///     the driver's own compactions, `DSHCompact` for `/compact`, so a log
+    ///     reader can tell the two callers apart while the sentences stay identical.
+    /// - Returns: the assembled summary, non-empty by construction.
+    /// - Throws: `DSHCompactionError.summaryFailed` when the window cannot hold a
+    ///   request, when a segment produced no text or was truncated at the output
+    ///   cap, or when the assembled summary is empty.
+    static func summarizeExcerpt(
+        _ text: String,
+        contextWindow window: Int,
+        meterRatio ratio: Double,
+        provider: any AgentProvider,
+        logCategory: String
+    ) async throws -> String {
+        let diag = AppLogger(category: logCategory)
+        let tag = "[\(logCategory)] "
         let ceiling = Self.summarizeOutputCeiling(contextWindow: window)
         let margin = Self.summarizeSafetyMargin(contextWindow: window)
-        let ratio = summaryMeterRatioNow()
         let budget = Self.summarizeInputBudgetTokens(contextWindow: window, meterRatio: ratio)
         guard budget > 0 else {
             let limits = "window=\(window) maxOutput=\(ceiling) margin=\(margin)"
@@ -1924,25 +1985,28 @@ public final class DSHTurnDriver {
             + "segments=\(segments.count) budgetEst=\(budget) ratio=\(ratio) "
             + "largestSegmentEst=\(largest) largestSegmentProviderEst=\(providerEquivalent) "
             + "requestable=\(requestable)"
-        AppLogger(category: "CompactDiag").warning(
-            "[CompactDiag] summary request planned: \(plan)"
-        )
+        diag.warning(tag + "summary request planned: \(plan)")
 
         var parts: [String] = []
         for (index, segment) in segments.enumerated() {
-            let produced = try await summarizeSegment(
+            // A cancelled task stops between segments rather than after the last
+            // one: `/compact` cancels its own task when the user leaves, and a
+            // summary request is 40+ seconds of billed prefill. The driver's
+            // `cancel()` is a flag on the turn, not a task cancellation, so this
+            // costs it nothing.
+            try Task.checkCancellation()
+            let produced = try await Self.summarizeSegment(
                 segment,
                 index: index + 1,
                 of: segments.count,
-                outputCeiling: ceiling
+                outputCeiling: ceiling,
+                provider: provider
             )
             let trimmed = produced.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else {
-                AppLogger(category: "CompactDiag").warning(
-                    "[CompactDiag] summary segment produced no text: summaryChars=0 "
-                        + "segment=\(index + 1)/\(segments.count) excerptChars=\(segment.count) "
-                        + "— refusing the compaction rather than shadowing with an empty summary"
-                )
+                diag.warning(tag + "summary segment produced no text: summaryChars=0 "
+                    + "segment=\(index + 1)/\(segments.count) excerptChars=\(segment.count) "
+                    + "— refusing the compaction rather than shadowing with an empty summary")
                 throw DSHCompactionError.summaryFailed(
                     "empty summary (summaryChars=0, segment \(index + 1)/\(segments.count), "
                         + "excerptChars=\(segment.count))"
@@ -1956,10 +2020,8 @@ public final class DSHTurnDriver {
         guard summaryChars > 0 else {
             throw DSHCompactionError.summaryFailed("empty summary (summaryChars=0)")
         }
-        AppLogger(category: "CompactDiag").warning(
-            "[CompactDiag] summary generated: summaryChars=\(summaryChars) "
-                + "segments=\(segments.count) excerptChars=\(text.count)"
-        )
+        diag.warning(tag + "summary generated: summaryChars=\(summaryChars) "
+            + "segments=\(segments.count) excerptChars=\(text.count)")
         return summary
     }
 
@@ -1967,20 +2029,26 @@ public final class DSHTurnDriver {
     ///
     /// The instruction is byte-identical to the single-request form; a segment
     /// only adds the line that tells the model which part it is reading, so a
-    /// compaction that needs one request sends exactly what it always sent.
+    /// compaction that needs one request sends exactly what it always sent — and
+    /// `/compact`, which now calls this too, sends exactly what the driver sends
+    /// for the same span.
     ///
     /// - Parameters:
     ///   - segment: the excerpt text this request carries.
     ///   - index: 1-based position of this segment.
     ///   - count: how many segments the excerpt was split into.
     ///   - outputCeiling: output tokens this route can reserve for the summary.
+    ///   - provider: the route the request is sent on.
     /// - Returns: the text the model produced, which the caller requires to be
     ///   non-empty.
-    private func summarizeSegment(
+    /// - Throws: `DSHCompactionError.summaryFailed` when the stream's terminal
+    ///   reason is the output cap.
+    static func summarizeSegment(
         _ segment: String,
         index: Int,
         of count: Int,
-        outputCeiling: Int
+        outputCeiling: Int,
+        provider: any AgentProvider
     ) async throws -> String {
         let body = """
         Summarize the conversation excerpt below. Preserve: decisions made, facts \
@@ -2010,8 +2078,24 @@ public final class DSHTurnDriver {
         )
 
         var summary = ""
+        var stopReason: AgentStopReason?
         for try await event in stream {
             if case .textDelta(let delta) = event { summary += delta }
+            // The terminal reason is the fact the turn loop already reads for its
+            // own truncation (`AgentStreamEvent.done`), so it is read here too.
+            if case .done(let reason) = event { stopReason = reason }
+        }
+        // Upstream fails a summarization whose terminal reason is the token cap
+        // rather than framing the truncated text as a complete checkpoint
+        // (`packages/compaction/compaction-basic/src/summarizer.ts:203-206`,
+        // `finishError`, error code `MAX_TOKENS`). A truncated "summary" is the
+        // same defect class as an empty one: it shadows a whole range with half a
+        // checkpoint, and the compaction's only gate
+        // (`summaryTokens < range.shadowedTokenCount`) passes it.
+        if let reason = stopReason, case .maxTokens = reason {
+            throw DSHCompactionError.summaryFailed(
+                "the summarizer was truncated at the token cap (incomplete checkpoint)"
+            )
         }
         return summary
     }

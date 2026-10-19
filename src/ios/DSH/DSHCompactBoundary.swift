@@ -40,13 +40,27 @@
 //     row it covers, so "the newest row older than the marker" is the newest row,
 //     always), which put the divider at the bottom and greyed the WHOLE transcript
 //     — live rows included. It looked like a correct restore in the log.
-//  3. The block answer is EXACT, the greyed answer is CONSERVATIVE. A UI row is a
+//  3. The divider POSITION is conservative; the DIMMING is exact. A UI row is a
 //     merged run of raw rows (`AIChatViewModel+Persistence` Phase 2), so the
-//     anchor routinely lands in the middle of one bubble. Greying is
-//     message-granular in the view layer, so the caller can only grey a whole
-//     bubble; when the anchor is mid-bubble this resolver refuses to grey that
-//     bubble at all (fewer rows greyed than the marker covers — never more), and
-//     reports both numbers so the difference is visible instead of guessed.
+//     anchor routinely lands in the middle of one bubble. The divider is still
+//     placed by ROW: this resolver never puts it after a bubble the marker only
+//     reached into, so it can lag the anchor by the rest of that bubble. Dimming
+//     is no longer row-granular — it is BLOCK-first, with the row as the floor:
+//
+//       * the view dims each block on `isCompactedHistory || block.isCompactedHistory`
+//         (`CollectionViewMessageListV3`, the block's `.opacity(...)`), so both
+//         flags reach the same pixel exactly once;
+//       * the caller marks the exact blocks at or below the anchor from
+//         `ChatMessage.blockSortOrders` through `compactedBlockIndices` below
+//         (`AIChatViewModel+Persistence`, [F4-compaction-visibility]), which is
+//         what makes a mid-bubble anchor dim the blocks it really covers;
+//       * the per-row flag is the FALLBACK for a row that carries no per-block
+//         provenance (a live row, or a caller not yet taught to fill it): such a
+//         row is one opaque unit and none of it is ever claimed.
+//
+//     `grayedBlockCount` / `uiGrayedBlockCount` keep reporting both answers — the
+//     blocks the marker covers and the blocks the caller's loop will dim — so a
+//     divergence between them is a visible number instead of a guess.
 //
 //  Both trees carry this file byte-identically (it is under `src/ios/DSH/`), so
 //  the ios15 and ios26 builds cannot drift in where the divider lands.
