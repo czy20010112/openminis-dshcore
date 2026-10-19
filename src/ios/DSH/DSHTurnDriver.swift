@@ -347,6 +347,27 @@ public final class DSHTurnDriver {
         let reservedCompletionTokens: Int
         /// Surface tokens the envelope was measured with.
         let surfaceTokens: Int
+        /// The WHOLE envelope this request was priced at — system prompt, tool
+        /// roster and surface — in the same units as `DSHContextBreakdown
+        /// .estimatedTotal`.
+        ///
+        /// [T-ctx-usage-one-denominator] Zero means "not stated", and the only
+        /// constructions that leave it zero are the compaction seed's, which never
+        /// reach the usage store.
+        ///
+        /// It exists because two consumers price the same request: the compaction
+        /// gate wants the SURFACE (it is the only part a compaction can shrink),
+        /// while `DSHContextUsageStore`'s growth projection needs the whole
+        /// envelope (it compares `envelopeNow` against the envelope the provider's
+        /// count was taken at). Handing the surface to the second consumer made
+        /// every projection overstate by system + tools — the device's own numbers
+        /// put that head at 17,006 tokens, 6.2pp of a 262,144 window. The two
+        /// denominators are now two fields instead of one field used twice.
+        ///
+        /// `var` only so the memberwise initializer keeps a default (a `let` with
+        /// an initial value is dropped from it); nothing mutates it after
+        /// construction.
+        var envelopeTokens: Int = 0
         /// Whether `promptTokens` is the provider's own count.
         ///
         /// A diagnostic fact, not a decision input: the threshold is compared
@@ -1608,11 +1629,16 @@ public final class DSHTurnDriver {
             promptTokens: reported,
             reservedCompletionTokens: built.reservedCompletionTokens,
             surfaceTokens: built.surfaceTokens,
+            envelopeTokens: built.envelopeTokens,
             isProviderCount: true
         )
+        // [T-ctx-usage-one-denominator] The projection's baseline is the WHOLE
+        // envelope the provider priced, so `occupancy` adds only what grew since.
+        // The surface is the fallback for a request that never stated one (a seed
+        // construction), and it is the old behaviour rather than a new lie.
         DSHContextUsageStore.shared.record(
             promptTokens: reported,
-            envelopeTokens: built.surfaceTokens,
+            envelopeTokens: built.envelopeTokens > 0 ? built.envelopeTokens : built.surfaceTokens,
             sessionKey: config.sessionKey
         )
     }
@@ -2529,7 +2555,24 @@ public final class DSHTurnDriver {
         // than the prompt alone.
         let projected = projectMessages(session.surfaceMessages())
         let requestMessages = AIChatViewModel.historyWithVolatileTurnContext(projected, suffix: tailContext)
-        DSHContextBreakdownStore.shared.record(
+
+        // Price the envelope here, where all three of its inputs are in hand at
+        // once: the rendered system prompt, the tool roster, and the surface the
+        // messages are projected from. DSH prices the latest durable routed
+        // request; building one is the moment this driver knows what that request
+        // holds, and the next step's pressure check reads exactly this figure.
+        //
+        // `tailContext` is added to the surface figure because it is a message and
+        // not prompt text — leaving it out would under-price every request on the
+        // one path that has to decide whether the next one still fits.
+        let pricedSurface = DSHTokenEstimate.total(session.surface())
+            + DSHTokenEstimate.tokens(forText: tailContext ?? "")
+        // [T-ctx-usage-one-denominator] The breakdown just recorded IS this
+        // request's whole envelope, priced from the same three inputs. Taking it
+        // back instead of recomputing keeps the two consumers on one number: the
+        // compaction gate wants `pricedSurface` (the only part a compaction can
+        // shrink), the usage store's projection wants this total.
+        let pricedBreakdown = DSHContextBreakdownStore.shared.record(
             systemPrompt: systemPrompt,
             tools: schemas,
             surface: session.surface(),
@@ -2551,33 +2594,15 @@ public final class DSHTurnDriver {
             // is what keeps that row from describing a different route than the turn.
             windowTokens: config.contextWindow
         )
-
-        // Price the envelope here, where all three of its inputs are in hand at
-        // once: the rendered system prompt, the tool roster, and the surface the
-        // messages are projected from. DSH prices the latest durable routed
-        // request; building one is the moment this driver knows what that request
-        // holds, and the next step's pressure check reads exactly this figure.
-        //
-        // `tailContext` is added to the surface figure because it is a message and
-        // not prompt text — leaving it out would under-price every request on the
-        // one path that has to decide whether the next one still fits.
-        let pricedSurface = DSHTokenEstimate.total(session.surface())
-            + DSHTokenEstimate.tokens(forText: tailContext ?? "")
         lastPricedRequest = PricedRequest(
             promptTokens: DSHTokenEstimate.tokens(forText: systemPrompt)
                 + DSHTokenEstimate.tokens(forToolSchemas: schemas)
                 + pricedSurface,
             reservedCompletionTokens: config.reservedOutputTokens,
             surfaceTokens: pricedSurface,
+            envelopeTokens: pricedBreakdown.estimatedTotal,
             isProviderCount: false
         )
-        // The measured context record's growth baseline moves to the envelope just
-        // assembled. This is the only place that knows the envelope the NEXT
-        // receipt will cover, so it is the only place that can stop the projection
-        // from counting a step's appends twice: the response's own tokens land on
-        // the surface before its report arrives, and that report's count already
-        // includes them.
-        DSHContextUsageStore.shared.rebase(envelopeTokens: pricedSurface)
 
         return LoopRequest(
             messages: requestMessages,
