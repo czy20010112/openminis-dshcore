@@ -1375,26 +1375,24 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
         }
     }
 
-    /// [T-ctx-hint-stale] Re-measure when a conversation is re-entered.
+    /// [T-ctx-hint-stale] Re-price the composer's usage when a conversation is
+    /// re-entered.
     ///
     /// A cached view model publishes nothing on re-entry (`ViewModelCache HIT`),
-    /// so `publishContextUsage` never runs and the snapshot from the previous
-    /// visit would be applied verbatim by the rebuilt composer.
+    /// so neither the usage line nor the glow behind it is recomputed. A
+    /// compaction that landed before the last turn ended therefore left
+    /// `contextUsage` at the pre-compaction size: the device kept glowing red over
+    /// a conversation that had dropped to tens of thousands, and switching out and
+    /// back in changed nothing (2026-10-20, after "compacted 60 entries 59886 ->
+    /// 20845").
     ///
-    /// The figure to publish is the PROVIDER's, not this app's estimate:
-    /// `measureOutboundContextTokens()` is a character heuristic — on the device
-    /// it read 202,613 for a request the engine charged 146,617 — so re-measuring
-    /// with it would trade one wrong number for a closer but still wrong one.
-    /// `DSHContextUsageStore.measured` carries the last provider count for this
-    /// session (and projects it forward over the envelope assembled since); the
-    /// estimate is the fallback for the case where no response has reported yet.
+    /// What is published here is the size of the NEXT request, measured from the
+    /// current surface — not the provider's last count, which describes the
+    /// pre-compaction prompt and is precisely the number this is correcting. One
+    /// tokenization per appear; `publishContextUsage` then runs the hint
+    /// reconciliation that keeps a saved usage line from outliving its number.
     func invalidateContextUsageHintIfStale() {
-        guard contextUsageHint != nil else { return }
-        if let measured = DSHContextUsageStore.shared.measured?.promptTokens, measured > 0 {
-            publishContextUsage(liveContextTokens: measured)
-        } else {
-            publishMeasuredContextUsage()
-        }
+        publishMeasuredContextUsage()
     }
 
     /// [T-ctx-usage-after-compact] Called when a compaction (manual or
