@@ -206,6 +206,21 @@ struct AgentMessage: @unchecked Sendable {
     /// Placeholder tool_results must NOT be injected for interrupted messages, because
     /// sending a tool_result for a tool_use with empty input causes API 400 errors.
     var isInterrupted: Bool = false
+    /// True for an entry that exists only to say something TO the model.
+    ///
+    /// It is appended to `agentHistory` so that the very next request carries
+    /// it, and it is deliberately **never** handed to `persistAgentMessage`: no
+    /// `dbMessageId` ⇒ no store row ⇒ no bubble in `messages`, nothing for a
+    /// reload to re-materialise, and nothing for the compact/retry dbMessageId
+    /// walks to resolve. That short lifetime is the point — a "the user stopped
+    /// this response" note only describes the request that follows the stop.
+    /// `AIChatViewModel.isUserBubbleEntry` skips entries whose text starts with
+    /// `<system-reminder>`, so a model-only entry cannot shift the user-bubble
+    /// ordinal that retry/delete anchor on.
+    ///
+    /// The DSH path does not need this flag: it records the same fact as an
+    /// `interrupted: true` entry in its own session log.
+    var isModelOnly: Bool = false
     /// Opaque reasoning content from thinking models (e.g. Kimi, DeepSeek, QwQ).
     /// Must be echoed back on assistant messages for multi-turn conversations.
     var reasoningContent: String?

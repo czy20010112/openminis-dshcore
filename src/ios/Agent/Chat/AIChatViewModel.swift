@@ -3171,21 +3171,26 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
             }
         }
 
-        // Inject a "Continue" user message only when history ends with assistant
-        // (Case 2a: text streaming cancel). For Case 1 (tool cancel), history already
-        // ends with tool_result (user role) and is valid for the next API call.
-        if agentHistory.last?.role == .assistant {
-            let continueMsg = AgentMessage(role: .user, parts: [
+        // Inject a "Continue" user message only when history ends with an
+        // assistant turn (Case 2a: text streaming cancel). For Case 1 (tool
+        // cancel), history already ends with tool_result (user role) and is
+        // valid for the next API call.
+        //
+        // [T-ios-model-only-stop-reminder] The note is MODEL-ONLY: appended so
+        // that this request carries it, never persisted (no `dbMessageId` ⇒ no
+        // row ⇒ nothing to reload, which is exactly the lifetime it needs).
+        // It used to go through `persistAgentMessage`, which turned it into a
+        // real user row that `loadSession` re-materialised as a raw
+        // `<system-reminder>` bubble in the transcript.
+        //
+        // `last(where: !isModelOnly)` instead of `last`: a Stop earlier in the
+        // same session can leave one of these notes at the tail, and that tail
+        // must not hide the fact that the real last turn is an assistant reply
+        // whose continuation is what Resume is asking for.
+        if agentHistory.last(where: { !$0.isModelOnly })?.role == .assistant {
+            agentHistory.append(AgentMessage(role: .user, parts: [
                 .text("<system-reminder>The user stopped the previous response but now wants to continue. Pick up exactly where you left off.</system-reminder>")
-            ])
-            let continueIdx = agentHistory.count
-            agentHistory.append(continueMsg)
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                if let pid = await self.persistAgentMessage(continueMsg), continueIdx < self.agentHistory.count {
-                    self.agentHistory[continueIdx].dbMessageId = pid
-                }
-            }
+            ], isModelOnly: true))
         }
 
         let existingMsgIdx = messages.count - 1
@@ -4757,10 +4762,16 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
                         }
                     }
                     if !tailTextParts.isEmpty {
-                        tailTextParts.append(.text("<system-reminder>The user stopped this response. Content may be incomplete.</system-reminder>"))
+                        // [T-ios-model-only-stop-reminder] The bubble keeps only
+                        // what the model actually produced; the stop note is a
+                        // separate MODEL-ONLY entry (no store row, so it is
+                        // never rendered and never survives a reload).
                         let assistantMsg = AgentMessage(role: .assistant, parts: tailTextParts)
                         let asstIdx = agentHistory.count
                         agentHistory.append(assistantMsg)
+                        agentHistory.append(AgentMessage(role: .user, parts: [
+                            .text("<system-reminder>The user stopped this response. Content may be incomplete.</system-reminder>")
+                        ], isModelOnly: true))
                         Task { @MainActor [weak self] in
                             guard let self else { return }
                             if let pid = await self.persistAgentMessage(assistantMsg), asstIdx < self.agentHistory.count {
@@ -4844,10 +4855,16 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
                 let histLastIsAsst = agentHistory.last?.role == .assistant
                 logger.info("⏹️[StopDiag] Case2 collect textParts=\(textParts.count) safeStart=\(safeStart) histLastIsAsst=\(histLastIsAsst) → \(!textParts.isEmpty && !histLastIsAsst ? "WILL COMMIT" : "SKIP commit")")
                 if !textParts.isEmpty, agentHistory.last?.role != .assistant {
-                    textParts.append(.text("<system-reminder>The user stopped this response. Content may be incomplete.</system-reminder>"))
+                    // [T-ios-model-only-stop-reminder] Same split as Case 1: the
+                    // partial text is what the user sees (and what gets a row),
+                    // the truncation note is a MODEL-ONLY entry that only the
+                    // next request ever reads.
                     let assistantMsg = AgentMessage(role: .assistant, parts: textParts)
                     let asstIdx = agentHistory.count
                     agentHistory.append(assistantMsg)
+                    agentHistory.append(AgentMessage(role: .user, parts: [
+                        .text("<system-reminder>The user stopped this response. Content may be incomplete.</system-reminder>")
+                    ], isModelOnly: true))
                     Task { @MainActor [weak self] in
                         guard let self else { return }
                         if let pid = await self.persistAgentMessage(assistantMsg), asstIdx < self.agentHistory.count {
