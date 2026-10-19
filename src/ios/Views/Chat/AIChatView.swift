@@ -1432,6 +1432,13 @@ struct AIChatView: View {
             vm.draftId = draftId
             vm.remoteDeviceId = remoteDeviceId
             vm.initialGroupId = initialGroupId
+            // [T-ctx-hint-stale] A cached view model publishes nothing when a
+            // conversation is re-entered, so the composer would re-apply the
+            // context-usage line saved from the previous visit — the line that
+            // read "400.3k / 560k" after a compaction had brought the real figure
+            // down to 146.6k. Re-measuring here runs the same reconciliation a
+            // live turn would, before the rebuilt composer consumes the hint.
+            vm.invalidateContextUsageHintIfStale()
             // Snapshot total session count once so the New-Chat onboarding
             // grid only appears for first-time users (no prior sessions).
             // [T-ios-session-coldload-listsessions-block] Use the bare

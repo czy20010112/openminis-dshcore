@@ -1334,6 +1334,67 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
         let next: ContextUsage? = (used > 0 && window > 0)
             ? ContextUsage(usedTokens: used, windowTokens: window) : nil
         if next != contextUsage { contextUsage = next }
+        reconcileContextUsageHint(with: next)
+    }
+
+    /// [T-ctx-hint-stale] Keep a saved usage line from outliving its own number.
+    ///
+    /// `contextUsageHint` is a pre-formatted snapshot (percent + size are
+    /// localized strings so the label can highlight them), while the ring reads
+    /// `contextUsage` live. A compaction — the DSH path installs its marker
+    /// without going through `announceContextUsageAfterCompaction`, which is the
+    /// legacy path's refresh — a reload that rebases the figure, or a model
+    /// switch left the snapshot frozen at the old size. The device showed the
+    /// result for twenty minutes: the composer read "400.3k / 560k"
+    /// (`[ContextUsageHint] [show] gen2 …` at 22:02) while the engine had been
+    /// reporting prompt=146,617 since 22:00 and the ring agreed with the engine.
+    ///
+    /// Only a SHRINK (or a different window) is reconciled here. Growth is
+    /// already the tier-crossing path's job, and reconciling every step would
+    /// re-issue the line on each tool round.
+    private func reconcileContextUsageHint(with usage: ContextUsage?) {
+        guard let hint = contextUsageHint else { return }
+        guard let usage else {
+            contextUsageHint = nil
+            return
+        }
+        let windowChanged = hint.windowTokens != usage.windowTokens
+        let shrank = Double(usage.usedTokens) < Double(hint.usedTokens) * 0.95
+        guard windowChanged || shrank else { return }
+        contextUsageHintGeneration += 1
+        if inputText.isEmpty, !userDidCancel, !programmaticSilentTurn {
+            contextUsageHint = ContextUsageHint.make(usage: usage, generation: contextUsageHintGeneration)
+            logger.info(
+                "[ContextUsageHint] reconciliation → re-issued gen\(contextUsageHintGeneration) "
+                + "'\(contextUsageHint?.text ?? "")' (\(usage.usedTokens)/\(usage.windowTokens))")
+        } else {
+            contextUsageHint = nil
+            logger.info(
+                "[ContextUsageHint] reconciliation → dropped (composer busy/cancelled) "
+                + "(\(usage.usedTokens)/\(usage.windowTokens))")
+        }
+    }
+
+    /// [T-ctx-hint-stale] Re-measure when a conversation is re-entered.
+    ///
+    /// A cached view model publishes nothing on re-entry (`ViewModelCache HIT`),
+    /// so `publishContextUsage` never runs and the snapshot from the previous
+    /// visit would be applied verbatim by the rebuilt composer.
+    ///
+    /// The figure to publish is the PROVIDER's, not this app's estimate:
+    /// `measureOutboundContextTokens()` is a character heuristic — on the device
+    /// it read 202,613 for a request the engine charged 146,617 — so re-measuring
+    /// with it would trade one wrong number for a closer but still wrong one.
+    /// `DSHContextUsageStore.measured` carries the last provider count for this
+    /// session (and projects it forward over the envelope assembled since); the
+    /// estimate is the fallback for the case where no response has reported yet.
+    func invalidateContextUsageHintIfStale() {
+        guard contextUsageHint != nil else { return }
+        if let measured = DSHContextUsageStore.shared.measured?.promptTokens, measured > 0 {
+            publishContextUsage(liveContextTokens: measured)
+        } else {
+            publishMeasuredContextUsage()
+        }
     }
 
     /// [T-ctx-usage-after-compact] Called when a compaction (manual or
