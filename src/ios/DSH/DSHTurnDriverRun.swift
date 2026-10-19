@@ -616,14 +616,32 @@ extension AIChatViewModel {
 
         let config = DSHTurnDriverConfig(
             maxParallelToolCalls: 4,
-            maxStepsPerTurn: Self.maxAgentTurns,
+            // No step ceiling unless the user set one. DSH's own turn loop is a
+            // `while (true)` and it is the model's CONTEXT that bounds a turn, not
+            // a step count: a heavy task legitimately needs dozens of steps, and
+            // the old fixed 200 reported "Reached the step limit for this turn" as
+            // a failure for work that was merely long. The store returns nil when
+            // the setting is off, which is its default.
+            maxStepsPerTurn: DSHCompactionSettings.stepLimitPerTurn,
             // Resolved the way every legacy request resolves it: the user's
-            // per-model override wins, then the provider default, then the global
-            // ceiling — and the result is clamped to the window that is actually
-            // left, so a near-full context cannot ask for more output than fits.
+            // per-model override wins, then the endpoint-declared cap, then the
+            // provider default, then the global ceiling — and the result is
+            // clamped to the window that is actually left, so a near-full context
+            // cannot ask for more output than fits.
             //
             // Passing `provider.defaultMaxTokens` straight through ignored the
             // override entirely and dropped the clamp.
+            //
+            // [T-output-limit-three-hops] This ONE call is both halves of the
+            // output budget — the request's `max_tokens` and the output the
+            // compaction gate reserves (`min(W × ratio, W − O − headroom)`) — which
+            // is why the driver exposes it under both names
+            // (`requestMaxOutputTokens` / `reservedOutputTokens`). A second call
+            // here, or a second field on the config, is the drift this line exists
+            // to prevent: the 2026-10-19 device log combined `reserved=8192` with a
+            // 262144-token window and a 188416-token threshold, so the gate's
+            // arithmetic and the model's actual cap were read as if they were one
+            // number.
             maxTokens: dynamicMaxTokens(
                 provider: provider,
                 model: entry.model,
@@ -636,7 +654,11 @@ extension AIChatViewModel {
             // driver turned thinking off for every DSH turn, silently.
             thinkingLevel: dshThinkingLevel(for: entry),
             enableLoopGuard: true,
-            compactionPolicy: DSHCompactionPolicy(),
+            // The trigger policy, from the user's stored settings when they have
+            // set any and from DSH's own published defaults when they have not
+            // (`thresholdRatio` 0.8, `headroomTokens` 65536, `retainRatio` 0.16 —
+            // `packages/compaction/compaction-basic/src/config.ts:20,75,23`).
+            compactionPolicy: DSHCompactionSettings.policy(),
             // Capacity is resolved the way every other capacity decision in this
             // app resolves it — the bound group's limit when it has one, then the
             // model's own declared window — rather than from `model.contextWindow`
@@ -703,14 +725,33 @@ extension AIChatViewModel {
         // silent no-compaction is indistinguishable from a broken threshold.
         let surfaceBefore = session.surface()
         let tokensBefore = DSHTokenEstimate.total(surfaceBefore)
+        let resolvedWindow = effectiveContextWindow(for: entry.model)
+        // The one number every capacity decision is supposed to share, printed
+        // where a device log can be read against it. `binding=` says which term of
+        // `min(W × ratio, (W − O) − headroom)` won, because the user sets only one
+        // of them and the other can be the one in force: on the 262 144-token
+        // route in F:\smb\log\minis-2026-10-19.log the ratio term is 209 715 and
+        // the headroom term is 188 416, so 0.8 is not the trigger there no matter
+        // what the settings screen says about percentages.
+        let trigger = config.compactionPolicy.thresholdBreakdown(
+            contextWindow: resolvedWindow,
+            reservedCompletionTokens: config.reservedOutputTokens
+        )
         AppLogger(category: "DSHLoop").warning(
             "[DSH] turn start surface=\(surfaceBefore.count) entries tokens=\(tokensBefore) "
-            + "window=\(effectiveContextWindow(for: entry.model)) "
+            + "window=\(resolvedWindow) "
             + "ratio=\(config.compactionPolicy.thresholdRatio) "
             + "headroom=\(config.compactionPolicy.headroomTokens) "
             + "retainRatio=\(config.compactionPolicy.retainRatio) "
+            + "thresholdDerived=\(trigger.map { String($0.threshold) } ?? "nil") "
+            + "windowFraction=\(trigger.map { String($0.windowFraction) } ?? "nil") "
+            + "headroomBound=\(trigger.map { String($0.headroomBound) } ?? "nil") "
+            + "binding=\(trigger?.binding.rawValue ?? "nil") "
+            + "reservedOutput=\(config.reservedOutputTokens) "
+            + "requestMaxOutput=\(config.requestMaxOutputTokens) "
             + "pressureOverride=\(Self.dshCompactionPressureOverride.map(String.init) ?? "nil") "
-            + "retainOverride=\(Self.dshCompactionRetainOverride.map(String.init) ?? "nil")"
+            + "retainOverride=\(Self.dshCompactionRetainOverride.map(String.init) ?? "nil") "
+            + "stepsPerTurnLimit=\(config.maxStepsPerTurn.map(String.init) ?? "nil")"
         )
         if Self.dshCompactionProbeEnabled {
             let info = ChatMessage(role: .systemInfo, content: "")
@@ -740,7 +781,7 @@ extension AIChatViewModel {
             // a readout that recomputes the number it is describing can disagree
             // with the number in force, and then the probe is measuring itself.
             let spec = driver.resolvedCompactionSpec(
-                reservedCompletionTokens: config.maxTokens
+                reservedCompletionTokens: config.reservedOutputTokens
             )
             let threshold = spec.map { "\($0.thresholdTokens)" } ?? "none (no declared window)"
             let retain = spec.map { "\($0.retainTokens)" } ?? "-"

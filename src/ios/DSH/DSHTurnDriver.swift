@@ -94,10 +94,56 @@ public protocol DSHTurnDriverDelegate: AnyObject {
 public struct DSHTurnDriverConfig: Sendable {
     /// Bound on the parallel tool pool.
     public var maxParallelToolCalls: Int
-    /// Maximum steps in one turn before the driver stops and reports.
-    public var maxStepsPerTurn: Int
-    /// Maximum tokens for one model response.
-    public var maxTokens: Int
+    /// Maximum steps in one turn before the driver stops and reports, or nil for
+    /// no step ceiling at all.
+    ///
+    /// nil is the shipped default and it is upstream's own shape. DSH's turn loop
+    /// is a `while (true)` whose only exits are an empty next step, a cancel, and
+    /// the pressure/overflow machinery
+    /// (`packages/core/agent-loop/src/agent.ts`); it names no step budget, because
+    /// a turn's real bound is the context window it has to fit in. Porting the
+    /// ceiling in as 200 steps made a heavy turn report "Reached the step limit
+    /// for this turn" as if it had failed, while the two facts it was standing in
+    /// for — context pressure and a repeated no-progress call — were already
+    /// checked directly. `DSHTurnEndReason.maxSteps` therefore still exists and is
+    /// still reported, but only when a caller sets a ceiling on purpose.
+    ///
+    /// A ceiling of nil does NOT remove the loop's exits: `cancelled` is checked
+    /// at the top of every step, `compactForPressure` runs before every request,
+    /// the loop guard blocks repeated identical calls, and `restlessStepLimit`
+    /// bounds a turn that never converges or terminates.
+    public var maxStepsPerTurn: Int?
+    /// Output tokens ONE request of this turn is allowed to emit — the number that
+    /// reaches the provider as `max_tokens` / `max_completion_tokens` /
+    /// `max_output_tokens`, and the number the compaction gate reserves inside the
+    /// context window.
+    ///
+    /// [T-output-limit-three-hops] Resolved ONCE by
+    /// `AIChatViewModel.dynamicMaxTokens` (user override → endpoint/catalog cap →
+    /// `provider.defaultMaxTokens`, then clamped to the global ceiling and to the
+    /// window actually left) and frozen here for the whole turn, so no step of a
+    /// turn can send something the gate did not reserve for.
+    ///
+    /// THE ONE NUMBER, TWO NAMES — deliberately. This field used to be
+    /// `maxTokens`, and one name for two jobs reads as one fact when it is two:
+    /// the request's cap and the output budget the pressure threshold withholds
+    /// (`min(W × thresholdRatio, W − O − headroom)`). The device log from
+    /// 2026-10-19 is what makes that confusion expensive — `reserved=8192` beside
+    /// `threshold=188416` reads as a policy knowingly withholding 8k, while the
+    /// request was in fact capped at 8192 by a catalog default nobody chose (see
+    /// `ModelsDevAPI.applyDevData`). Both names are computed views on the SAME
+    /// stored property, which is what makes "they can never disagree" a property
+    /// of the type rather than a convention:
+    ///
+    ///   * `requestMaxOutputTokens` — read it where the value becomes wire data
+    ///     (`streamAgentMessageClamped(maxTokens:)`).
+    ///   * `reservedOutputTokens` — read it where the value becomes a budget
+    ///     (`PricedRequest.reservedCompletionTokens` → `resolveSpec`).
+    public let maxTokens: Int
+    /// The request's output cap, under the name that says so. See `maxTokens`.
+    public var requestMaxOutputTokens: Int { maxTokens }
+    /// The output tokens the compaction gate reserves. See `maxTokens`.
+    public var reservedOutputTokens: Int { maxTokens }
     /// Extended-thinking level for this conversation.
     ///
     /// Resolved by the caller from the session's inference config and clamped to
@@ -111,6 +157,16 @@ public struct DSHTurnDriverConfig: Sendable {
     public var loopWarningThreshold: Int
     /// Loop-guard critical threshold.
     public var loopCriticalThreshold: Int
+    /// Hard stop for a turn that is neither converging nor ending.
+    ///
+    /// NOT a turn budget and not a user-facing setting: it exists so "no step
+    /// ceiling" cannot become an unbounded loop when the model keeps producing
+    /// tool calls that all do something (so the loop guard, which keys on
+    /// REPEATED calls, never fires) and none of them concludes the turn. It is
+    /// set far above any real turn — a 262k-window conversation at 1k tokens per
+    /// step is under 300 steps before context pressure ends it — so it reports a
+    /// genuine runaway rather than a long task.
+    public var restlessStepLimit: Int
     /// Trigger policy: the pressure threshold and the retained-tail budget this
     /// conversation resolves against the serving model's capacity.
     ///
@@ -139,6 +195,9 @@ public struct DSHTurnDriverConfig: Sendable {
     /// Ordered tool names, with the rest marker exactly once. nil means
     /// lexicographic order.
     public var toolOrder: [String]?
+
+    /// The shipped runaway bound. See `restlessStepLimit`.
+    public static let shippedRestlessStepLimit = 1_000
 
     /// The conversation this turn belongs to, or nil for a draft with no id yet.
     ///
@@ -170,12 +229,13 @@ public struct DSHTurnDriverConfig: Sendable {
 
     public init(
         maxParallelToolCalls: Int = 4,
-        maxStepsPerTurn: Int = 200,
-        maxTokens: Int = 32_000,
+        maxStepsPerTurn: Int? = nil,
+        maxTokens: Int = 16_384,
         thinkingLevel: ThinkingLevel = .off,
         enableLoopGuard: Bool = true,
         loopWarningThreshold: Int = 10,
         loopCriticalThreshold: Int = 20,
+        restlessStepLimit: Int = DSHTurnDriverConfig.shippedRestlessStepLimit,
         compactionPolicy: DSHCompactionPolicy = DSHCompactionPolicy(),
         contextWindow: Int? = nil,
         compactionPressureTokensOverride: Int? = nil,
@@ -187,12 +247,24 @@ public struct DSHTurnDriverConfig: Sendable {
         streamRetryDelays: [Int] = [3, 5, 10, 15, 30]
     ) {
         self.maxParallelToolCalls = max(1, maxParallelToolCalls)
-        self.maxStepsPerTurn = max(1, maxStepsPerTurn)
+        // A ceiling that is not a ceiling: 0 and negative values are the "no
+        // limit" request spelled wrong, and clamping them to 1 would stop the turn
+        // on its first step. Only a positive value is a ceiling.
+        self.maxStepsPerTurn = maxStepsPerTurn.flatMap { $0 > 0 ? $0 : nil }
+        // [T-output-limit-three-hops] The default is `provider.defaultMaxTokens`
+        // for an OpenAI-compatible chat-completions endpoint
+        // (`OpenAIAgentProvider`) — the same fallback the request path resolves to
+        // when neither the user nor the endpoint states a cap. It is NOT a
+        // model-capability claim: the caller always passes the resolved
+        // `dynamicMaxTokens`, and this default only has to be the honest value for
+        // the case where nothing resolved at all. It was 32_000, which is a number
+        // no shipped provider declares; a default that no provider would ever
+        // produce is how "reserved 16–32k, capped at 8k" could go unnoticed.
         self.maxTokens = maxTokens
-        self.thinkingLevel = thinkingLevel
         self.enableLoopGuard = enableLoopGuard
         self.loopWarningThreshold = max(1, loopWarningThreshold)
         self.loopCriticalThreshold = max(self.loopWarningThreshold + 1, loopCriticalThreshold)
+        self.restlessStepLimit = max(199, restlessStepLimit)
         self.compactionPolicy = compactionPolicy
         if let contextWindow, contextWindow > 0 {
             self.contextWindow = contextWindow
@@ -400,8 +472,29 @@ public final class DSHTurnDriver {
             lastPricedRequest = measureRequestEnvelope()
         }
 
-        while step < config.maxStepsPerTurn {
+        // No step ceiling unless a caller set one. `stepWouldExceedBudget` is the
+        // whole condition: with `maxStepsPerTurn == nil` it never returns true, so
+        // the loop leaves on the same exits upstream's `while (true)` has.
+        while !stepWouldExceedBudget(step) {
             if cancelled {
+                delegate?.driver(self, didEndTurn: .cancelled)
+                return .cancelled
+            }
+
+            // Runaway bound, checked here rather than in the loop condition: it is
+            // not a turn budget and must not read as one. A turn this long has
+            // neither converged nor terminated — every step produced a new tool
+            // call, so the loop guard (which keys on REPEATED calls) had nothing
+            // to block, and context pressure never crossed. Cancelling is the
+            // honest outcome: nothing here says the model's work was wrong, only
+            // that this turn is not going to end by itself.
+            if step >= config.restlessStepLimit {
+                let budget = config.maxStepsPerTurn.map(String.init) ?? "nil"
+                AppLogger(category: "DSHLoop").warning(
+                    "[DSH] turn=\(turn) still running at step=\(step) "
+                        + "(restlessStepLimit=\(config.restlessStepLimit) "
+                        + "stepsPerTurnLimit=\(budget)) - stopping"
+                )
                 delegate?.driver(self, didEndTurn: .cancelled)
                 return .cancelled
             }
@@ -452,7 +545,7 @@ public final class DSHTurnDriver {
                             messages: request.messages,
                             systemPrompt: request.systemPrompt,
                             tools: request.tools,
-                            maxTokens: request.maxTokens,
+                            maxTokens: config.requestMaxOutputTokens,
                             thinkingLevel: request.thinkingLevel
                         )
                         // Tell the host the stream is open, so it can clear the
@@ -745,8 +838,25 @@ public final class DSHTurnDriver {
         // exit is an empty next step), and it is the more actionable of the two facts
         // for the user. Stickiness exists to keep a truncation from being reported as
         // a clean completion, not to erase a budget stop.
+        //
+        // Unreachable on the default path: `maxStepsPerTurn` is nil there, so
+        // `stepWouldExceedBudget` never returns true and this code is only reached
+        // when a caller set a ceiling on purpose. "Reached the step limit for this
+        // turn" therefore names a limit the user asked for, not one the app
+        // imposed on a long task.
         delegate?.driver(self, didEndTurn: .maxSteps)
         return .maxSteps
+    }
+
+    /// Whether another step would exceed a ceiling the caller set.
+    ///
+    /// The loop's whole budget condition, kept in one place so "no ceiling" is a
+    /// property of the value rather than of the comparison: nil means the loop has
+    /// no step budget at all, and `>=` (not `>`) is what makes a ceiling of N mean
+    /// N steps rather than N+1.
+    private func stepWouldExceedBudget(_ step: Int) -> Bool {
+        guard let limit = config.maxStepsPerTurn else { return false }
+        return step >= limit
     }
 
     // MARK: - Attempt Settlement
@@ -1199,7 +1309,7 @@ public final class DSHTurnDriver {
             + surfaceTokens
         return PricedRequest(
             promptTokens: promptTokens,
-            reservedCompletionTokens: config.maxTokens,
+            reservedCompletionTokens: config.reservedOutputTokens,
             surfaceTokens: surfaceTokens,
             isProviderCount: false
         )
@@ -1312,7 +1422,6 @@ public final class DSHTurnDriver {
         var messages: [AgentMessage]
         var systemPrompt: String?
         var tools: [AgentToolDefinition]
-        var maxTokens: Int
         var thinkingLevel: ThinkingLevel
     }
 
@@ -1429,7 +1538,7 @@ public final class DSHTurnDriver {
             promptTokens: DSHTokenEstimate.tokens(forText: systemPrompt)
                 + DSHTokenEstimate.tokens(forToolSchemas: schemas)
                 + pricedSurface,
-            reservedCompletionTokens: config.maxTokens,
+            reservedCompletionTokens: config.reservedOutputTokens,
             surfaceTokens: pricedSurface,
             isProviderCount: false
         )
@@ -1445,7 +1554,6 @@ public final class DSHTurnDriver {
             messages: requestMessages,
             systemPrompt: systemPrompt.isEmpty ? nil : systemPrompt,
             tools: schemas.map(DSHToolSchemaBridge.toAgentToolDefinition),
-            maxTokens: config.maxTokens,
             thinkingLevel: config.thinkingLevel
         )
     }

@@ -1058,6 +1058,16 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
     }
 
     /// Max output tokens of the current model (from models.dev).
+    ///
+    /// [T-output-limit-three-hops] Reads hop 1 and hop 2 of the chain documented on
+    /// `dynamicMaxTokens` — the user override, then the value the app learned from
+    /// the catalog or from the endpoint itself. `nil` here therefore means "no
+    /// per-model number is known", NOT "no limit": the request path continues to
+    /// `provider.defaultMaxTokens`, which is a property of the ENDPOINT rather than
+    /// of the model and so cannot be answered from a `ModelEntry` alone. A surface
+    /// that has to show the number the next request will carry must go through
+    /// `effectiveMaxOutputTokens(for:providerType:)`, the one other place allowed to
+    /// spell that fallback out.
     var currentModelMaxOutputTokens: Int? {
         guard let sid = sessionId,
               let binding = ProviderConfigStore.shared.binding(for: sid) else { return nil }
@@ -5992,7 +6002,14 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
                     canResume = true
                 } else if stopReason == .maxTokens {
                     logger.warning("Agent loop ended at max_tokens with no tool calls")
-                    messages[msgIdx].error = AppLocalized("Response truncated (max tokens reached)")
+                    // [T-max-tokens-neutral-wording] Same string the DSH adapter
+                    // reports for the same stop reason (`DSHTurnDriverAdapter.swift`,
+                    // `didEndTurn: .maxTokens`), so one event cannot be described two
+                    // ways depending on which loop ran. "Truncated" read as damage;
+                    // this states the cap, that nothing was lost, and the action that
+                    // continues. `canResume` is unchanged — the turn is continuable
+                    // exactly as before.
+                    messages[msgIdx].error = AppLocalized("The reply reached this model's output limit. The text so far is kept — send a message to continue.")
                     canResume = true
                 } else if stopReason == .refusal {
                     // [T-ios-fable5-empty-response] Anthropic safety classifier declined the
@@ -6344,10 +6361,12 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
             // If stop reason was end_turn (not tool_use), break
             if stopReason != .toolUse {
                 // maxTokens: the model ran out of output tokens mid-response.
-                // Show a warning and enable Resume so the user can continue.
+                // Keep Resume armed so the user can continue — but say so in
+                // neutral, actionable words ([T-max-tokens-neutral-wording], the
+                // same string as the DSH adapter and the no-tool exit above).
                 if stopReason == .maxTokens {
                     logger.warning("Agent loop stopped: max_tokens reached")
-                    messages[msgIdx].error = AppLocalized("Response truncated (max tokens reached)")
+                    messages[msgIdx].error = AppLocalized("The reply reached this model's output limit. The text so far is kept — send a message to continue.")
                     canResume = true
                 }
                 // [T-stream-drop-silent] nil stopReason after tool turns means the

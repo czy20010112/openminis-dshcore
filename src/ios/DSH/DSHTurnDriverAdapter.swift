@@ -367,7 +367,68 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
         Summary writer: \(outcome.model) via \(outcome.provider)
         """
         row.systemIcon = "arrow.down.right.and.arrow.up.left"
-        messages.insert(row, at: insertIdx)
+
+        // [F4-compaction-visibility] Place the bar where the compaction actually
+        // cut the transcript, which for a DSH mid-turn compaction is usually
+        // INSIDE the assistant bubble the turn is still writing into.
+        //
+        // Why the old placement was invisible, from the device log
+        // (F:\smb\log\minis-2026-10-19.log, 09:17:18 / 09:28:31 / 09:33:11):
+        //
+        //   [DSH] compaction divider at 2/4 lastShadowedSeq=111 liveRow=3
+        //   [DSH] compaction divider at 4/6 lastShadowedSeq=102 liveRow=5
+        //
+        // `insertIdx` equals the live row's own index in every one of them. That
+        // is structural, not coincidence: `dshDividerInsertIndex` resolves the
+        // boundary by `dshSeq`, and NO UI row carries one (the only stamp is
+        // `dshSealStreamingTurn`, i.e. after the turn; the reload path never stamps
+        // one), so the seq search always misses and `dshDividerPosition` clamps to
+        // the live row. One DSH turn is ONE assistant bubble — 199 blocks / 9,114pt
+        // in the recorded session — so "immediately above the live row" is
+        // thousands of points above a viewport pinned to the bottom, and the
+        // greying loop exempts that row wholesale. The user watches the reply
+        // continue and sees neither the bar nor any dim: 「压缩的时候没有任何显示
+        // 了，就像正常对话一样直接继续」.
+        //
+        // The boundary is knowable exactly, without a seq on the UI row: the
+        // shadowed session entries record their tool-call ids, and the live row's
+        // blocks carry the id of the call each rendered — so a block whose call is
+        // inside the shadowed range IS compacted. No inference, and no over-claim,
+        // which is the rule the reload path's `deferredBlocks` accounting exists to
+        // enforce.
+        //
+        // The message-level greying below is unchanged and still dims the rows
+        // above the bar; what it cannot reach is the shadowed prefix INSIDE the
+        // live row, and that is the region the user is actually looking at.
+        let liveIdxBefore = dshStreamingMsgIdx
+        let shadowedCallIds = Self.dshShadowedCallIds(
+            session: dshSession,
+            shadowedSeqs: outcome.range.shadowedSeqs
+        )
+        let compactedBlocks = (liveIdxBefore >= 0 && liveIdxBefore < messages.count
+                               && messages[liveIdxBefore].role == .assistant)
+            ? Self.dshCompactedBlockPrefixCount(
+                liveBlocks: messages[liveIdxBefore].blocks,
+                shadowedCallIds: shadowedCallIds)
+            : 0
+        let anchoredDivider = compactedBlocks > 0 && insertIdx == liveIdxBefore
+        if anchoredDivider {
+            let live = messages[liveIdxBefore]
+            for blockIdx in 0..<compactedBlocks {
+                live.blocks[blockIdx].isCompactedHistory = true
+            }
+            row.compactionAnchorBlockId = live.blocks[compactedBlocks - 1].id
+            row.compactionRevealPending = true
+            // BELOW the live row, on purpose: the row the turn is streaming into
+            // keeps its index (so no re-anchor can be got wrong), the list emits
+            // this divider's cell after its anchor block's cell, and every block
+            // the turn writes next lands under the bar — which is also the fix for
+            // "new messages appear above the compaction line".
+            messages.insert(row, at: min(liveIdxBefore + 1, messages.count))
+        } else {
+            messages.insert(row, at: insertIdx)
+            row.compactionRevealPending = true
+        }
 
         // [T-dsh-compact-divider-index-drift] The insert moved every row below
         // the divider down by one — including the assistant row this turn is
@@ -380,6 +441,7 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
         //
         // One healing site, and this is it: the target is re-derived from the
         // row's own identity, so it is correct however far the insert moved it.
+        // (A no-op in the anchored case above: nothing was inserted above it.)
         dshReanchorStreamingRow()
 
         // The streaming row is BY CONSTRUCTION the newest row of this turn, so it
@@ -396,10 +458,63 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
         AppLogger(category: "DSHLoop").warning(
             "[DSH] compaction divider at \(insertIdx)/\(messages.count) "
             + "lastShadowedSeq=\(outcome.range.shadowedSeqs.last.map { String($0.value) } ?? "nil") "
-            + "liveRow=\(liveIdx)"
+            + "liveRow=\(liveIdx) shadowedCalls=\(shadowedCallIds.count) "
+            + "dimmedBlocks=\(compactedBlocks) "
+            + "anchored=\(anchoredDivider ? "afterBlock\(compactedBlocks - 1)" : "none(barAboveLiveRow)")"
         )
         publishUnlessTransitioning()
         scrollToBottomSignal.send()
+    }
+
+    /// Tool-call ids the compaction's shadowed range contains.
+    ///
+    /// [F4-compaction-visibility] This is the exact handle on "which rendered
+    /// blocks did the compaction replace". A session entry carries its tool calls
+    /// (`DSHToolCallBlock.id`), the live row's blocks carry the id of the call each
+    /// one rendered (`AssistantBlock.toolUseId`), and the compaction reports the
+    /// seqs it shadowed — so the intersection is a fact rather than an estimate.
+    /// Nothing on the UI row has to be trusted for it, which matters because a UI
+    /// row carries no seq while its turn is running.
+    static func dshShadowedCallIds(
+        session: DSHSession?,
+        shadowedSeqs: [DSHSeq]
+    ) -> Set<String> {
+        guard let session else { return [] }
+        var ids: Set<String> = []
+        for seq in shadowedSeqs {
+            guard let entry = session.entry(at: seq) else { continue }
+            for block in entry.message.blocks {
+                if let call = block as? DSHToolCallBlock {
+                    ids.insert(call.id)
+                }
+            }
+        }
+        return ids
+    }
+
+    /// How many of a live row's LEADING blocks the compaction covers.
+    ///
+    /// The shadowed range is a prefix of the session log, so if a block belonging
+    /// to it is at index i, every block before i belongs to it too: the count is
+    /// `lastShadowedToolBlockIndex + 1`, and no block after it is claimed (those
+    /// may belong to the retained tail the model still sees verbatim).
+    ///
+    /// Blocks the shadowed range produced but that carry no tool call — the text
+    /// and thinking around them — are covered by the same prefix rule whenever they
+    /// precede a shadowed call, and left alone when they do not. That is the
+    /// under-claim direction `DSHCompactBoundary` insists on: dimming a block the
+    /// model can still read is the failure this refuses to make.
+    static func dshCompactedBlockPrefixCount(
+        liveBlocks: [AssistantBlock],
+        shadowedCallIds: Set<String>
+    ) -> Int {
+        guard !shadowedCallIds.isEmpty else { return 0 }
+        var last = -1
+        for (idx, block) in liveBlocks.enumerated() {
+            guard let callId = block.toolUseId, shadowedCallIds.contains(callId) else { continue }
+            last = idx
+        }
+        return last + 1
     }
 
     /// Where the transcript divider goes for a compaction that shadowed
@@ -482,17 +597,31 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
         case .maxSteps:
             reportTurnFailure("Reached the step limit for this turn.")
         case .maxTokens:
-            // Truncation, not a budget stop.
+            // Not a budget stop: the model's answer ran into the output limit.
             //
             // [P1-2] This reason used to be reported as `.maxSteps` — "Reached the
             // step limit for this turn" — which is the opposite of what happened:
             // the model did not fan out for too long, its answer was cut off mid
-            // sentence. The two also need different words and different arms: a
-            // truncated reply is CONTINUABLE, so Resume is armed here, which is
-            // exactly what the legacy loop does for the same stop reason
-            // (`AIChatViewModel.swift`: `stopReason == .maxTokens` → warn
-            // "Response truncated (max tokens reached)" + `canResume = true`).
-            reportTurnFailure("Response truncated (max tokens reached). Tap Resume to continue.")
+            // sentence. The two also need different words and different arms, and
+            // the reply stays CONTINUABLE, so Resume is armed here, which is what
+            // the legacy loop does for the same stop reason (`AIChatViewModel.swift`:
+            // `stopReason == .maxTokens` → warn + `canResume = true`).
+            //
+            // [T-max-tokens-neutral-wording] The words changed, the semantics did
+            // not. The old copy was "Response truncated (max tokens reached). Tap
+            // Resume to continue." and the operator's report on it was 「对话的 agent
+            // 总说什么被截断…感觉有点影响使用」 — a warning banner that reads as
+            // damage, on a turn whose text is complete-to-the-point-it-stopped and
+            // is already in the session (`session.append` above runs before the end
+            // reason is chosen, so the half answer is durable and the next request
+            // carries it). "Truncated" also names the wrong layer: since
+            // [T-output-limit-three-hops] the cap is a number the app resolved and
+            // the user can change, not a transport failure.
+            //
+            // The replacement states what happened, that nothing was lost, and the
+            // one action that continues — and it is the SAME string the legacy loop
+            // now uses, so the two loops cannot describe one event two ways.
+            reportTurnFailure(AppLocalized("The reply reached this model's output limit. The text so far is kept — send a message to continue."))
             canResume = true
         }
     }
