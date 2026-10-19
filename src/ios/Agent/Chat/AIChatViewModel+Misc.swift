@@ -501,6 +501,7 @@ extension AIChatViewModel {
         case .openRouter: return 16_384
         case .xAI: return 16_384
         case .kimiCode: return 16_384
+        case .githubCopilot: return 16_384
         case .unsupported: return 16_384
         }
     }
