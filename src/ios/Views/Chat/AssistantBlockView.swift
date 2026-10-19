@@ -755,8 +755,17 @@ struct ThinkingBlockView: View {
                         .controlSize(.mini)
                         .tint(.blue)
                 }
-                if block.content.count > 0 || block.thinkingContentBuffer.count > 0 {
-                    let charCount = max(block.content.count, block.thinkingContentBuffer.count)
+                if block.content.count > 0 {
+                        // [T-thinking-count-matches-text] Count exactly what the body renders.
+                        // The count used to be `max(content, thinkingContentBuffer)`:
+                        // the buffer is the UNPUBLISHED tail held by the adaptive
+                        // flush throttle (0.3–1.0s), so the number ran ahead of the
+                        // visible text — on the device it read "100" beside a few
+                        // characters, which looks like a rendering bug and was
+                        // reported as one. The throttle is deliberate (dense
+                        // reasoning streams at 60–105 deltas/s); the label must not
+                        // outrun the text it labels.
+                        let charCount = block.content.count
                     Text(charCount > 1000 ? "\(charCount / 1000)K" : "\(charCount)")
                         .font(AppFont.sw(11, weight: .medium, category: .code))
                         .foregroundStyle(.blue.opacity(0.6))
