@@ -333,6 +333,18 @@ struct ContextUsageHint: Equatable {
     let text: String
     let highlights: [String]
     let tier: ContextUsage.Tier
+    /// The measurement this hint was formatted from.
+    ///
+    /// [T-ctx-hint-stale] `text` is localized and pre-formatted (the label
+    /// highlights the number substrings), so it cannot follow `contextUsage` on
+    /// its own. Carrying the raw pair is what lets the ViewModel notice that the
+    /// figure behind the line is no longer the current one — a compaction, a
+    /// reload that rebases the number, or a model switch — and re-issue or drop
+    /// it instead of leaving a snapshot of a context that no longer exists in the
+    /// composer. The device reported exactly that: the line read "400.3k / 560k"
+    /// while the ring, which reads `contextUsage` live, read 146.6k.
+    let usedTokens: Int
+    let windowTokens: Int
 
     static func make(usage: ContextUsage, generation: Int) -> ContextUsageHint {
         let pct = "\(usage.percent)%"
@@ -341,7 +353,14 @@ struct ContextUsageHint: Equatable {
         // — one translatable entry, and translations may reorder with
         // `%1$@` / `%2$@`.
         let text = AppLocalized("Context \(pct) used · \(size)")
-        return ContextUsageHint(generation: generation, text: text, highlights: [pct, size], tier: usage.tier)
+        return ContextUsageHint(
+            generation: generation,
+            text: text,
+            highlights: [pct, size],
+            tier: usage.tier,
+            usedTokens: usage.usedTokens,
+            windowTokens: usage.windowTokens
+        )
     }
 }
 
