@@ -517,7 +517,7 @@ public final class DSHTurnDriver {
                         turn: turn,
                         source: "estimate",
                         price: estimated,
-                        detail: reason
+                        detail: reason.description
                     ))
                 }
             }
