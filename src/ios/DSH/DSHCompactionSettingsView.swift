@@ -177,7 +177,15 @@ enum DSHCompactionSettings {
         // `contextWindowTokens`, not `contextWindow`: the latter is optional and is often
         // nil for an entry whose window the app learned from the endpoint, which is the
         // number `effectiveContextWindow(for:)` routes on and the one the trigger uses.
-        ProviderConfigStore.shared.resolvedAgentLoopEntries
+        // A profile whose agent-loop selection was never recorded lists no routed
+        // entries, and the screen then said "none routed" for a route that plainly works.
+        // Fall back to every configured model: this figure previews the trigger, it does
+        // not decide the route.
+        let routed = ProviderConfigStore.shared.resolvedAgentLoopEntries
+        let candidates = routed.isEmpty
+            ? ProviderConfigStore.shared.config.modelEntries
+            : routed
+        return candidates
             .map { $0.model.contextWindowTokens }
             .filter { $0 > 0 }
             .max()
