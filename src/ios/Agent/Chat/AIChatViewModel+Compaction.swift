@@ -380,7 +380,11 @@ extension AIChatViewModel {
     /// Wrap a compact summary in the `<context-summary>` envelope used both
     /// by the standalone `summaryAsAgentMessage` form (legacy) and by v2's
     /// inline injection into the next user message's content array.
-    static func compactSummaryWrappedText(_ summary: String) -> String {
+    /// 
+    /// `nonisolated` because the DSH compaction (`DSHCompaction.summaryEnvelope`)
+    /// builds the same envelope from a non-isolated context: one wording, one
+    /// function, both loops.
+    nonisolated static func compactSummaryWrappedText(_ summary: String) -> String {
         """
         <context-summary>
         The following is a summary of the earlier conversation that was compacted to save context space.

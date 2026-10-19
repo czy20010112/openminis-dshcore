@@ -24,23 +24,24 @@
 //  What upstream's `compactNow` does, and what this port therefore does
 //  (`packages/compaction/compaction-basic/src/index.ts:383-435`):
 //
-//   1. It is EXPLICITLY below the pressure threshold. Upstream calls
-//      `selectCompactableRange(session, measurement, 0)` — a `0` THRESHOLD gate,
-//      which is the argument that is not spent here — and its own
-//      `compactIfNeeded('pressure')` is the only path that consults
-//      `spec.thresholdTokens`. The RETAINED TAIL is the opposite: the manual call
-//      passes the policy's own `spec.retainTokens`, resolved from the same
-//      `resolveCompactSpec(policy, contextWindow, reservedCompletionTokens)`
-//      (`compaction-basic/src/config.ts`) the automatic trigger uses, and
-//      `compactNow` reaches that resolution through the same `selectCompactableRange`
-//      whose `retainTokens` walk-back is at `compaction-basic/src/region.ts:133-141`.
-//      So the manual command *bypasses when*, never *what*: same selection rule,
-//      same balanced cut, same shrink requirement, same policy object. On a 0.16
-//      retain ratio that means a manual `/compact` keeps the same 16% recent tail an
-//      automatic compaction would — which is exactly the operator's requirement
-//      ("must share the same `DSHCompactionPolicy`"), and the opposite of the
-//      zero-tail maximal reduction `recoverFromContextOverflow` performs when a
-//      request has ALREADY been rejected.
+//   1. It is EXPLICITLY below the pressure threshold, and it keeps NO retained
+//      tail. Upstream's manual call is `selectCompactableRange(agent.session,
+//      this.ctx.tokenMeter.measure(agent.session), 0)` (`index.ts:394-398`), and
+//      that third argument is `retainTokens` (`region.ts:117-121`) — not a
+//      threshold: `selectCompactableRange` has no threshold parameter at all, and
+//      this port's earlier note calling it a "0 threshold gate" was wrong. `0`
+//      there spends nothing on the tail, so the backward walk (`region.ts:133-141`)
+//      stops on the LAST surface node and the cut then moves further back only
+//      until the tool-call/result pairing is balanced (`:143-147`).
+//      The manual reduction is therefore the maximal balanced one — the same range
+//      `compactIfNeeded('context-overflow')` selects (`index.ts:299`) — and NOT the
+//      policy's 16% tail: that figure is spent by the AUTOMATIC PRESSURE path only,
+//      as `spec.retainTokens` (`index.ts:331`, derived at `config.ts:195-197` from
+//      `DEFAULT_RETAIN_RATIO` at `:23`).
+//      What the manual command does NOT bypass is the selection RULES: same
+//      `selectCompactableRange`, same system-head exclusion, same balanced cut,
+//      same shrink requirement, and the same `DSHCompactionPolicy` object for
+//      everything else. It bypasses *when*, never *what*.
 //   2. It takes NO arguments (`:63-65`, `USAGE` at `:14`).
 //   3. It refuses while the agent is busy rather than queueing (`:29-31`, the
 //      `busy` arm), and while another compaction is open.
@@ -158,9 +159,18 @@ extension AIChatViewModel {
             }
 
             // Resolved here rather than in the synchronous prologue: building the
-            // provider is async, and the budget must come from the same call the driver
-            // uses so a manual compaction cannot keep a different tail than an automatic
-            // one on the same route.
+            // provider is async, and the budget must come from the same resolver the
+            // driver uses (`DSHCompactionPolicy.resolvedSpec`) so a route whose policy
+            // cannot be scaled is refused here exactly as the driver refuses it.
+            //
+            // The RESOLVED values are not spent on the selection below — upstream's
+            // manual call retains no tail — but the resolution itself is not optional:
+            // it is what turns "this route has no budget" into a refusal with a reason
+            // instead of a compaction that runs on numbers nobody validated, and it is
+            // what keeps `dshCompactionSpec` a report of the same policy object the
+            // automatic paths use. `dshCompactionRetainOverride`, the device probe, now
+            // moves only the pressure path's tail — upstream has no manual-path
+            // counterpart for it, and inventing one was the deviation D1 removes.
             let provider = await self.makeAgentProvider(for: entry)
             let reservedOutput = self.dynamicMaxTokens(
                 provider: provider,
@@ -169,12 +179,12 @@ extension AIChatViewModel {
                     + (self.dshTurnUsage.cacheReadTokens ?? 0)
                     + (self.dshTurnUsage.cacheWriteTokens ?? 0)
             )
-            guard let spec = Self.dshCompactionSpec(
+            guard Self.dshCompactionSpec(
                 policy: DSHCompactionSettings.policy(),
                 contextWindow: window,
                 reservedCompletionTokens: reservedOutput,
                 retainOverride: Self.dshCompactionRetainOverride
-            ) else {
+            ) != nil else {
                 // The route cannot resolve a budget — the same condition under which the
                 // driver's `compactForPressure` warns once and lets provider-confirmed
                 // overflow recovery handle it. Here there is no overflow to recover from,
@@ -188,31 +198,36 @@ extension AIChatViewModel {
             }
 
             // Upstream's manual selection (`compaction-basic/src/index.ts:394-398`):
-            // the POLICY's retained tail, and a `0` threshold so the command works
-            // below the automatic trigger.
+            // `retainTokens: 0` — the tail is NOT retained — and a `0` pressure
+            // threshold, so the command works below the automatic trigger.
             //
-            // `retainTokens` is `spec.retainTokens` — the same number
-            // `DSHTurnDriver.compactForPressure` hands the engine, derived from
-            // `DSHCompactionSettings.policy()` and the same probe/UserDefaults
-            // override through `dshCompactionSpec` — so editing the retain ratio in
-            // Settings moves BOTH. Passing a literal (or a zero) here would be the
-            // drift this port exists to remove.
+            // Both zeroes are upstream's own, and they are two different arguments.
+            // The third argument of `selectCompactableRange` is `retainTokens`
+            // (`region.ts:117-121`), so upstream's manual compaction keeps only the
+            // last surface node and then walks the cut back until the tool pairing
+            // is balanced (`:143-147`): the maximal balanced head reduction, the
+            // same range the context-overflow path selects (`index.ts:299`). The
+            // policy's 16% tail is spent by the automatic PRESSURE path alone
+            // (`index.ts:331`), and `spec` is still resolved here — and still drives
+            // the "cannot resolve a budget" outcome above — because the command must
+            // refuse on a route whose policy cannot be scaled rather than compact
+            // with no budget. What it no longer does is borrow the pressure path's
+            // tail: that was this port's own deviation, not upstream's behaviour.
             //
             // `measuredTokens: 0` is inert: `select` compares it to
             // `pressureThreshold` and nothing else (`DSHCompaction.swift`, `select`),
-            // and the threshold is 0. The retention budget is the policy's; only the
-            // gate is bypassed.
+            // and the threshold is 0.
             let result = await DSHCompaction.compact(
                 session: session,
                 turn: nil,
-                retainTokens: spec.retainTokens,
+                retainTokens: 0,
                 pressureThreshold: 0,
                 measuredTokens: 0,
                 model: entry.model.id,
                 provider: provider.name
             ) { [weak self] shadowedText in
                 guard let self else { throw DSHCompactionError.summaryFailed("view model deallocated") }
-                return try await self.dshCompactSummarize(shadowedText)
+                return try await self.dshCompactSummarize(shadowedText, contextWindow: window)
             }
 
             switch result {
@@ -313,49 +328,61 @@ extension AIChatViewModel {
 
     /// Summarize one shadowed span for a manual compaction.
     ///
-    /// Same instruction the engine's own compactions send (`DSHTurnDriver.summarize`)
-    /// and the same clamped stream call, so a span compacted by hand and the same
-    /// span compacted under pressure produce summaries of the same kind. The prompt
-    /// is deliberately NOT the store-side one (`generateCompactSummary`): that one
+    /// The request is the DRIVER'S request, not a second one: this forwards to
+    /// `DSHTurnDriver.summarizeExcerpt`, which owns the output ceiling, the safety
+    /// margin, the per-segment excerpt budget, the segmentation itself, the
+    /// head+tail omission past the segment cap, the system prompt, the instruction
+    /// and the empty/truncated refusals. What this function supplies is only the
+    /// pair of facts a manual compaction owns — the provider it resolved for the
+    /// current entry, and the window the same `effectiveContextWindow` reports for
+    /// that entry (the figure `DSHTurnDriverRun` hands the driver as
+    /// `config.contextWindow`).
+    ///
+    /// That delegation is the fix for a P0-shaped defect rather than tidying: the
+    /// old body here sent the WHOLE shadowed excerpt as one request with a fixed
+    /// `maxTokens: 4096` and no segmentation, so the manual path carried exactly
+    /// the unbounded-request shape the driver's budget exists to prevent (a
+    /// 1,783,917-byte summary request rejected with `context_length_exceeded`,
+    /// device 2026-10-19 09:17:19) — it just had not been hit yet. The prompt is
+    /// deliberately NOT the store-side one (`generateCompactSummary`): that one
     /// asks for its own structure and answers a different pipeline.
-    private func dshCompactSummarize(_ text: String) async throws -> String {
+    ///
+    /// - Parameters:
+    ///   - text: the rendered shadowed excerpt.
+    ///   - contextWindow: capacity of the routed model.
+    /// - Returns: the summary, non-empty by construction.
+    private func dshCompactSummarize(_ text: String, contextWindow window: Int) async throws -> String {
         guard let entry = resolveCurrentEntry() else {
             throw DSHCompactionError.summaryFailed("No model configured. Add a provider in Settings.")
         }
         let provider = await makeAgentProvider(for: entry)
-
-        let instruction = """
-        Summarize the conversation excerpt below. Preserve: decisions made, facts \
-        established, file paths and identifiers, current task state, and anything \
-        the next turn must know to continue. Drop: repeated attempts that failed, \
-        verbose tool output already superseded, and pleasantries.
-
-        Be concrete and terse. Do not address the user. Do not invent facts not \
-        present in the excerpt.
-
-        <excerpt>
-        \(text)
-        </excerpt>
-        """
-
-        let stream = try await provider.streamAgentMessageClamped(
-            messages: [AgentMessage(role: .user, parts: [.text(instruction)])],
-            systemPrompt: "You are a precise conversation summarizer.",
-            tools: [],
-            maxTokens: 4096,
-            thinkingLevel: .off
+        guard window > 0 else {
+            throw DSHCompactionError.summaryFailed(
+                "no context capacity to summarize against (model=\(entry.model.id))")
+        }
+        // The same meter conversion `DSHTurnDriver.summaryMeterRatioNow()` applies,
+        // over the same kind of pair: the provider's own count of the last routed
+        // request (accumulated into `dshTurnUsage` from every response's usage) and
+        // this surface's estimator total. A manual compaction has no driver-owned
+        // envelope to grow, so the count is used as it stands; when there is none —
+        // a `/compact` before the session's first response — the ratio falls to the
+        // shipped floor, which is the conservative direction (a smaller per-segment
+        // budget, more segments, never an oversized request).
+        let measured = dshTurnUsage.inputTokens
+            + (dshTurnUsage.cacheReadTokens ?? 0)
+            + (dshTurnUsage.cacheWriteTokens ?? 0)
+        let surfaceEstimate = DSHTokenEstimate.total(dshSession?.surface() ?? [])
+        let ratio = DSHTurnDriver.summaryMeterRatio(
+            measuredTokens: measured,
+            surfaceEstimate: surfaceEstimate
         )
-
-        var summary = ""
-        for try await event in stream {
-            try Task.checkCancellation()
-            if case .textDelta(let delta) = event { summary += delta }
-        }
-        let trimmed = summary.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            throw DSHCompactionError.summaryFailed("the summarizer returned nothing")
-        }
-        return trimmed
+        return try await DSHTurnDriver.summarizeExcerpt(
+            text,
+            contextWindow: window,
+            meterRatio: ratio,
+            provider: provider,
+            logCategory: "DSHCompact"
+        )
     }
 }
 
@@ -363,17 +390,24 @@ extension AIChatViewModel {
 
 extension AIChatViewModel {
 
-    /// The budgets a DSH compaction runs with, resolved from the one policy object
-    /// both the automatic and the manual path use.
+    /// The budgets a DSH compaction runs with — the one policy, meeting the one
+    /// window, through the ONE resolver.
     ///
     /// `DSHTurnDriver.resolveSpec` is private to the driver, and the driver is
-    /// created per turn — a manual compaction has no driver to ask. So the
-    /// resolution lives here, once, as a value: the driver could not call it either
-    /// without being changed, and the point of this whole file is that there must be
-    /// exactly one place where the policy meets a window. Every input is the same
-    /// input the driver takes from `config` (`DSHTurnDriverRun`), read from the same
-    /// accessors: `DSHCompactionSettings.policy()`, the group-aware
-    /// `effectiveContextWindow`, and the probe/UserDefaults retain override.
+    /// created per turn — a manual compaction has no driver to ask. The resolution
+    /// therefore lives in `DSHCompaction.swift`
+    /// (`DSHCompactionPolicy.resolvedSpec(targetKey:contextWindow:reservedCompletionTokens:retainOverride:pressureThresholdOverride:)`),
+    /// which is also what the driver now forwards to, and this is its only other
+    /// caller: the two assemblers that used to exist (one here, one in the driver,
+    /// differing only in `targetKey`) are one function with `targetKey` as an
+    /// argument. Every input is the same input the driver takes from `config`
+    /// (`DSHTurnDriverRun`), read from the same accessors:
+    /// `DSHCompactionSettings.policy()`, the group-aware `effectiveContextWindow`,
+    /// and the probe/UserDefaults retain override.
+    ///
+    /// `targetKey` stays `manual/compact`: it is the key a misconfiguration is
+    /// reported under, and a manual compaction's route is the model, not a
+    /// provider/model pair the driver could have named.
     ///
     /// - Parameters:
     ///   - policy: the user's policy, as stored.
@@ -389,12 +423,12 @@ extension AIChatViewModel {
         reservedCompletionTokens: Int,
         retainOverride: Int?
     ) -> DSHCompactionSpec? {
-        var resolved = policy
-        if let retainOverride { resolved.retainTokens = retainOverride }
-        return try? resolved.resolveSpec(
+        try? policy.resolvedSpec(
             targetKey: DSHCompactionPolicy.targetKey(provider: "manual", model: "compact"),
             contextWindow: contextWindow,
-            reservedCompletionTokens: reservedCompletionTokens
+            reservedCompletionTokens: reservedCompletionTokens,
+            retainOverride: retainOverride,
+            pressureThresholdOverride: nil
         )
     }
 }

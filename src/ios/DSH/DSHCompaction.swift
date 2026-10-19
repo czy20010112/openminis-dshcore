@@ -16,10 +16,20 @@
 //     a compaction never strands a tool call without its result.
 //  4. Shadow the resulting positional range with one summary entry.
 //
-//  The transaction is a bracket: `start` is committed before the summary call
-//  yields, `end` after it lands. An unmatched `start` is the compaction lock, so
-//  two compactions cannot interleave — the condition OpenMinis guarded with a
-//  separate `compactionsThisLoop` counter plus a queued-drain deferral.
+//  MUTUAL EXCLUSION IS A REAL LOCK, NOT AN INFERRED ONE. Upstream refuses a
+//  second compaction while one is open, at two seams: the durable record
+//  (`assertCompactionInactive` over the session's compaction events,
+//  `packages/compaction/compaction-basic/src/region.ts:185-189`) and the
+//  automatic pressure path (`assertNoActiveCompaction`, `index.ts:305`). This
+//  app has no durable `compaction/start` to infer that from — `compact` composes
+//  the summary FIRST and appends one replacement entry afterwards, so the only
+//  before/after pair exists in memory — so the equivalent is the in-process half
+//  of upstream's rule: `Bracket` admits one compaction at a time and the second
+//  caller gets `.busy` (upstream's `ManualCompactionError('busy', …)`). It is
+//  held across the summary `await`, never as a held `NSLock` (see `Bracket`).
+//  The durable half is `.surfaceChanged`: the surface is re-read after the
+//  summary lands and a span that no longer exists is refused before anything is
+//  appended, which is what a compaction killed mid-flight leaves behind.
 //
 
 import Foundation
@@ -371,6 +381,68 @@ public struct DSHCompactionThresholdBreakdown: Sendable, Equatable {
 
 extension DSHCompactionPolicy {
 
+    // MARK: - The one spec resolution
+
+    /// Resolve one route's budgets from this policy: the ONLY place a policy
+    /// meets a window.
+    ///
+    /// Upstream has exactly one resolver — `resolveCompactSpec(policy,
+    /// contextWindow, reservedCompletionTokens)` in
+    /// `packages/compaction/compaction-basic/src/config.ts:153-217` — and every
+    /// consumer of a trigger budget calls it: the pressure path
+    /// (`index.ts:314-318`) and the overflow path's own policy lookup. This app
+    /// had TWO assemblers for the same arithmetic — the driver's `resolveSpec`
+    /// (window + policy + both preference overrides) and `/compact`'s
+    /// `dshCompactionSpec` (the same three inputs with a different `targetKey`) —
+    /// so "the manual command keeps what an automatic compaction keeps" was a
+    /// claim about two functions agreeing rather than about one function.
+    ///
+    /// The optional inputs are the app's two device-experiment overrides, both of
+    /// which belong to the resolution and not to its callers:
+    /// `retainOverride` replaces the derived retained tail, `pressureThresholdOverride`
+    /// replaces the derived trigger. Applying them here is what keeps the ORDER
+    /// fixed — policy first, then the overrides on the RESOLVED spec — which is
+    /// the order both callers used.
+    ///
+    /// - Parameters:
+    ///   - targetKey: exact `provider/model` route, used to name a
+    ///     misconfiguration once per route.
+    ///   - contextWindow: adapter-declared capacity, or nil when none is known.
+    ///   - reservedCompletionTokens: output tokens one routed request reserves.
+    ///   - retainOverride: absolute retained-tail budget, or nil to derive it.
+    ///   - pressureThresholdOverride: absolute pressure threshold, or nil to
+    ///     derive it.
+    /// - Returns: the resolved budget for that route.
+    /// - Throws: `DSHCompactionConfigError` when no capacity is known, or when the
+    ///   policy cannot be scaled to the capacity that is.
+    public func resolvedSpec(
+        targetKey: String,
+        contextWindow: Int?,
+        reservedCompletionTokens: Int,
+        retainOverride: Int?,
+        pressureThresholdOverride: Int?
+    ) throws -> DSHCompactionSpec {
+        guard let contextWindow else {
+            // Upstream reports the same case as a target configuration error and
+            // skips proactive compaction until the adapter declares a window
+            // (`compaction-basic/src/index.ts:307-313`).
+            throw DSHCompactionConfigError(
+                targetKey: targetKey,
+                detail: "no context capacity for \(targetKey); the serving model "
+                    + "declares no context window"
+            )
+        }
+        var policy = self
+        if let retainOverride { policy.retainTokens = retainOverride }
+        let spec = try policy.resolveSpec(
+            targetKey: targetKey,
+            contextWindow: contextWindow,
+            reservedCompletionTokens: reservedCompletionTokens
+        )
+        guard let pressureThresholdOverride else { return spec }
+        return spec.overridingThreshold(pressureThresholdOverride)
+    }
+
     /// Resolve the trigger from one policy and one model capacity, keeping both
     /// terms.
     ///
@@ -635,12 +707,32 @@ public struct DSHCompactionOutcome: Sendable {
 /// Runs the compaction transaction.
 public enum DSHCompaction {
 
-    /// Bracket state, tracked so two compactions cannot interleave.
+    /// The compaction lock, in memory.
+    ///
+    /// The mutex is taken only to flip the flag — never across the summary
+    /// `await` — so a long summarization cannot block another compaction's
+    /// caller, and there is no lock for a suspension point to re-enter. What is
+    /// held for the duration of a compaction is the *flag*, which is what makes
+    /// `begin` the answer to "is a compaction already open" rather than to "is one
+    /// running right now on this thread".
+    ///
+    /// Upstream's equivalent is durable rather than in-memory
+    /// (`region.ts:185-189`'s `assertCompactionInactive`, `index.ts:305`'s
+    /// `assertNoActiveCompaction`), because its marker pair is written before the
+    /// summary call. See the file header for why this app's is the in-process
+    /// half of the same rule.
     private final class Bracket: @unchecked Sendable {
         var open = false
         var turn: Int?
         let lock = NSLock()
 
+        /// Claim the bracket for one compaction.
+        ///
+        /// - Parameter turn: enclosing turn for an automatic compaction, nil for a
+        ///   standalone manual one. Recorded for diagnostics only.
+        /// - Returns: false when another compaction already holds it — the caller
+        ///   answers `.busy` rather than waiting, exactly as upstream refuses
+        ///   (`ManualCompactionError('busy', …)`).
         func begin(turn: Int?) -> Bool {
             lock.lock(); defer { lock.unlock() }
             guard !open else { return false }
@@ -656,7 +748,15 @@ public enum DSHCompaction {
         }
     }
 
+    /// The one bracket every compaction goes through, on either loop.
+    private static let bracket = Bracket()
+
     /// Compact a session's surface.
+    ///
+    /// Exactly one compaction runs at a time in this process: a second caller —
+    /// the driver's mid-turn pressure path, its overflow recovery, or `/compact` —
+    /// gets `.busy` instead of interleaving with the one in flight. See `Bracket`
+    /// and the file header for the upstream rule this stands in for.
     ///
     /// - Parameters:
     ///   - session: the session to compact.
@@ -683,6 +783,13 @@ public enum DSHCompaction {
         provider: String,
         summarize: @escaping @Sendable (String) async throws -> String
     ) async -> Result<DSHCompactionOutcome, DSHCompactionError> {
+        // Upstream's first act, before anything is read or selected
+        // (`region.ts:183-189`): refuse while a compaction is already open. The
+        // bracket is released on every exit of this function, including the
+        // failure returns below — `defer` rather than a trailing `end()`.
+        guard Self.bracket.begin(turn: turn) else { return .failure(.busy) }
+        defer { Self.bracket.end() }
+
         let surface = session.surface()
         let beforeTokens = DSHTokenEstimate.total(surface)
 
@@ -764,16 +871,16 @@ public enum DSHCompaction {
     /// The precedence clause matters: without it a stale summary can override a
     /// newer, shorter user instruction, which is the failure the envelope exists
     /// to prevent.
+    ///
+    /// The text itself is `AIChatViewModel.compactSummaryWrappedText` — the
+    /// envelope the store-side compaction has always used, i.e. the one upstream
+    /// Minis ships. It used to be paraphrased here, and the paraphrase differed in
+    /// three places ("the earlier conversation", "(below or in the next turn)",
+    /// "numbers/scope"), so a session compacted by the driver and one compacted by
+    /// the store showed the model two different framings of the same fact. One
+    /// wording, one function.
     static func summaryEnvelope(_ summary: String) -> String {
-        """
-        <context-summary>
-        The following is a summary of earlier conversation that was compacted to save context space.
-
-        Treat it as background context only. The user's most recent message takes precedence — if it changes the task, the goal, or any numbers or scope, follow the new instruction and do not resume the old plan from this summary. Do not re-run discovery (reading memory, scanning skills, re-reading files) unless the new instruction requires it.
-
-        \(summary)
-        </context-summary>
-        """
+        AIChatViewModel.compactSummaryWrappedText(summary)
     }
 
     /// Render one entry as text for the summarizer.
