@@ -585,10 +585,28 @@ extension AIChatViewModel {
         // `agentHistory` for the rest of the turn. The store, which is what a
         // relaunch reads, is written either way.
         await dshEnqueueMarkerWrite { [weak self] in
-            await ChatStore.shared.deleteCompactMarkers(sessionId: sessionKey)
-            await ChatStore.shared.insertCompactMarker(marker)
+            // [P2] ONE transaction, not two statements. The delete and the insert
+            // used to be separate autocommit statements, so a kill between them left
+            // either a compacted surface with no marker (the compaction is lost on
+            // relaunch) or a session with no markers at all (the whole history comes
+            // back into the request). `replaceCompactMarker` commits them together
+            // and reports whether it did — upstream's replacement is one transaction
+            // too (`compaction/compaction-basic/src/region.ts:210-237`).
+            let committed = await ChatStore.shared.replaceCompactMarker(
+                sessionId: sessionKey, marker: marker)
             let latest = await ChatStore.shared.latestCompactMarker(sessionId: sessionKey)
             guard let self else { return }
+            if !committed {
+                // The table is unchanged, so the cache keeps whatever the store still
+                // holds — and the log says the record did not land, instead of claiming
+                // a compaction a relaunch would not restore.
+                AppLogger(category: "DSHLoop").error(
+                    "[DSH] compaction marker NOT written — the transaction rolled back "
+                    + "anchor=\(anchorId.prefix(8)) seq=\(seq) version=\(marker.version) "
+                    + "trigger=\(trigger) shadowed=\(count)"
+                )
+                return
+            }
             if trigger == "turnEnd" {
                 self.cachedLatestMarker = latest
             }

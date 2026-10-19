@@ -1176,13 +1176,29 @@ actor ChatStore {
     }
 
     private func exec(_ sql: String) {
+        _ = execSucceeded(sql)
+    }
+
+    /// `exec`, but the caller learns whether the statement ran.
+    ///
+    /// The one caller that needs the answer is a transaction's `BEGIN`/`COMMIT`
+    /// (`replaceCompactMarker`): "the statement was refused" and "the statement did
+    /// nothing" are the same non-event to `exec`, and a COMMIT that silently failed
+    /// is exactly the case that must fall back to ROLLBACK.
+    ///
+    /// - Parameter sql: one SQL statement.
+    /// - Returns: true when `sqlite3_exec` returned `SQLITE_OK`.
+    @discardableResult
+    private func execSucceeded(_ sql: String) -> Bool {
         var errMsg: UnsafeMutablePointer<CChar>?
         let result = sqlite3_exec(db, sql, nil, nil, &errMsg)
-        if result != SQLITE_OK {
+        guard result == SQLITE_OK else {
             let msg = errMsg.map { String(cString: $0) } ?? "unknown"
             logger.error("SQL error: \(msg)")
             sqlite3_free(errMsg)
+            return false
         }
+        return true
     }
 
     /// Returns true if `column` exists on `table`. Uses `PRAGMA table_info`.
@@ -4640,6 +4656,88 @@ actor ChatStore {
             sqlite3_step(stmt)
         }
         sqlite3_finalize(stmt)
+    }
+
+    /// Replace a session's compact markers with one record, as ONE transaction.
+    ///
+    /// [P2] The DSH marker write used to be `deleteCompactMarkers` followed by
+    /// `insertCompactMarker` — two autocommit statements, back to back, with the
+    /// process free to die between them. Both halves of that window are worse than
+    /// either statement on its own:
+    ///
+    ///   * the surface already carries the compaction but the marker never lands ⇒
+    ///     on relaunch the summary row is in the log and nothing tells the
+    ///     transcript or the model seed to keep it: the compaction is LOST;
+    ///   * the DELETE committed and the INSERT did not ⇒ the session has ZERO
+    ///     markers, so `effectiveAgentHistory()` falls back to the whole history
+    ///     and the entire compacted prefix comes back into the request.
+    ///
+    /// Upstream never has this window because the replacement is one transaction
+    /// inside one function — one `compaction/start`, the summary, one
+    /// `compaction/end`
+    /// (`packages/compaction/compaction-basic/src/region.ts:210-239`) — so this app
+    /// matches it with a real SQLite transaction rather than with statement order.
+    ///
+    /// The delete half keeps `deleteCompactMarkers`' iCloud semantics exactly: every
+    /// row that is about to disappear is marked dirty (`operation: "delete"`) BEFORE
+    /// it goes, which is what stops a cloud fetch from repopulating it. Both dirty
+    /// marks therefore land inside the same transaction as the rows they describe.
+    ///
+    /// - Parameters:
+    ///   - sessionId: session whose marker set is replaced.
+    ///   - marker: the record to land.
+    /// - Returns: true when the transaction committed; false when SQLite refused it,
+    ///   in which case the table is exactly as it was.
+    @discardableResult
+    func replaceCompactMarker(sessionId: String, marker: CompactMarker) -> Bool {
+        // IMMEDIATE, not DEFERRED: the write lock is taken before the first read,
+        // so the row list this replaces cannot be changed by another connection
+        // between the SELECT inside `deleteCompactMarkers` and the INSERT.
+        guard execSucceeded("BEGIN IMMEDIATE TRANSACTION") else { return false }
+        deleteCompactMarkers(sessionId: sessionId)
+        insertCompactMarker(marker)
+        // Commit only what is observably true. Both halves report a statement
+        // failure by logging and returning nothing, so the post-state is the only
+        // witness that the pair landed — and the pair is exactly "one marker, and it
+        // is this one". A delete that landed while the insert did not is the second
+        // of the two windows this function exists to close; inside one transaction it
+        // must roll back rather than commit.
+        guard compactMarkerIds(sessionId: sessionId) == [marker.id] else {
+            exec("ROLLBACK")
+            logger.error(
+                "[ChatStore] replaceCompactMarker rolled back: sid=\(sessionId.prefix(8)) "
+                + "marker=\(marker.id.prefix(8)) — the post-state is not one marker")
+            return false
+        }
+        guard execSucceeded("COMMIT") else {
+            exec("ROLLBACK")
+            logger.error(
+                "[ChatStore] replaceCompactMarker rolled back: sid=\(sessionId.prefix(8)) "
+                + "marker=\(marker.id.prefix(8)) — COMMIT was refused")
+            return false
+        }
+        return true
+    }
+
+    /// Ids of every marker row a session holds, for the transactional replace's
+    /// post-state check.
+    ///
+    /// Order is irrelevant: after a replace the session is supposed to hold one row,
+    /// and the caller compares the whole list rather than a "latest" read, because a
+    /// leftover second row is precisely the state that must not commit.
+    private func compactMarkerIds(sessionId: String) -> [String] {
+        let sql = "SELECT id FROM compact_markers WHERE session_id = ?"
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        sqlite3_bind_text(stmt, 1, (sessionId as NSString).utf8String, -1, nil)
+        var ids: [String] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if let value = sqlite3_column_text(stmt, 0) {
+                ids.append(String(cString: value))
+            }
+        }
+        return ids
     }
 
     // MARK: - WebApp Shortcuts
