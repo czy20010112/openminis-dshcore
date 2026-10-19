@@ -696,6 +696,11 @@ final class DSHContextBreakdownStore: ObservableObject {
     ///   - windowTokens: the capacity this request was planned against — the
     ///     driver's own `config.contextWindow`, i.e. the `window=` figure of its
     ///     turn-start line. nil when no capacity resolved.
+    /// - Returns: the breakdown just recorded. The driver prices its own envelope
+    ///   from the same three inputs, and handing the value back is what keeps the
+    ///   TWO consumers of "the envelope" (this store's occupancy projection and
+    ///   the driver's `PricedRequest`) on one denominator instead of two.
+    @discardableResult
     func record(
         systemPrompt: String,
         tools: [DSHToolSchema],
@@ -705,7 +710,7 @@ final class DSHContextBreakdownStore: ObservableObject {
         provider: String,
         sessionKey: String?,
         windowTokens: Int? = nil
-    ) {
+    ) -> DSHContextBreakdown {
         // A report that names no session is attributed to the bound one rather
         // than stored unnamed: an unnamed record is refused by every reader and
         // is then dropped by the receipt that follows it, which is what emptied
@@ -741,6 +746,7 @@ final class DSHContextBreakdownStore: ObservableObject {
         // back to the durable receipt on the newest assistant row.
         DSHContextUsageStore.shared.bind(sessionKey: sessionKey)
         DSHContextUsageStore.shared.rebase(envelopeTokens: next.estimatedTotal)
+        return next
     }
 
     /// Record one response's own accounting.
