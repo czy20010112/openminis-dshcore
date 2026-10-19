@@ -1155,10 +1155,11 @@ public final class DSHTurnDriver {
                 pressureThreshold: spec.thresholdTokens,
                 measuredTokens: measured,
                 model: provider.model.id,
-                provider: provider.name
-            ) { [weak self] shadowedText in
+                provider: provider.name,
+                summaryTools: summaryToolRoster()
+            ) { [weak self] input in
                 guard let self else { throw DSHCompactionError.summaryFailed("driver deallocated") }
-                return try await self.summarize(shadowedText)
+                return try await self.summarize(input)
             }
 
             switch result {
@@ -1384,10 +1385,11 @@ public final class DSHTurnDriver {
             pressureThreshold: 0,
             measuredTokens: 0,
             model: provider.model.id,
-            provider: provider.name
-        ) { [weak self] shadowedText in
+            provider: provider.name,
+            summaryTools: summaryToolRoster()
+        ) { [weak self] input in
             guard let self else { throw DSHCompactionError.summaryFailed("driver deallocated") }
-            return try await self.summarize(shadowedText)
+            return try await self.summarize(input)
         }
 
         switch result {
@@ -1608,12 +1610,18 @@ public final class DSHTurnDriver {
 
     /// Output ceiling one summary request reserves, at full size.
     ///
-    /// Unchanged policy: the summarizer is asked for a condensation of the
-    /// excerpt, and this is the figure the driver has always sent to a route
-    /// large enough to spend it. `summarizeOutputCeiling(contextWindow:)` is what
-    /// the request actually carries, because a window that cannot afford 4,096
-    /// tokens of output must not be asked for them.
-    static let summarizeMaxOutputTokens = 4096
+    /// 65,536 IS UPSTREAM'S FIGURE, not this app's own: `SummarizationConfig.maxTokens`
+    /// defaults to `summarizeMaxTokens: 65_536`
+    /// (`packages/compaction/compaction-basic/src/config.ts:76`) and
+    /// `summarizeWithLlm` sends it as the request's `maxTokens`
+    /// (`summarizer.ts:158`). It used to be 4,096 here, which is the value the
+    /// driver happened to have grown for a different job — keeping a small route
+    /// from reserving a quarter of its window — and that adaptation is now the
+    /// SECOND clamp rather than the figure itself: `summarizeOutputCeiling`
+    /// takes the smaller of this, the route's own output cap, and a quarter of
+    /// the window. A route that can spend 65,536 does; one that cannot is asked
+    /// for what it can.
+    static let summarizeMaxOutputTokens = 65_536
 
     /// The least output a summary request may reserve.
     static let summarizeMinOutputTokens = 1024
@@ -1674,16 +1682,37 @@ public final class DSHTurnDriver {
 
     /// The output ceiling for one route.
     ///
-    /// 4,096 normally. A window small enough that the ceiling would otherwise
-    /// leave no room for the excerpt is asked for a quarter of itself instead,
-    /// and never for less than 1,024: a small route must still be able to
-    /// compact, and "no summary is possible on this model" is the outcome this
-    /// exists to avoid.
+    /// Upstream sends `config.maxTokens` — 65,536 by default (`config.ts:76`,
+    /// `summarizer.ts:158`) — and never adapts it. This app must, in two ways, and
+    /// both are clamps on that figure rather than replacements for it:
     ///
-    /// - Parameter contextWindow: capacity of the routed model.
+    ///   * **the route's own output cap** (`routeOutputCap`). The summary request
+    ///     goes through `streamAgentMessageClamped`, whose contract is that the
+    ///     caller has already clamped `maxTokens` to the model's effective
+    ///     maximum. Asking a route whose cap is 8,192 for 65,536 is a request the
+    ///     provider rejects or silently truncates — and a truncated summary is
+    ///     refused as a failure (`summarizeSegment`), so the compaction would
+    ///     never succeed on such a route.
+    ///   * **a quarter of the window**, kept from the previous rule so a small
+    ///     route cannot spend its whole capacity on output: the summary request
+    ///     also has to carry the replayed conversation plus the tool roster.
+    ///
+    /// The floor stays 1,024 — a small route must still be able to compact, and
+    /// "no summary is possible on this model" is the outcome this exists to
+    /// avoid. `routeOutputCap <= 0` is read as "no declared cap" and clamps
+    /// nothing, which is the same convention `DSHTokenEstimate`'s callers use for
+    /// an unknown capacity.
+    ///
+    /// - Parameters:
+    ///   - contextWindow: capacity of the routed model.
+    ///   - routeOutputCap: output tokens ONE routed request of this turn may emit
+    ///     (`DSHTurnDriverConfig.maxTokens` in the driver, `dynamicMaxTokens(...)`
+    ///     in `/compact`).
     /// - Returns: output tokens one summary request reserves.
-    static func summarizeOutputCeiling(contextWindow: Int) -> Int {
-        max(summarizeMinOutputTokens, min(summarizeMaxOutputTokens, contextWindow / 4))
+    static func summarizeOutputCeiling(contextWindow: Int, routeOutputCap: Int) -> Int {
+        var ceiling = min(summarizeMaxOutputTokens, max(summarizeMinOutputTokens, contextWindow / 4))
+        if routeOutputCap > 0 { ceiling = min(ceiling, routeOutputCap) }
+        return max(summarizeMinOutputTokens, ceiling)
     }
 
     /// The headroom held under one route's window.
@@ -1699,19 +1728,25 @@ public final class DSHTurnDriver {
         max(summarizeMinSafetyMarginTokens, min(summarizeSafetyMarginTokens, contextWindow / 64))
     }
 
-    /// The largest excerpt one summary request may carry, in estimator units.
+    /// The largest region one summary request may carry, in estimator units.
     ///
-    /// The assertion this exists to make, stated in the units the segmenting
-    /// works in: one segment's estimated tokens, times the meter ratio, must not
-    /// exceed `window − maxOutput − margin`.
+    /// The assertion this exists to make, stated in the units the regioning works
+    /// in: one request's estimated tokens — its messages, its tool roster, and
+    /// the directive — must not exceed `window − maxOutput − margin` once the
+    /// meter's error is priced in.
     ///
     /// - Parameters:
     ///   - contextWindow: capacity of the routed model.
+    ///   - routeOutputCap: output tokens one routed request of this turn may emit.
     ///   - meterRatio: provider tokens per estimator token.
-    /// - Returns: the per-segment budget in `DSHTokenEstimate` units.
-    static func summarizeInputBudgetTokens(contextWindow: Int, meterRatio: Double) -> Int {
+    /// - Returns: the per-request budget in `DSHTokenEstimate` units.
+    static func summarizeInputBudgetTokens(
+        contextWindow: Int,
+        routeOutputCap: Int,
+        meterRatio: Double
+    ) -> Int {
         let requestable = contextWindow
-            - summarizeOutputCeiling(contextWindow: contextWindow)
+            - summarizeOutputCeiling(contextWindow: contextWindow, routeOutputCap: routeOutputCap)
             - summarizeSafetyMargin(contextWindow: contextWindow)
         guard requestable > 0 else { return 0 }
         let ratio = max(1, meterRatio)
@@ -1852,6 +1887,200 @@ public final class DSHTurnDriver {
         return String(text.prefix(headChars)) + marker + String(text.suffix(tailChars))
     }
 
+    // MARK: - Region Fitting
+
+    /// One summary request's worth of a shadowed region.
+    ///
+    /// The message-level counterpart of the old text segment: what a request
+    /// carries, measured, plus how much of the region had to be left out of it.
+    struct DSHSummarySegment {
+        /// The messages this request carries, in surface order.
+        ///
+        /// May begin with one explicit omission note and may contain one
+        /// head+tail excerpt in place of a group that could not be replayed —
+        /// both are ordinary `user` messages, so the request keeps upstream's
+        /// shape (`summarizer.ts:145-151`) all the way down to the truncation.
+        var messages: [AgentMessage]
+        /// Estimated tokens this request spends on the region.
+        var regionTokens: Int
+        /// Surface entries that are NOT replayed whole in this request.
+        var omittedEntries: Int
+    }
+
+    /// The estimator allowance one omission note is charged.
+    ///
+    /// The note is ~150 characters ≈ 42 estimator tokens; 64 leaves room for a
+    /// six-digit token count and a two-digit entry count without re-measuring it
+    /// inside the fitter's loop. Reserved from the budget BEFORE the kept entries
+    /// are chosen, so a note can never push a request over.
+    static let summaryOmissionNoteAllowanceTokens = 64
+
+    /// The note a request carries when part of its region is not in it.
+    ///
+    /// Wording mirrors `summaryHeadTailExcerpt`'s marker on purpose: whichever
+    /// shape the omission takes, the model reads the same sentence — "this much
+    /// is missing, and here is why" — rather than one form that says so and one
+    /// that silently drops text.
+    ///
+    /// - Parameters:
+    ///   - omittedTokens: estimated tokens of the entries left out.
+    ///   - omittedEntries: how many entries were left out.
+    /// - Returns: the note, as one standalone paragraph.
+    static func summaryOmissionNote(omittedTokens: Int, omittedEntries: Int) -> String {
+        summaryExcerptSeparator
+            + "<omitted \(max(1, omittedTokens)) tokens> \(max(1, omittedEntries)) earlier "
+            + "entries of this range are too large to replay in one request; they are not "
+            + "in this excerpt"
+            + summaryExcerptSeparator
+    }
+
+    /// Split a replayed region into at most `maxSegments` request-sized segments.
+    ///
+    /// The unit is the SURFACE ENTRY, not rendered text: a request now carries
+    /// messages (`DSHSummaryInput`), so a segment boundary has to fall between two
+    /// entries — and at a tool-pairing balanced one, or the provider rejects the
+    /// request for stranding a `tool_result`. `DSHToolPairing.cutBalances` gives
+    /// every cut position, and the selection that produced the region already
+    /// guarantees its first and last cuts are balanced, so a walk that only ever
+    /// cuts on `true` stays valid end to end.
+    ///
+    /// THE CAP IS THE BRIEF'S GUARD. Upstream sends a region in one request
+    /// (`summarizer.ts:145-151`) because its meter is exact. This app's is not,
+    /// so the region is chunked while the chunks fit the budget; the moment the
+    /// region needs more than `maxSegments` requests, everything past the cap is
+    /// folded into ONE request by `fold` — drop the oldest entries from that
+    /// remainder, keep the newest that fit, and put an explicit omission note in
+    /// front. `maxSegments == 1` therefore produces exactly the one-request shape
+    /// with the drop-oldest guard, which is the behaviour the plan called for;
+    /// the shipped value keeps today's coverage on the corpus the device recorded
+    /// (the 09:17 compaction's region needed three).
+    ///
+    /// - Parameters:
+    ///   - input: the region to fit.
+    ///   - budgetTokens: per-request budget, in `DSHTokenEstimate` units, for the
+    ///     region. `summarizeExcerpt` has already taken the tool roster off.
+    ///   - maxSegments: upper bound on the number of requests.
+    /// - Returns: one segment per request, in region order.
+    static func summarySegments(
+        _ input: DSHSummaryInput,
+        budgetTokens: Int,
+        maxSegments: Int
+    ) -> [DSHSummarySegment] {
+        let budget = max(1, budgetTokens)
+        // Degraded mode: a region with no entries to budget over. `DSHSummaryInput`
+        // is assembled from surface entries, so this only fires for a caller that
+        // built one from text — and there the text segmenter is still the rule.
+        guard !input.entries.isEmpty, input.entries.count == input.messages.count else {
+            return chunkSummaryExcerpt(
+                input.renderedText,
+                budgetTokens: budget,
+                maxSegments: maxSegments
+            ).map { piece in
+                DSHSummarySegment(
+                    messages: [AgentMessage(role: .user, parts: [.text(piece)])],
+                    regionTokens: DSHTokenEstimate.tokens(forText: piece),
+                    omittedEntries: 0
+                )
+            }
+        }
+
+        let estimates = input.entries.map { DSHTokenEstimate.tokens(for: $0) }
+        let cuts = DSHToolPairing.cutBalances(input.entries)
+        let texts = input.entryTexts
+        let total = estimates.reduce(0, +)
+
+        func whole(_ range: Range<Int>) -> DSHSummarySegment {
+            DSHSummarySegment(
+                messages: Array(input.messages[range]),
+                regionTokens: estimates[range].reduce(0, +),
+                omittedEntries: 0
+            )
+        }
+
+        // Keep the newest entries of `range` that fit `room`, drop the rest, and
+        // say so. The cut is walked forward to a balanced position: dropping MORE
+        // than the budget requires is safe, keeping an unpaired tool result is not.
+        func fold(_ range: Range<Int>) -> DSHSummarySegment {
+            let rangeTotal = estimates[range].reduce(0, +)
+            guard rangeTotal > budget else { return whole(range) }
+            let room = max(1, budget - summaryOmissionNoteAllowanceTokens)
+            var keepFrom = range.upperBound
+            var kept = 0
+            var index = range.upperBound
+            while index > range.lowerBound {
+                let cost = estimates[index - 1]
+                if kept + cost > room { break }
+                kept += cost
+                index -= 1
+                keepFrom = index
+            }
+            while keepFrom < range.upperBound, !cuts[keepFrom] { keepFrom += 1 }
+            guard keepFrom < range.upperBound else {
+                // Even the newest entry alone is over the budget. One entry that
+                // cannot be replayed is the case `summaryHeadTailExcerpt` already
+                // answers, so it becomes one excerpt message — explicit about its
+                // own middle — instead of a request that cannot be sent.
+                let excerpt = summaryHeadTailExcerpt(
+                    texts[range.upperBound - 1],
+                    budgetTokens: room
+                )
+                return DSHSummarySegment(
+                    messages: [AgentMessage(role: .user, parts: [.text(excerpt)])],
+                    regionTokens: DSHTokenEstimate.tokens(forText: excerpt),
+                    omittedEntries: range.count - 1
+                )
+            }
+            let dropped = range.lowerBound..<keepFrom
+            let note = summaryOmissionNote(
+                omittedTokens: estimates[dropped].reduce(0, +),
+                omittedEntries: dropped.count
+            )
+            var messages = [AgentMessage(role: .user, parts: [.text(note)])]
+            messages.append(contentsOf: input.messages[keepFrom..<range.upperBound])
+            return DSHSummarySegment(
+                messages: messages,
+                regionTokens: kept + DSHTokenEstimate.tokens(forText: note),
+                omittedEntries: dropped.count
+            )
+        }
+
+        if total <= budget { return [whole(0..<estimates.count)] }
+
+        // Walk forward, closing each group before the entry that would overflow
+        // it, at the nearest balanced cut at or before that entry.
+        var groups: [Range<Int>] = []
+        var start = 0
+        var index = 0
+        var accumulated = 0
+        while index < estimates.count {
+            let cost = estimates[index]
+            if accumulated > 0, accumulated + cost > budget {
+                var cut = index
+                while cut > start, !cuts[cut] { cut -= 1 }
+                if cut > start {
+                    groups.append(start..<cut)
+                    start = cut
+                    accumulated = 0
+                    index = cut
+                    continue
+                }
+            }
+            accumulated += cost
+            index += 1
+        }
+        groups.append(start..<estimates.count)
+
+        // EVERY group goes through `fold`, not just the capped remainder: the walk
+        // can only cut BETWEEN entries, so a group is over budget whenever one
+        // entry alone is — a single 300 KB tool result, which no meter would fit
+        // and no cut can shrink. `fold` is a no-op on a group that fits.
+        let cap = max(1, maxSegments)
+        guard groups.count > cap else { return groups.map(fold) }
+        var segments = Array(groups.prefix(cap - 1)).map(fold)
+        segments.append(fold(groups[cap - 1].lowerBound..<estimates.count))
+        return segments
+    }
+
     // MARK: - Summarization
 
     /// Ask the model to summarize the shadowed content.
@@ -1890,53 +2119,74 @@ public final class DSHTurnDriver {
     /// stays over threshold, which is what makes the next step's pressure check
     /// retry the compaction instead of losing the range.
     ///
-    /// - Parameter text: the rendered shadowed excerpt.
+    /// - Parameter input: the replayed region and its tool roster.
     /// - Returns: the summary, non-empty by construction.
     /// - Throws: `DSHCompactionError.summaryFailed` when there is no window to
     ///   budget against, or when a segment produced no text.
-    private func summarize(_ text: String) async throws -> String {
+    private func summarize(_ input: DSHSummaryInput) async throws -> String {
         guard let window = config.contextWindow, window > 0 else {
             throw DSHCompactionError.summaryFailed("no context capacity to summarize against")
         }
         return try await Self.summarizeExcerpt(
-            text,
+            input,
             contextWindow: window,
+            routeOutputCap: config.maxTokens,
             meterRatio: summaryMeterRatioNow(),
             provider: provider,
             logCategory: "CompactDiag"
         )
     }
 
-    /// One excerpt in, one summary out — the ONE summary request this app sends,
-    /// on either loop.
+    /// One replayed region in, one summary out — the ONE summary request this
+    /// app sends, on either loop.
     ///
     /// WHY THIS IS SHARED RATHER THAN THE DRIVER'S OWN. `/compact` used to send
     /// the whole shadowed range as ONE request with a fixed `maxTokens: 4096`
     /// (`DSHCommandCompact.dshCompactSummarize`), while this driver had already
     /// learned what that shape gets wrong: the output ceiling has to scale with the
     /// route (`summarizeOutputCeiling`), a margin has to stay under the window
-    /// (`summarizeSafetyMargin`), the excerpt has to be split to fit what is left
+    /// (`summarizeSafetyMargin`), the region has to be fitted to what is left
     /// after converting for the meter's error (`summarizeInputBudgetTokens`), and
-    /// past `summarizeMaxSegments` the middle has to be omitted EXPLICITLY
-    /// (`summaryHeadTailExcerpt`) rather than silently. Two implementations meant
+    /// what does not fit has to be omitted EXPLICITLY (`summaryOmissionNote`,
+    /// `summaryHeadTailExcerpt`) rather than silently. Two implementations meant
     /// the same span produced two different requests, and the manual one was the
     /// unbounded one — the 1,783,917-byte request the engine rejected is exactly
     /// that shape, one path over. So there is one implementation and two callers;
-    /// each caller supplies ONLY the pair of facts it owns: which provider to route
-    /// through, and which window to budget against.
+    /// each caller supplies ONLY the facts it owns: which provider to route
+    /// through, which window and output cap to budget against, and the tool
+    /// roster its own registry declares.
     ///
     /// Upstream's analogue is `summarizeWithLlm` + the `SummarizationInput` it is
     /// given (`packages/compaction/compaction-basic/src/summarizer.ts:120-181`):
-    /// one auxiliary call, replayed conversation where the excerpt is, the
-    /// compaction directive last (`:145-157`), the output ceiling as `maxTokens`
-    /// (`:158`), an empty summary thrown (`:169-171`) and a `max-tokens` finish
-    /// thrown (`:203-206`). The segmentation below is this app's addition — the
-    /// engine can send a region in one request because its meter is exact, and this
+    /// one auxiliary call, the replayed conversation prefix as the messages, the
+    /// compaction directive last (`:145-151`), the output ceiling as `maxTokens`
+    /// (`:158`), the conversation's tool schemas alongside (`:152-162`), an empty
+    /// summary thrown (`:169-171`) and a `max-tokens` finish thrown
+    /// (`:203-206`). The region fitting below is this app's addition — the engine
+    /// can send a region in one request because its meter is exact, and this
     /// app's estimator is not — but every refusal upstream makes is made here.
     ///
+    /// DEVIATION WITH EVIDENCE — the durable envelope. Upstream frames the
+    /// LANDED checkpoint as `CHECKPOINT_PREAMBLE + <compacted-summary> … </compacted-summary>`
+    /// (`summarizer.ts:22-23` for the tags, `:26-30` for the preamble, `:70-71`
+    /// and `:188-194` for `frameSummary`), and this app still frames it as
+    /// `<context-summary>` via `DSHCompaction.summaryEnvelope` →
+    /// `AIChatViewModel.compactSummaryWrappedText`. That is deliberate:
+    /// **the reload path re-wraps a stored summary with the same function**
+    /// (`AIChatViewModel+Persistence.swift`, both the marker write and the
+    /// re-injection), so changing the live wording without changing that one would
+    /// leave a conversation whose summary reads differently after a relaunch than
+    /// it did in the reply that produced it. The envelope is therefore upstream's
+    /// in shape (a framed background block) and this app's in literal, and it is
+    /// the one place in this function where upstream's exact bytes are not copied.
+    /// The INSTRUCTION (`DSHCompactionInstruction`) is copied byte for byte.
+    ///
     /// - Parameters:
-    ///   - text: the rendered shadowed excerpt.
+    ///   - input: the replayed region — its messages, its system head, its tool
+    ///     roster, and the entries those messages were projected from.
     ///   - window: capacity of the routed model.
+    ///   - routeOutputCap: output tokens one routed request of this turn may emit;
+    ///     the summary request's `maxTokens` is clamped to it.
     ///   - ratio: provider tokens per `DSHTokenEstimate` token.
     ///   - provider: the route the request is sent on.
     ///   - logCategory: the `AppLogger` category the three diagnostic lines are
@@ -1948,43 +2198,65 @@ public final class DSHTurnDriver {
     ///   request, when a segment produced no text or was truncated at the output
     ///   cap, or when the assembled summary is empty.
     static func summarizeExcerpt(
-        _ text: String,
+        _ input: DSHSummaryInput,
         contextWindow window: Int,
+        routeOutputCap: Int,
         meterRatio ratio: Double,
         provider: any AgentProvider,
         logCategory: String
     ) async throws -> String {
         let diag = AppLogger(category: logCategory)
         let tag = "[\(logCategory)] "
-        let ceiling = Self.summarizeOutputCeiling(contextWindow: window)
+        let ceiling = Self.summarizeOutputCeiling(
+            contextWindow: window,
+            routeOutputCap: routeOutputCap
+        )
         let margin = Self.summarizeSafetyMargin(contextWindow: window)
-        let budget = Self.summarizeInputBudgetTokens(contextWindow: window, meterRatio: ratio)
+        let budget = Self.summarizeInputBudgetTokens(
+            contextWindow: window,
+            routeOutputCap: routeOutputCap,
+            meterRatio: ratio
+        )
         guard budget > 0 else {
             let limits = "window=\(window) maxOutput=\(ceiling) margin=\(margin)"
             throw DSHCompactionError.summaryFailed("no summary input budget: \(limits)")
         }
 
-        let segments = Self.chunkSummaryExcerpt(
-            text,
-            budgetTokens: budget,
+        // The roster rides in the request and cannot be shrunk with the region,
+        // so it comes off the budget before the region is measured. Leaving it out
+        // prices every request low by the roster's whole cost — on this app's
+        // roster that is ~14k tokens, i.e. exactly the overshoot that produced the
+        // 2026-10-19 rejection the budget exists to prevent.
+        let toolTokens = DSHTokenEstimate.tokens(forTools: input.tools)
+        let regionBudget = budget - toolTokens
+
+        let segments = Self.summarySegments(
+            input,
+            budgetTokens: max(1, regionBudget),
             maxSegments: Self.summarizeMaxSegments
         )
         guard !segments.isEmpty else {
-            throw DSHCompactionError.summaryFailed("nothing to summarize (excerptChars=\(text.count))")
+            throw DSHCompactionError.summaryFailed(
+                "nothing to summarize (excerptChars=\(input.renderedText.count))"
+            )
         }
         // The assertion, in the numbers that will appear in the log: the largest
-        // segment, times the ratio, is what the engine will charge for it, and it
-        // has to fit beside the output reservation and the margin. `excerptTokens`
-        // is what the range costs the estimator; the provider figure is that times
-        // the ratio.
-        let excerptTokens = DSHTokenEstimate.tokens(forText: text)
-        let largest = segments.map { DSHTokenEstimate.tokens(forText: $0) }.max() ?? 0
+        // request's region, times the ratio, plus the roster, is what the engine
+        // will charge for it, and it has to fit beside the output reservation and
+        // the margin. `excerptTokens` is what the range costs the estimator; the
+        // provider figure is that times the ratio.
+        let excerptTokens = DSHTokenEstimate.tokens(forText: input.renderedText)
+        let largest = segments.map { $0.regionTokens }.max() ?? 0
         let providerEquivalent = Int((Double(largest) * ratio).rounded())
         let requestable = window - ceiling - margin
-        let plan = "excerptChars=\(text.count) excerptTokensEst=\(excerptTokens) "
-            + "segments=\(segments.count) budgetEst=\(budget) ratio=\(ratio) "
+        let omittedEntries = segments.reduce(0) { $0 + $1.omittedEntries }
+        let plan = "excerptChars=\(input.renderedText.count) excerptTokensEst=\(excerptTokens) "
+            + "segments=\(segments.count) budgetEst=\(budget) "
+            + "regionBudgetEst=\(max(1, regionBudget)) toolEst=\(toolTokens) ratio=\(ratio) "
             + "largestSegmentEst=\(largest) largestSegmentProviderEst=\(providerEquivalent) "
-            + "requestable=\(requestable)"
+            + "requestable=\(requestable) omittedEntries=\(omittedEntries) "
+            + "messages=\(input.messages.count) tools=\(input.tools.count) "
+            + "systemChars=\(input.systemPrompt?.count ?? 0) maxTokens=\(ceiling)"
         diag.warning(tag + "summary request planned: \(plan)")
 
         var parts: [String] = []
@@ -1997,6 +2269,8 @@ public final class DSHTurnDriver {
             try Task.checkCancellation()
             let produced = try await Self.summarizeSegment(
                 segment,
+                systemPrompt: input.systemPrompt,
+                tools: input.tools,
                 index: index + 1,
                 of: segments.count,
                 outputCeiling: ceiling,
@@ -2005,11 +2279,13 @@ public final class DSHTurnDriver {
             let trimmed = produced.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else {
                 diag.warning(tag + "summary segment produced no text: summaryChars=0 "
-                    + "segment=\(index + 1)/\(segments.count) excerptChars=\(segment.count) "
+                    + "segment=\(index + 1)/\(segments.count) "
+                    + "excerptChars=\(segment.regionTokens) tokens "
                     + "— refusing the compaction rather than shadowing with an empty summary")
                 throw DSHCompactionError.summaryFailed(
                     "empty summary (summaryChars=0, segment \(index + 1)/\(segments.count), "
-                        + "excerptChars=\(segment.count))"
+                        + "excerptEst=\(segment.regionTokens) tokens, "
+                        + "messages=\(segment.messages.count))"
                 )
             }
             parts.append(trimmed)
@@ -2021,22 +2297,33 @@ public final class DSHTurnDriver {
             throw DSHCompactionError.summaryFailed("empty summary (summaryChars=0)")
         }
         diag.warning(tag + "summary generated: summaryChars=\(summaryChars) "
-            + "segments=\(segments.count) excerptChars=\(text.count)")
+            + "segments=\(segments.count) excerptChars=\(input.renderedText.count)")
         return summary
     }
 
-    /// One summary request: one segment of the shadowed excerpt.
+    /// One summary request: one segment of the shadowed region.
     ///
-    /// The instruction is byte-identical to the single-request form; a segment
-    /// only adds the line that tells the model which part it is reading, so a
-    /// compaction that needs one request sends exactly what it always sent — and
-    /// `/compact`, which now calls this too, sends exactly what the driver sends
+    /// THE REQUEST IS UPSTREAM'S SHAPE, not "one excerpt": the segment's messages
+    /// are the conversation's own (the same parts the routed request replays), the
+    /// derived system head is passed as a system prompt, the conversation's tool
+    /// roster rides along, and the compaction directive is the FINAL user message
+    /// (`packages/compaction/compaction-basic/src/summarizer.ts:145-151`). There
+    /// is no summarizer system prompt and no `<excerpt>` wrapper: the directive
+    /// says what to produce, and the replayed conversation above it is the thing
+    /// to condense.
+    ///
+    /// The instruction is the same text for every request; a segment only adds a
+    /// line that tells the model which part it is reading, so a compaction that
+    /// needs one request sends exactly what a single-request compaction sends —
+    /// and `/compact`, which calls this too, sends exactly what the driver sends
     /// for the same span.
     ///
     /// - Parameters:
-    ///   - segment: the excerpt text this request carries.
+    ///   - segment: the messages this request carries.
+    ///   - systemPrompt: the derived system head, or nil.
+    ///   - tools: the conversation's tool roster.
     ///   - index: 1-based position of this segment.
-    ///   - count: how many segments the excerpt was split into.
+    ///   - count: how many segments the region was split into.
     ///   - outputCeiling: output tokens this route can reserve for the summary.
     ///   - provider: the route the request is sent on.
     /// - Returns: the text the model produced, which the caller requires to be
@@ -2044,35 +2331,26 @@ public final class DSHTurnDriver {
     /// - Throws: `DSHCompactionError.summaryFailed` when the stream's terminal
     ///   reason is the output cap.
     static func summarizeSegment(
-        _ segment: String,
+        _ segment: DSHSummarySegment,
+        systemPrompt: String?,
+        tools: [AgentToolDefinition],
         index: Int,
         of count: Int,
         outputCeiling: Int,
         provider: any AgentProvider
     ) async throws -> String {
-        let body = """
-        Summarize the conversation excerpt below. Preserve: decisions made, facts \
-        established, file paths and identifiers, current task state, and anything \
-        the next turn must know to continue. Drop: repeated attempts that failed, \
-        verbose tool output already superseded, and pleasantries.
-
-        Be concrete and terse. Do not address the user. Do not invent facts not \
-        present in the excerpt.
-
-        <excerpt>
-        \(segment)
-        </excerpt>
-        """
+        let body = DSHCompactionInstruction.text
         let instruction = count > 1
-            ? "This is segment \(index) of \(count) of one long excerpt. Summarize only this "
-                + "segment; the other segments are summarized separately.\n\n" + body
+            ? "This is segment \(index) of \(count) of one long conversation range. Summarize "
+                + "only this segment; the other segments are summarized separately.\n\n" + body
             : body
 
-        let messages = [AgentMessage(role: .user, parts: [.text(instruction)])]
+        var messages = segment.messages
+        messages.append(AgentMessage(role: .user, parts: [.text(instruction)]))
         let stream = try await provider.streamAgentMessageClamped(
             messages: messages,
-            systemPrompt: "You are a precise conversation summarizer.",
-            tools: [],
+            systemPrompt: systemPrompt,
+            tools: tools,
             maxTokens: outputCeiling,
             thinkingLevel: .off
         )
@@ -2107,6 +2385,21 @@ public final class DSHTurnDriver {
         var systemPrompt: String?
         var tools: [AgentToolDefinition]
         var thinkingLevel: ThinkingLevel
+    }
+
+    /// The tool roster a summary request replays.
+    ///
+    /// The same conversion `buildRequest` performs on the same registry
+    /// (`registry.schemas().map(DSHToolSchemaBridge.toAgentToolDefinition)`), named
+    /// once because a compaction now sends it too
+    /// (`DSHCompaction.compact(summaryTools:)` ← `region.ts:560`'s
+    /// `header.tools`). Two spellings of this conversion would let the summary
+    /// request advertise a different tool set than the conversation it is a
+    /// prefix of, which is exactly what the prefix-cache alignment is for.
+    ///
+    /// - Returns: this turn's provider-facing tool definitions, in registry order.
+    private func summaryToolRoster() -> [AgentToolDefinition] {
+        registry.schemas().map(DSHToolSchemaBridge.toAgentToolDefinition)
     }
 
     /// Build one step's request from the current surface.

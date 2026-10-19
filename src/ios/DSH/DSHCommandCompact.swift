@@ -224,10 +224,22 @@ extension AIChatViewModel {
                 pressureThreshold: 0,
                 measuredTokens: 0,
                 model: entry.model.id,
-                provider: provider.name
-            ) { [weak self] shadowedText in
+                provider: provider.name,
+                // The same roster the turn's own requests advertise
+                // (`DSHPromptAdapter.dshAgentTools` → `makeAgentTools`, which is
+                // what `runDSHTurn` hands the driver's registry). A summary request
+                // replays the conversation's prefix, tools included, so a manual
+                // compaction must send the same catalogue the automatic one does —
+                // otherwise the two paths produce different requests for one span,
+                // which is the split this port exists to remove.
+                summaryTools: self.dshAgentTools()
+            ) { [weak self] input in
                 guard let self else { throw DSHCompactionError.summaryFailed("view model deallocated") }
-                return try await self.dshCompactSummarize(shadowedText, contextWindow: window)
+                return try await self.dshCompactSummarize(
+                    input,
+                    contextWindow: window,
+                    routeOutputCap: reservedOutput
+                )
             }
 
             switch result {
@@ -326,21 +338,23 @@ extension AIChatViewModel {
         scrollToBottomSignal.send()
     }
 
-    /// Summarize one shadowed span for a manual compaction.
+    /// Summarize the shadowed region for a manual compaction.
     ///
     /// The request is the DRIVER'S request, not a second one: this forwards to
     /// `DSHTurnDriver.summarizeExcerpt`, which owns the output ceiling, the safety
-    /// margin, the per-segment excerpt budget, the segmentation itself, the
-    /// head+tail omission past the segment cap, the system prompt, the instruction
-    /// and the empty/truncated refusals. What this function supplies is only the
-    /// pair of facts a manual compaction owns — the provider it resolved for the
-    /// current entry, and the window the same `effectiveContextWindow` reports for
-    /// that entry (the figure `DSHTurnDriverRun` hands the driver as
-    /// `config.contextWindow`).
+    /// margin, the per-request region budget, the region fitting itself, the
+    /// explicit omission past the segment cap, the replayed messages, the derived
+    /// system head, the tool roster, the compaction directive and the
+    /// empty/truncated refusals. What this function supplies is only the facts a
+    /// manual compaction owns — the provider it resolved for the current entry, the
+    /// window the same `effectiveContextWindow` reports for that entry (the figure
+    /// `DSHTurnDriverRun` hands the driver as `config.contextWindow`), and the
+    /// output cap `dynamicMaxTokens` resolved for the same entry (the figure
+    /// `DSHTurnDriverRun` hands the driver as `config.maxTokens`).
     ///
     /// That delegation is the fix for a P0-shaped defect rather than tidying: the
     /// old body here sent the WHOLE shadowed excerpt as one request with a fixed
-    /// `maxTokens: 4096` and no segmentation, so the manual path carried exactly
+    /// `maxTokens: 4096` and no region fitting, so the manual path carried exactly
     /// the unbounded-request shape the driver's budget exists to prevent (a
     /// 1,783,917-byte summary request rejected with `context_length_exceeded`,
     /// device 2026-10-19 09:17:19) — it just had not been hit yet. The prompt is
@@ -348,10 +362,16 @@ extension AIChatViewModel {
     /// asks for its own structure and answers a different pipeline.
     ///
     /// - Parameters:
-    ///   - text: the rendered shadowed excerpt.
+    ///   - input: the replayed region (messages, system head, tool roster).
     ///   - contextWindow: capacity of the routed model.
+    ///   - routeOutputCap: output tokens one routed request may emit for this
+    ///     entry, as `dynamicMaxTokens` resolved it.
     /// - Returns: the summary, non-empty by construction.
-    private func dshCompactSummarize(_ text: String, contextWindow window: Int) async throws -> String {
+    private func dshCompactSummarize(
+        _ input: DSHSummaryInput,
+        contextWindow window: Int,
+        routeOutputCap: Int
+    ) async throws -> String {
         guard let entry = resolveCurrentEntry() else {
             throw DSHCompactionError.summaryFailed("No model configured. Add a provider in Settings.")
         }
@@ -366,7 +386,7 @@ extension AIChatViewModel {
         // this surface's estimator total. A manual compaction has no driver-owned
         // envelope to grow, so the count is used as it stands; when there is none —
         // a `/compact` before the session's first response — the ratio falls to the
-        // shipped floor, which is the conservative direction (a smaller per-segment
+        // shipped floor, which is the conservative direction (a smaller per-request
         // budget, more segments, never an oversized request).
         let measured = dshTurnUsage.inputTokens
             + (dshTurnUsage.cacheReadTokens ?? 0)
@@ -377,8 +397,9 @@ extension AIChatViewModel {
             surfaceEstimate: surfaceEstimate
         )
         return try await DSHTurnDriver.summarizeExcerpt(
-            text,
+            input,
             contextWindow: window,
+            routeOutputCap: routeOutputCap,
             meterRatio: ratio,
             provider: provider,
             logCategory: "DSHCompact"
