@@ -26,6 +26,18 @@ enum MarkdownStripper {
     private static let linkRe = regex("!?\\[([^\\]]*)\\]\\(([^)\\s]+)[^)]*\\)")
     private static let autolinkRe = regex("<(https?://[^>]+)>")
 
+    /// `<br>`, `</br>`, `<br/>`, `<br class="x">` → a space.
+    ///
+    /// [T-markdown-stripper-br-parity] Byte-for-byte the rule the iOS 15 tree
+    /// has had since `d3cfba6` (`OpenMinis-iOS15/src/ios/Shared/MarkdownStripper.swift:29`,
+    /// pattern `"<\\s*/?\\s*br\\b[^>]*>"`), including its replacement: a single
+    /// **space**, not a newline — the per-line pass below joins surviving lines
+    /// with spaces anyway, so a space is what main produces and this tree must
+    /// produce the same text (notification bodies and summaries are compared
+    /// across both lines). Without it, a "<br>" in model output survived into
+    /// every plain-text path as four literal characters.
+    private static let breakTagRe = regex("<\\s*/?\\s*br\\b[^>]*>")
+
     /// Inline emphasis/code spans, applied in order. Paired with the template
     /// the old `replacingOccurrences` call passed.
     private static let inlineRes: [(re: NSRegularExpression, template: String)] = [
@@ -104,6 +116,9 @@ enum MarkdownStripper {
         s = replacingAll(s, imageRe, "$1")
         s = rewriteLinks(s)
         s = replacingAll(s, autolinkRe, "$1")
+        // Same slot as main: after the whole-text passes, before the inline
+        // emphasis/code spans and before `inlinePassCap` truncates.
+        s = replacingAll(s, breakTagRe, " ")
 
         // See `inlinePassCap`. Character-indexed, so a grapheme is never split.
         if let cap = inlinePassCap, s.count > cap {
