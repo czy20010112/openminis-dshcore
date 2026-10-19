@@ -99,6 +99,47 @@ public enum DSHTokenEstimate {
             return total
         }
     }
+
+    /// Per-tool constant for the JSON punctuation and the `input_schema` /
+    /// `required` keys a text walk cannot count.
+    static let toolSchemaScaffoldingTokens = 8
+
+    /// Estimated tokens for the provider-facing roster, measured from what the
+    /// model is actually sent.
+    ///
+    /// The same measurement as `tokens(forToolSchemas:)`, over the other end of
+    /// `DSHToolSchemaBridge`: a summary request now carries the conversation's
+    /// own tool schemas (`compaction-basic/src/summarizer.ts:152-162` passes
+    /// `input.tools`, which `region.ts:560` takes from the last routed request's
+    /// header), and the roster is ~14k tokens that are part of the request but
+    /// part of nothing the region can shrink. A budget that ignores it prices
+    /// every summary request low by exactly that much — the same defect class
+    /// `summarizeMeterRatioFloor`'s comment documents for the excerpt.
+    ///
+    /// The walk is over the definition rather than over a serialized schema:
+    /// `AgentToolDefinition` holds a name, a description and a property map, and
+    /// this app has no `AgentToolDefinition` → `DSHToolSchema` conversion to
+    /// serialize from.
+    ///
+    /// INTERNAL, unlike its `[DSHToolSchema]` twin: `DSHToolSchema` is public and
+    /// `AgentToolDefinition` is not, so a `public` member would be the
+    /// "public … uses an internal type" error rather than a style choice. Only
+    /// this target measures a roster.
+    static func tokens(forTools tools: [AgentToolDefinition]) -> Int {
+        tools.reduce(0) { partial, tool in
+            var total = partial + tokens(forText: tool.name) + tokens(forText: tool.description)
+            for (name, parameter) in tool.parameters {
+                total += tokens(forText: name)
+                    + tokens(forText: parameter.type.rawValue)
+                    + tokens(forText: parameter.description)
+                if let values = parameter.enumValues {
+                    total += tokens(forText: values.joined(separator: ","))
+                }
+            }
+            total += tokens(forText: tool.required.joined(separator: ","))
+            return total + toolSchemaScaffoldingTokens
+        }
+    }
 }
 
 // MARK: - Trigger Policy
@@ -768,12 +809,27 @@ public enum DSHCompaction {
     ///     removes the gate (the provider-confirmed overflow path).
     ///   - measuredTokens: the priced request envelope `pressureThreshold` is
     ///     compared against. Must be the same value the caller gated on.
-    ///   - summarize: builds the summary for the shadowed content. Called with
-    ///     the surface text of the range being compacted.
+    ///   - summaryTools: the conversation's own tool roster, as the routed request
+    ///     carries it. Supplied by the caller because this function cannot see a
+    ///     registry: `DSHTurnDriver` passes what its `DSHToolRegistry` declares and
+    ///     `/compact` passes `dshAgentTools()`. Upstream takes the same value from
+    ///     the last routed request's header (`region.ts:548,560`), which is what
+    ///     makes the auxiliary call a prefix of the conversation.
+    ///   - summarize: builds the summary for the shadowed content. Called with the
+    ///     replayed region — its messages, the derived system head, and this
+    ///     roster — as `DSHSummaryInput`, never with a flattened excerpt.
     ///   - model / provider: recorded on the summary so "which model wrote this"
     ///     has a durable answer.
     /// - Returns: the outcome, or an error.
-    public static func compact(
+    ///
+    /// INTERNAL, not public. `summaryTools` is `[AgentToolDefinition]`, which is
+    /// internal to this target, and a public member may not name an internal type
+    /// — the exact "method cannot be declared public because its parameter uses an
+    /// internal type" error this project has already paid a CI round for
+    /// (`PIPELINE-NOTES.md` §3, and `preflight-swift.ps1`'s typecheck flags it).
+    /// Both callers are in this module, so internal is the honest declaration: the
+    /// `public` on this function was never load-bearing.
+    static func compact(
         session: DSHSession,
         turn: Int?,
         retainTokens: Int,
@@ -781,7 +837,8 @@ public enum DSHCompaction {
         measuredTokens: Int,
         model: String,
         provider: String,
-        summarize: @escaping @Sendable (String) async throws -> String
+        summaryTools: [AgentToolDefinition],
+        summarize: @escaping @Sendable (DSHSummaryInput) async throws -> String
     ) async -> Result<DSHCompactionOutcome, DSHCompactionError> {
         // Upstream's first act, before anything is read or selected
         // (`region.ts:183-189`): refuse while a compaction is already open. The
@@ -802,13 +859,15 @@ public enum DSHCompaction {
             return .failure(.noShrink)
         }
 
-        let shadowedText = surface[range.startIndex...range.endIndex]
-            .map { entry in Self.renderForSummary(entry) }
-            .joined(separator: "\n\n")
+        let input = await Self.summaryInput(
+            surface: surface,
+            range: range,
+            tools: summaryTools
+        )
 
         let summaryText: String
         do {
-            summaryText = try await summarize(shadowedText)
+            summaryText = try await summarize(input)
         } catch {
             return .failure(.summaryFailed(String(describing: error)))
         }
@@ -908,4 +967,233 @@ public enum DSHCompaction {
         }
         return lines.joined(separator: "\n")
     }
+}
+
+// MARK: - Summary Input Assembly
+
+/// The replayed conversation prefix one summary request carries.
+///
+/// The iOS counterpart of upstream's `SummarizationInput`
+/// (`packages/compaction/compaction-basic/src/summarizer.ts:79-84`) plus the
+/// region it was built from. Upstream's shape is
+/// `messages: [system?, ...regionMessages]` with the last routed request's
+/// tools beside it, and the compaction directive appended as the FINAL user
+/// message (`:145-151`) — not a separate "summarizer system prompt". This
+/// type is that prefix, with one structural difference the app's provider
+/// protocol forces: `AgentMessage.Role` has only `user` and `assistant`, so
+/// the derived system head cannot be a member of `messages` and rides in
+/// `systemPrompt` instead — which is exactly where
+/// `streamAgentMessageClamped` puts it, so the wire request still has the
+/// system message first.
+///
+/// INTERNAL, and so are its members. Its only use in a signature is
+/// `compact`, which is internal because it takes the internal
+/// `AgentToolDefinition` roster — and a public declaration may not name an
+/// internal type (`PIPELINE-NOTES.md` §3: that error has already cost a CI
+/// round). With no public signature naming this type, `public` here would be a
+/// no-op at best and a trap at worst.
+struct DSHSummaryInput {
+
+    /// The region's messages, in surface order, with no `system` role.
+    let messages: [AgentMessage]
+
+    /// The derived system head: the text of a `system` message at surface
+    /// node 0, or nil when the surface has none.
+    ///
+    /// Upstream reads it from the session's own `system/message` event
+    /// (`region.ts:551-552`). THIS APP'S SESSIONS DO NOT CARRY ONE — the
+    /// rendered system prompt is assembled per step (`DSHTurnDriver.buildRequest`)
+    /// and never appended to the log — so this is nil in the shipped
+    /// configuration. The parameter is kept because the rule is upstream's
+    /// and because a caller that does hold a head (a seeded session, a future
+    /// one that logs its prompt) must not need a second shape. See
+    /// `summaryInput(surface:range:tools:)`.
+    let systemPrompt: String?
+
+    /// The conversation's tool roster, reused for prefix-cache alignment.
+    ///
+    /// Absent when the routed request carried none — upstream models that as
+    /// an optional field (`summarizer.ts:79-84`) and omits the key rather
+    /// than sending `[]`.
+    let tools: [AgentToolDefinition]
+
+    /// The region rendered as text: `[role] text` lines per entry, entries
+    /// separated by `"\n\n"`.
+    ///
+    /// Not sent. It is the diagnostic figure (`excerptChars=`,
+    /// `excerptTokensEst=`) and the fallback rendering a region with no
+    /// entries is summarized from.
+    let renderedText: String
+
+    /// The surface entries `messages` were projected from, oldest first and
+    /// index-aligned with it.
+    ///
+    /// The budget is spent at THIS granularity: an `AgentMessage` cannot be
+    /// measured in the estimator's units (`DSHTokenEstimate.tokens(for:)`
+    /// reads blocks) and cannot be cut at a tool-pairing boundary without
+    /// inspecting `AgentContentPart` — an enum whose associated values differ
+    /// between the iOS 15 and iOS 26 lines, which is precisely why the two
+    /// files that touch it are the two the trees are allowed to differ in.
+    /// `DSHCompaction.swift` is byte-identical in both trees, so the region
+    /// travelling beside its projection is what lets one shared file budget,
+    /// trim and segment it without ever matching a part.
+    let entries: [DSHLogEntry]
+
+    init(
+        messages: [AgentMessage],
+        systemPrompt: String?,
+        tools: [AgentToolDefinition],
+        renderedText: String,
+        entries: [DSHLogEntry]
+    ) {
+        self.messages = messages
+        self.systemPrompt = systemPrompt
+        self.tools = tools
+        self.renderedText = renderedText
+        self.entries = entries
+    }
+
+    /// The region's rendered text, per entry, in the same order as `entries`.
+    var entryTexts: [String] {
+        entries.map { DSHCompaction.renderForSummary($0) }
+    }
+}
+
+extension DSHCompaction {
+
+    /// Build the request-shaped view of a selected range.
+    ///
+    /// One rendering of upstream's `buildSummarizationInput`
+    /// (`packages/compaction/compaction-basic/src/region.ts:544-563`):
+    ///
+    ///   * the system head is `systemHead(session, surface.nodes[0])` — node 0
+    ///     only, and only when it is a `system` message (`:99`, `:551-552`);
+    ///   * the region is `shadowedSeqs.map(session.deriveEventMessage).filter(non-null)`
+    ///     (`:553-558`) — every entry of the range, in surface order, projected
+    ///     the same way the conversation's own request projects it;
+    ///   * `tools` is the caller's roster (`:560`), because this function cannot
+    ///     see a registry.
+    ///
+    /// THE PROJECTION IS THE LOOP'S OWN. `DSHSessionProjection.toAgentMessage`
+    /// is what `DSHTurnDriver.projectMessages` and the view model both use, so a
+    /// summary request replays the same parts — the same verbatim tool-call
+    /// arguments (`AgentToolArguments.wire`), the same tool-result images, the
+    /// same roles — as the request it is a prefix of. It is `@MainActor`, and
+    /// this function is not, hence the single hop below; both callers of `compact`
+    /// are already on the main actor, so this costs a suspension, not a thread.
+    ///
+    /// - Parameters:
+    ///   - surface: the session's surface, oldest first.
+    ///   - range: the span being compacted, as `select` returned it.
+    ///   - tools: the conversation's own tool roster.
+    /// - Returns: the region as a request prefix.
+    static func summaryInput(
+        surface: [DSHLogEntry],
+        range: DSHCompactableRange,
+        tools: [AgentToolDefinition]
+    ) async -> DSHSummaryInput {
+        let entries = Array(surface[range.startIndex...range.endIndex])
+        let projected = await MainActor.run {
+            entries.map { DSHSessionProjection.toAgentMessage($0) }
+        }
+        // A message with no parts is not a message any provider accepts, and the
+        // loop's own projection drops it too (`projectMessages`, `guard !parts.isEmpty`).
+        // `toAgentMessage` returns one for an entry whose only blocks are a kind
+        // this line does not know. The two arrays are filtered TOGETHER so
+        // `entries[i]` stays the source of `messages[i]` — the budget is spent on
+        // the entries and the messages are sent, so an off-by-one here would
+        // budget one entry and send another.
+        var keptEntries: [DSHLogEntry] = []
+        var keptMessages: [AgentMessage] = []
+        for (entry, message) in zip(entries, projected) where !message.parts.isEmpty {
+            keptEntries.append(entry)
+            keptMessages.append(message)
+        }
+        let rendered = keptEntries.map { DSHCompaction.renderForSummary($0) }
+            .joined(separator: "\n\n")
+        return DSHSummaryInput(
+            messages: keptMessages,
+            systemPrompt: systemHeadText(surface),
+            tools: tools,
+            renderedText: rendered,
+            entries: keptEntries
+        )
+    }
+
+    /// The system head's text, when surface node 0 is a `system` message.
+    ///
+    /// Upstream's `systemHead` recognises the event type
+    /// (`packages/compaction/compaction-basic/src/region.ts:99`); in this app the
+    /// head is a message role. Multiple text blocks are joined with `"\n\n"` —
+    /// the same separator `DSHCompaction.compact` joins entries with, so the head
+    /// reads as one block when it reaches the provider's system slot.
+    ///
+    /// - Parameter surface: the session's surface, oldest first.
+    /// - Returns: the head's text, or nil when there is no system head.
+    static func systemHeadText(_ surface: [DSHLogEntry]) -> String? {
+        guard let head = surface.first, head.message.role == .system else { return nil }
+        let text = head.message.blocks
+            .compactMap { ($0 as? DSHTextBlock)?.text }
+            .joined(separator: "\n\n")
+        return text.isEmpty ? nil : text
+    }
+}
+
+// MARK: - The Compaction Directive
+
+/// Upstream's `COMPACTION_INSTRUCTION`, verbatim
+/// (`packages/compaction/compaction-basic/src/summarizer.ts:32-67`).
+///
+/// Delivered as the FINAL user message after the replayed conversation, never as
+/// a summarizer system prompt: that is what keeps the auxiliary call a genuine
+/// prefix of the last routed request, so the provider's KV cache is reused
+/// instead of invalidated (`:26-31`). The text is copied line for line, including
+/// the empty lines and the `Rules:` list — a summarizer that is asked for a
+/// different structure produces a checkpoint the next model cannot resume from,
+/// and the failure shows up as a vague answer three turns later.
+///
+/// The one substitution is `${SUMMARY_OPEN_TAG}` (`:66`) → `<compacted-summary>`,
+/// its declared value at `:22`. This app's envelope is a different literal (see
+/// `DSHCompaction.summaryEnvelope`), but the RULE the last line states — merge a
+/// prior checkpoint rather than copying it forward — is about the model's own
+/// output, and it names the tag this instruction's structure produces.
+public enum DSHCompactionInstruction {
+
+    /// The directive, as the one string it is.
+    public static let text: String = [
+        "You are now acting as a compaction engine for this AI coding assistant. Condense the conversation ABOVE into a structured checkpoint that lets another model resume the work with no loss of essential context.",
+        "",
+        "Output EXACTLY the Markdown structure below: keep every section, in order. Use terse bullets, not prose paragraphs. Write \"(none)\" for an empty section — never drop a section.",
+        "",
+        "## Primary Request and Intent",
+        "- [the user's original and evolving goals; quote verbatim where the exact wording matters]",
+        "",
+        "## Key Technical Concepts",
+        "- [technologies, frameworks, patterns, and conventions in play]",
+        "",
+        "## Files and Code",
+        "- [exact path: why it matters, key changes or snippets]",
+        "",
+        "## Errors and Fixes",
+        "- [error: how it was resolved, plus any related user feedback]",
+        "",
+        "## Pending Jobs",
+        "- [explicitly requested work not yet completed]",
+        "",
+        "## Current Work",
+        "- [precisely what was in progress at this checkpoint]",
+        "",
+        "## Next Step",
+        "- [the single next action, directly in line with the most recent request, or \"(none)\"]",
+        "",
+        "## Critical Context",
+        "- [decisions and their rationale, constraints, user preferences, open questions, data needed to continue]",
+        "",
+        "Rules:",
+        "- Write concise English engineering prose. Preserve exact file paths, commands, error strings, identifiers, numeric values, function signatures, and syntax fragments.",
+        "- Capture user feedback and explicit instructions faithfully, especially corrections.",
+        "- Do NOT mention this summarization request or that the context was compacted.",
+        "- Output only the checkpoint text: do not call any tool or take any other action.",
+        "- If the conversation already contains a <compacted-summary> block, it is a PRIOR checkpoint. Do not copy it forward verbatim: preserve still-true facts, drop stale ones, and merge newer information into a single consolidated summary under the same structure.",
+    ].joined(separator: "\n")
 }
