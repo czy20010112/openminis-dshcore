@@ -161,19 +161,48 @@ enum DSHCompactionSettings {
         store.set(min(limit, maxStepLimit), forKey: stepLimitKey)
     }
 
-    /// The largest context window this device currently routes, for the readout.
+    /// The context window THIS SESSION is being compacted against, for the readout.
     ///
-    /// The trigger is per-route, so showing one number for "the" window would be a
-    /// claim this screen cannot make. The widest route is used because it is the
-    /// one where the headroom term binds — that is, the case the percentage alone
-    /// gets wrong, which is the whole reason the readout exists.
+    /// It is the driver's own capacity, not a survey of the model pool: every
+    /// assembled request stamps `DSHContextBreakdown.windowTokens` with
+    /// `DSHTurnDriverConfig.contextWindow`, which is the same
+    /// `effectiveContextWindow(for:)` value the turn-start line prints as `window=`
+    /// (`DSHTurnDriverRun.swift:806` builds the config, `:862` logs it). One number,
+    /// written where the request is built and read here, so this row and the trigger
+    /// below it cannot describe two different capacities.
     ///
-    /// `@MainActor` because `ProviderConfigStore` is: the store is main-actor
-    /// state (it publishes the picker's model list), and a nonisolated reader
-    /// would be a data race the compiler is right to refuse. The only caller is
-    /// this screen's body, which is already on the main actor.
+    /// The pool figure used to be the answer: on a device routed to 262 144 tokens it
+    /// printed 786 432 — the widest of 29 configured models — and both trigger terms
+    /// were then priced against a window no request ever used.
+    ///
+    /// `@MainActor` because `ProviderConfigStore` and `DSHContextBreakdownStore` are:
+    /// both are main-actor state, and a nonisolated reader would be a data race the
+    /// compiler is right to refuse. The only caller is this screen's body, which is
+    /// already on the main actor.
     @MainActor
-    static var widestContextWindow: Int? {
+    static var sessionContextWindow: Int? {
+        // The stamp is the answer whenever a request has been assembled in this
+        // process. Read without filtering on a session key: the driver's config
+        // carries `sessionKey == nil` on the device path, so a filter would reject
+        // every real stamp (the same reason `DSHContextBreakdownStore` attributes an
+        // unnamed assembly to its bound session), and the sheet this screen belongs
+        // to is opened for the conversation on screen.
+        if let stamped = DSHContextBreakdownStore.shared.latest?.windowTokens, stamped > 0 {
+            return stamped
+        }
+        return widestPoolContextWindow
+    }
+
+    /// The largest context window this device currently routes.
+    ///
+    /// The cold-start fallback for `sessionContextWindow`: a fresh launch, or a
+    /// session that has not assembled a request yet, has no stamp to read, and a
+    /// blank row is worse than a labelled preview of the trigger. It is a POOL
+    /// figure — the widest of every routed (or configured) model — so it says
+    /// nothing about the route in force; it is what the row showed all the time
+    /// before the stamp existed.
+    @MainActor
+    static var widestPoolContextWindow: Int? {
         // `contextWindowTokens`, not `contextWindow`: the latter is optional and is often
         // nil for an entry whose window the app learned from the endpoint, which is the
         // number `effectiveContextWindow(for:)` routes on and the one the trigger uses.
@@ -210,6 +239,14 @@ struct DSHCompactionSettingsView: View {
     @State private var headroomText: String
     @State private var stepCapEnabled: Bool
     @State private var stepCapText: String
+
+    /// The driver's per-request stamp, observed so this screen's readout follows a
+    /// running turn instead of freezing at whatever the last presentation saw.
+    /// Same wiring as `DSHContextPanel.breakdowns`: the store is main-actor and its
+    /// `latest` is `@Published`, so an `@ObservedObject` reference is enough — the
+    /// property wrapper subscribes on install, and any write to `latest` re-renders
+    /// this body. `DSHContextPanel.swift:886` is the sibling use.
+    @ObservedObject private var breakdowns = DSHContextBreakdownStore.shared
 
     /// Retained-tail ratio is DSH's (`0.16`) and is not editable; this is only
     /// here so the "Retained tail" row can state the budget in effect.
@@ -271,7 +308,7 @@ struct DSHCompactionSettingsView: View {
             }
 
             Section {
-                readout("Widest model window", windowLabel)
+                readout("Session model window", windowLabel)
                 readout("Trigger in force", thresholdLabel)
                 readout("By percentage", percentTermLabel)
                 readout("By headroom", headroomTermLabel)
@@ -330,13 +367,13 @@ struct DSHCompactionSettingsView: View {
 
     private var breakdown: DSHCompactionThresholdBreakdown? {
         DSHCompactionSettings.readout(
-            window: DSHCompactionSettings.widestContextWindow,
+            window: DSHCompactionSettings.sessionContextWindow,
             reserved: reservedCompletionTokens
         )
     }
 
     private var windowLabel: LocalizedStringKey {
-        guard let window = DSHCompactionSettings.widestContextWindow else { return "none routed" }
+        guard let window = DSHCompactionSettings.sessionContextWindow else { return "none routed" }
         return "\(DSHCompactionThresholdBreakdown.format(window)) tok"
     }
 
@@ -361,7 +398,7 @@ struct DSHCompactionSettingsView: View {
     }
 
     private var retainLabel: LocalizedStringKey {
-        guard let window = DSHCompactionSettings.widestContextWindow else { return "-" }
+        guard let window = DSHCompactionSettings.sessionContextWindow else { return "-" }
         guard let spec = try? DSHCompactionSettings.policy().resolveSpec(
             targetKey: "readout",
             contextWindow: window,
