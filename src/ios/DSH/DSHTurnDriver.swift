@@ -261,6 +261,7 @@ public struct DSHTurnDriverConfig: Sendable {
         // no shipped provider declares; a default that no provider would ever
         // produce is how "reserved 16–32k, capped at 8k" could go unnoticed.
         self.maxTokens = maxTokens
+        self.thinkingLevel = thinkingLevel
         self.enableLoopGuard = enableLoopGuard
         self.loopWarningThreshold = max(1, loopWarningThreshold)
         self.loopCriticalThreshold = max(self.loopWarningThreshold + 1, loopCriticalThreshold)
