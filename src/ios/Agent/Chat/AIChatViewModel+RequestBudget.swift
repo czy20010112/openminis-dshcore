@@ -62,12 +62,38 @@ extension AIChatViewModel {
     }
 
     /// Construct the text placeholder a provider emits in place of an
-    /// elided image. Same shape as Android's `ImageBudget.elidedImagePlaceholder`.
-    static func elidedImagePlaceholder(linuxPath: String?) -> String {
-        if let p = linuxPath {
-            return "[image elided to fit 25MB request budget. Original at \(p) — re-fetch with `read_image \(p)` if you need to see it.]"
-        }
-        return "[image elided to fit 25MB request budget. Original bytes no longer addressable; ask the user to re-attach if needed.]"
+    /// elided image.
+    ///
+    /// [T-image-offload-port] This used to be its own sentence —
+    /// `[image elided to fit 25MB request budget. Original at … — re-fetch with
+    /// `read_image …` if you need to see it.]` — which said something DIFFERENT to
+    /// the model than the session-trim path says about the very same image
+    /// (`[image omitted to save context — …]` in `AIChatViewModel+Offloading`).
+    /// Upstream has one builder for this text and every route sends it
+    /// (`packages/llm/llm/src/content.ts:108-122`, `offloadedImageText`), so the
+    /// two paths here now share `DSHImageOmission.text` and the model is told one
+    /// story: which image, how big, and where the bytes are — or that they are
+    /// nowhere, which upstream states explicitly and which this path used to say
+    /// only in its no-path branch.
+    ///
+    /// `identity` is the caller's name for the occurrence (the `25MB` figure used
+    /// to be baked into the sentence; it is the budget's number, not the image's,
+    /// and the model has no use for it — the resolved budget is reported to the
+    /// user by the toast instead).
+    static func elidedImagePlaceholder(
+        linuxPath: String?,
+        identity: String = DSHImageOmission.noIdentity,
+        mediaType: String = "image/jpeg",
+        byteCount: Int? = nil,
+        pixelSize: (width: Int, height: Int)? = nil
+    ) -> String {
+        DSHImageOmission.text(
+            identity: identity,
+            path: linuxPath,
+            pixelSize: pixelSize,
+            mediaType: mediaType,
+            byteCount: byteCount
+        )
     }
 
     /// Lazily persist `data` under a session's `attachments/spillover/<sha1>.<ext>`
@@ -160,7 +186,19 @@ extension AIChatViewModel {
                 let id = ObjectIdentifier(ref.image.data as AnyObject).hashValue
                 guard plan.droppedIds.contains(id) else { continue }
                 let path: String? = resolved[id] ?? nil
-                let placeholder = Self.elidedImagePlaceholder(linuxPath: path)
+                // [T-image-offload-port] Name the occurrence and describe it in the
+                // shared placeholder. `ref.image` still holds the bytes at this
+                // point — the planner decided from them without consuming them — so
+                // the dimensions and the byte count are facts here, not estimates.
+                let identity = path.map { "\"\(($0 as NSString).lastPathComponent)\" (\($0))" }
+                    ?? DSHImageOmission.noIdentity
+                let placeholder = Self.elidedImagePlaceholder(
+                    linuxPath: path,
+                    identity: identity,
+                    mediaType: ref.image.mimeType,
+                    byteCount: ref.image.data.isEmpty ? nil : ref.image.data.count,
+                    pixelSize: Self.imagePixelSize(ref.image.data).map { (width: $0.0, height: $0.1) }
+                )
                 let original = newParts[ref.partIdx]
                 switch original {
                 case .imageData:

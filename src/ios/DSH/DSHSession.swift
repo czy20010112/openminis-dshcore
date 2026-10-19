@@ -72,12 +72,32 @@ public struct DSHLogEntry: Sendable, Identifiable {
     public let turn: Int?
     /// Set when this entry is a compaction summary that shadows a range.
     public let shadows: ClosedRange<DSHSeq>?
+    /// Set when this entry is a tool-result PRUNE replacement rather than a
+    /// compaction summary.
+    ///
+    /// [T-dsh-tool-result-prune] A prune shadows exactly one node — itself — and
+    /// its message is that node's result with a bounded middle, not a summary.
+    /// The two are alike in the only way the fold cares about (a range taken out
+    /// of the surface, this entry put where its first node was) and unlike in
+    /// every way the rest of the app cares about: a summary is materialised as a
+    /// `<context-summary>` entry, is the subject of a compaction marker, and is
+    /// revertible by `revertLastCompaction()`. None of that is true of a prune,
+    /// so the distinction is carried on the entry rather than inferred from
+    /// `shadows`.
+    public let isPrune: Bool
 
-    public init(seq: DSHSeq, message: DSHMessage, turn: Int?, shadows: ClosedRange<DSHSeq>? = nil) {
+    public init(
+        seq: DSHSeq,
+        message: DSHMessage,
+        turn: Int?,
+        shadows: ClosedRange<DSHSeq>? = nil,
+        isPrune: Bool = false
+    ) {
         self.seq = seq
         self.message = message
         self.turn = turn
         self.shadows = shadows
+        self.isPrune = isPrune
     }
 
     public var id: Int { seq.value }
@@ -162,13 +182,9 @@ public final class DSHSession: @unchecked Sendable {
         provider: String,
         turn: Int?
     ) -> DSHSeq {
+        let seq = appendReplacement(message: summary, shadows: shadows, turn: turn, isPrune: false)
         lock.lock()
         defer { lock.unlock() }
-        let seq = DSHSeq(nextSeq)
-        nextSeq += 1
-        log.append(DSHLogEntry(
-            seq: seq, message: summary, turn: turn, shadows: shadows
-        ))
         compactions.append(DSHCompactionRecord(
             seq: seq,
             shadowedRange: shadows,
@@ -176,6 +192,58 @@ public final class DSHSession: @unchecked Sendable {
             model: model,
             provider: provider,
             completed: true
+        ))
+        return seq
+    }
+
+    /// Append a tool-result PRUNE replacement that shadows the one node it
+    /// replaces.
+    ///
+    /// The same positional replacement a compaction performs — the replacement
+    /// takes the place of the node it shadows, which is what makes the model see
+    /// the pruned result where the full one was — recorded as a prune rather than
+    /// as a compaction. See `DSHLogEntry.isPrune` for why the two must be
+    /// distinguishable, and `DSHToolResultPruner` for the rule that produces the
+    /// replacement.
+    ///
+    /// The shadowed original stays in the log, unmodified: pruning is a change to
+    /// the projection the model reads, never to the conversation record.
+    ///
+    /// - Parameters:
+    ///   - message: the replacement message — the tool result with a bounded middle.
+    ///   - shadows: the single node being replaced.
+    ///   - turn: the enclosing turn, or nil for a standalone replacement.
+    /// - Returns: the assigned seq of the replacement.
+    @discardableResult
+    public func appendPrune(
+        message: DSHMessage,
+        shadows: ClosedRange<DSHSeq>,
+        turn: Int? = nil
+    ) -> DSHSeq {
+        appendReplacement(message: message, shadows: shadows, turn: turn, isPrune: true)
+    }
+
+    /// The one place a positional replacement is written to the log.
+    ///
+    /// Both replacements advance `surfaceReplacementGeneration`, and for the same
+    /// reason: that counter is the proof a retry has something new to send. A
+    /// pruned surface is exactly such a change — upstream authorizes the
+    /// context-overflow retry on `replaceGeneration` alone and records a prune as
+    /// a replacement (`compaction-tool-result-pruner/src/index.ts:165-171`,
+    /// `surfaceOp: { op: 'replace', startSeq: seq, endSeq: seq }`).
+    @discardableResult
+    private func appendReplacement(
+        message: DSHMessage,
+        shadows: ClosedRange<DSHSeq>,
+        turn: Int?,
+        isPrune: Bool
+    ) -> DSHSeq {
+        lock.lock()
+        defer { lock.unlock() }
+        let seq = DSHSeq(nextSeq)
+        nextSeq += 1
+        log.append(DSHLogEntry(
+            seq: seq, message: message, turn: turn, shadows: shadows, isPrune: isPrune
         ))
         replacements += 1
         return seq
@@ -188,8 +256,16 @@ public final class DSHSession: @unchecked Sendable {
     /// retries: without that proof the retry re-sends a request that was already
     /// rejected, and the pair of them repeat for as long as the caller is
     /// willing to loop. Append-only growth does not advance this — only a
-    /// summary that shadows a range does, which is exactly the change a retry
+    /// replacement that shadows a range does, which is exactly the change a retry
     /// depends on.
+    ///
+    /// [T-dsh-tool-result-prune] A tool-result prune counts, and it has to:
+    /// upstream authorizes the context-overflow retry on this generation alone and
+    /// lands its prunes as `surfaceOp: { op: 'replace' }`
+    /// (`compaction-basic/src/index.ts:302` — "A model-free prune can land before
+    /// later summary work fails. That durable reduction is sufficient retry
+    /// proof"). Without that, a turn whose prune relieved the overflow would
+    /// refuse to retry and end on the provider's error.
     public var surfaceReplacementGeneration: Int {
         lock.lock()
         defer { lock.unlock() }
@@ -374,12 +450,21 @@ public final class DSHSession: @unchecked Sendable {
     // MARK: - Compaction Revert
 
     /// Undo the most recent completed compaction, restoring its shadowed range.
+    ///
+    /// A tool-result prune is NOT a compaction and is skipped by name
+    /// (`DSHLogEntry.isPrune`): it has no `DSHCompactionRecord` and no store-side
+    /// marker, so reverting one would delete a replacement the marker database
+    /// knows nothing about and report a `nil` record to a caller that has already
+    /// deleted that row.
+    ///
     /// - Returns: the reverted record, or nil when there is nothing to revert.
     @discardableResult
     public func revertLastCompaction() -> DSHCompactionRecord? {
         lock.lock()
         defer { lock.unlock() }
-        guard let index = log.lastIndex(where: { $0.shadows != nil }) else { return nil }
+        guard let index = log.lastIndex(where: { $0.shadows != nil && !$0.isPrune }) else {
+            return nil
+        }
         let entry = log[index]
         // Remove the summary entry itself; its shadowed range returns to the
         // surface because no remaining entry shadows it.
