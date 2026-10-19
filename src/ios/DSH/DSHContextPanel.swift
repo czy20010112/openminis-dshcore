@@ -462,6 +462,23 @@ struct DSHContextBreakdown: Equatable {
     /// open. `nil` is a session that has no id yet (a draft), which never matches
     /// a bound session and therefore never leaks either.
     var sessionKey: String?
+    /// The context window this request was planned against, in tokens.
+    ///
+    /// Stamped by the driver from `DSHTurnDriverConfig.contextWindow`, which holds
+    /// exactly the `effectiveContextWindow(for:)` figure the turn-start line prints
+    /// as `window=` — so the settings screen's readout and the compaction trigger in
+    /// force name one capacity instead of two. Before this field the screen took the
+    /// widest window of the whole model pool (786 432 tok on a device routed to
+    /// 262 144) and priced both terms of the trigger against a window no request used.
+    ///
+    /// Optional, and `nil` means "not stated" rather than zero: a config with no
+    /// resolved capacity passes nil (0 is clamped to nil at
+    /// `DSHTurnDriverConfig.init`), and a reader has to fall back rather than print 0.
+    /// The struct is not `Codable` and is never encoded or persisted — its only
+    /// producer is `record(...)` and its readers are the sheets — so an added field
+    /// carries no decoding compatibility of its own. (The one stored figure next to
+    /// it, `measuredEnvelopeTokens`, is still the field `isMeasured` compares.)
+    var windowTokens: Int?
     var capturedAt: Date
 
     var estimatedTotal: Int { systemPromptTokens + toolTokens + surfaceTokens }
@@ -595,6 +612,9 @@ final class DSHContextBreakdownStore: ObservableObject {
     ///     showing. A change of conversation drops the previous one's receipt here
     ///     as well, so a value from another chat cannot be paired with this
     ///     request's rows.
+    ///   - windowTokens: the capacity this request was planned against — the
+    ///     driver's own `config.contextWindow`, i.e. the `window=` figure of its
+    ///     turn-start line. nil when no capacity resolved.
     func record(
         systemPrompt: String,
         tools: [DSHToolSchema],
@@ -602,7 +622,8 @@ final class DSHContextBreakdownStore: ObservableObject {
         sectionNames: [String],
         model: String,
         provider: String,
-        sessionKey: String?
+        sessionKey: String?,
+        windowTokens: Int? = nil
     ) {
         // A report that names no session is attributed to the bound one rather
         // than stored unnamed: an unnamed record is refused by every reader and
@@ -620,6 +641,7 @@ final class DSHContextBreakdownStore: ObservableObject {
             model: model,
             provider: provider,
             sessionKey: owner,
+            windowTokens: windowTokens,
             capturedAt: Date()
         )
         let moved = latest?.sessionKey != owner

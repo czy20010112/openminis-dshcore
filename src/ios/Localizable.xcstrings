@@ -274801,6 +274801,119 @@
       }
       }
     },
+    "Session model window": {
+      "extractionState": "manual",
+      "localizations": {
+      "de": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Modellfenster der Sitzung"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Session model window"
+        }
+      },
+      "es": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Ventana de modelo de la sesión"
+        }
+      },
+      "fil": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Window ng modelo ng session"
+        }
+      },
+      "fr": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Fenêtre de modèle de la session"
+        }
+      },
+      "hr": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Prozor modela sesije"
+        }
+      },
+      "id": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Jendela model sesi"
+        }
+      },
+      "ja": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "セッションのモデルウィンドウ"
+        }
+      },
+      "ko": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "세션 모델 창"
+        }
+      },
+      "ms": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Tetingkap model sesi"
+        }
+      },
+      "pl": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Okno modelu sesji"
+        }
+      },
+      "pt-BR": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Janela de modelo da sessão"
+        }
+      },
+      "ro": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Fereastra modelului sesiunii"
+        }
+      },
+      "ru": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Окно модели сессии"
+        }
+      },
+      "th": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "หน้าต่างโมเดลของเซสชัน"
+        }
+      },
+      "tr": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Oturum modeli penceresi"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "会话模型窗口"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "工作階段模型視窗"
+        }
+      }
+      }
+    },
     "Trigger in force": {
       "extractionState": "manual",
       "localizations": {
