@@ -1673,6 +1673,20 @@ struct AIChatView: View {
                     didSeedInputBarHeight = false
                     AppLogger(category: "InputBarLayout").info("[voice-bgfg] scene active — composer geometry stale (committed=\(committedH) latest=\(latestH) lastReport=\(String(format: "%.1f", sinceReport))s ago); re-arming seed so the next callback re-measures")
                 }
+                // [T-inputbar-health-falsifiable] Re-arming only makes the seed
+                // eligible; it cannot wake a host that has stopped reporting (see
+                // the note above). Force ONE synchronous layout pass so this
+                // screen's own geometry is settled before the probe below measures
+                // silence — the same nudge the background branch uses for the
+                // keyboard inset. Healthy returns do no work here (the tree is
+                // already clean), and a genuinely stale host gets the only push
+                // this view can give it.
+                if let keyWindow = UIApplication.shared.connectedScenes
+                    .compactMap({ $0 as? UIWindowScene })
+                    .flatMap(\.windows)
+                    .first(where: \.isKeyWindow) {
+                    UIView.performWithoutAnimation { keyWindow.layoutIfNeeded() }
+                }
 
                 // [T-voice-inputbar-collapse-selfheal] Re-arming only makes the
                 // seed ELIGIBLE to fire; it cannot make a host that has stopped
@@ -1689,10 +1703,24 @@ struct AIChatView: View {
                     guard !Task.isCancelled else { return }
                     let ticked = inputBarGeometryTick != probeBaseline
                     let age = inputBarLastGeometryAt.map { CFAbsoluteTimeGetCurrent() - $0 } ?? -1
+                    let mislaid = inputBarHeight <= 0 || abs(latestInputBarFrameH - inputBarHeight) > 0.5
                     if ticked {
                         AppLogger(category: "InputBarLayout").info("[InputBarHealth] OK after foreground — composer re-reported geometry (h=\(latestInputBarFrameH) committed=\(inputBarHeight))")
+                    } else if mislaid {
+                        AppLogger(category: "InputBarLayout").error("[InputBarHealth] STALLED — no geometry callback 900ms after foreground and the committed height is wrong. committed=\(inputBarHeight) latest=\(latestInputBarFrameH) lastReport=\(String(format: "%.1f", age))s ago voice=\(voiceInputActive) editing=\(voiceVM.isEditingTranscript) seeded=\(didSeedInputBarHeight). The composer host is not laying out; expect a blank bottom area. Leaving and re-entering the session rebuilds it.")
                     } else {
-                        AppLogger(category: "InputBarLayout").error("[InputBarHealth] STALLED — no geometry callback 900ms after foreground. committed=\(inputBarHeight) latest=\(latestInputBarFrameH) lastReport=\(String(format: "%.1f", age))s ago voice=\(voiceInputActive) editing=\(voiceVM.isEditingTranscript) seeded=\(didSeedInputBarHeight). The composer host is not laying out; expect a blank bottom area. Leaving and re-entering the session rebuilds it.")
+                        // [T-inputbar-health-falsifiable] Silence is the HEALTHY
+                        // case, not a fault. `onGeometryChange` is change-driven,
+                        // and returning to the foreground usually does NOT change
+                        // the composer's height — so "no callback in 900ms" proves
+                        // nothing by itself. Every one of the device log's 37
+                        // "STALLED" lines had this shape: committed == latest ==
+                        // 118.12 (a correct bar), with real callbacks following
+                        // within seconds. The probe therefore reports a fault only
+                        // when the height is missing or disagrees with what was
+                        // committed; otherwise it records that the host was quiet
+                        // and the bar was already settled.
+                        AppLogger(category: "InputBarLayout").info("[InputBarHealth] silent after foreground, height settled (h=\(latestInputBarFrameH) committed=\(inputBarHeight) lastReport=\(String(format: "%.1f", age))s ago) — not a stall")
                     }
                 }
                 // [T-voice-bg-fg-gap] Foreground reseal: if we return to a
