@@ -998,8 +998,30 @@ extension AIChatViewModel {
                     )
                 }
             }
+            // [T-thinking-count-matches-text] The same throttle holds the tail of
+            // the reasoning, and this exit used to drop it: a Stop mid-thinking left
+            // the block at its last flush, so the text the user was reading was
+            // missing its newest second. Flush before the cancellation propagates —
+            // the block on screen and the row that gets persisted then hold the same
+            // text.
+            if let thinkIdx = currentThinkingBlockIdx, !result.thinkingText.isEmpty {
+                await MainActor.run {
+                    guard msgIdx < messages.count,
+                          thinkIdx < messages[msgIdx].blocks.count else { return }
+                    messages[msgIdx].blocks[thinkIdx].content = result.thinkingText
+                }
+            }
             throw CancellationError()
         } catch {
+            // Same tail, same reason: a dropped stream must not leave the reasoning
+            // block one flush short of the text the model actually produced.
+            if let thinkIdx = currentThinkingBlockIdx, !result.thinkingText.isEmpty {
+                await MainActor.run {
+                    guard msgIdx < messages.count,
+                          thinkIdx < messages[msgIdx].blocks.count else { return }
+                    messages[msgIdx].blocks[thinkIdx].content = result.thinkingText
+                }
+            }
             result.isStreamInterrupted = true
             _streamError = error
         }
