@@ -128,34 +128,8 @@ extension AIChatViewModel {
         // from, and the store-side path is the only one that knows about it.
         guard let session = dshSession, dshSessionOwner == sessionId else { return false }
         guard let entry = resolveCurrentEntry() else { return false }
-        let provider = await makeAgentProvider(for: entry)
         let window = effectiveContextWindow(for: entry.model)
         guard window > 0 else { return false }
-        // The same output reservation the driver takes (`DSHTurnDriverRun`): the
-        // resolved request cap, which is also the number the trigger's headroom
-        // bound is computed from. Resolved through the same call so a manual
-        // compaction cannot keep a different tail than an automatic one on the same
-        // route.
-        let reservedOutput = dynamicMaxTokens(
-            provider: provider,
-            model: entry.model,
-            lastContextTokens: dshTurnUsage.inputTokens
-                + (dshTurnUsage.cacheReadTokens ?? 0)
-                + (dshTurnUsage.cacheWriteTokens ?? 0)
-        )
-        guard let spec = Self.dshCompactionSpec(
-            policy: DSHCompactionSettings.policy(),
-            contextWindow: window,
-            reservedCompletionTokens: reservedOutput,
-            retainOverride: Self.dshCompactionRetainOverride
-        ) else {
-            // The route cannot resolve a budget — the same condition under which the
-            // driver's `compactForPressure` warns once and lets provider-confirmed
-            // overflow recovery handle it. There is no overflow to recover from
-            // here, so the store-side path answers the request.
-            logger.warning("[DSHCompact] no resolvable compaction budget for \(entry.model); falling back to the store-side compaction")
-            return false
-        }
 
         isCompacting = true
         let wasProcessingOnEntry = isProcessing
@@ -183,6 +157,36 @@ extension AIChatViewModel {
                 if !statusRetired { self.messages.removeAll { $0.id == statusMsg.id } }
             }
 
+            // Resolved here rather than in the synchronous prologue: building the
+            // provider is async, and the budget must come from the same call the driver
+            // uses so a manual compaction cannot keep a different tail than an automatic
+            // one on the same route.
+            let provider = await self.makeAgentProvider(for: entry)
+            let reservedOutput = self.dynamicMaxTokens(
+                provider: provider,
+                model: entry.model,
+                lastContextTokens: self.dshTurnUsage.inputTokens
+                    + (self.dshTurnUsage.cacheReadTokens ?? 0)
+                    + (self.dshTurnUsage.cacheWriteTokens ?? 0)
+            )
+            guard let spec = Self.dshCompactionSpec(
+                policy: DSHCompactionSettings.policy(),
+                contextWindow: window,
+                reservedCompletionTokens: reservedOutput,
+                retainOverride: Self.dshCompactionRetainOverride
+            ) else {
+                // The route cannot resolve a budget — the same condition under which the
+                // driver's `compactForPressure` warns once and lets provider-confirmed
+                // overflow recovery handle it. Here there is no overflow to recover from,
+                // so the command declines and says why rather than silently doing nothing.
+                self.logger.warning(
+                    "[DSHCompact] no resolvable compaction budget for \(entry.model)")
+                self.appendSystemInfo(
+                    "Cannot resolve a compaction budget for this route.",
+                    icon: "arrow.down.right.and.arrow.up.left")
+                return
+            }
+
             // Upstream's manual selection (`compaction-basic/src/index.ts:394-398`):
             // the POLICY's retained tail, and a `0` threshold so the command works
             // below the automatic trigger.
@@ -204,7 +208,7 @@ extension AIChatViewModel {
                 retainTokens: spec.retainTokens,
                 pressureThreshold: 0,
                 measuredTokens: 0,
-                model: entry.model,
+                model: entry.model.id,
                 provider: provider.name
             ) { [weak self] shadowedText in
                 guard let self else { throw DSHCompactionError.summaryFailed("view model deallocated") }
