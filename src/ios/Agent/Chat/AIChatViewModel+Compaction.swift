@@ -1363,4 +1363,14 @@ extension AIChatViewModel {
     static func summaryAsAgentMessage(_ summary: String) -> AgentMessage {
         AgentMessage(role: .user, parts: [.text(compactSummaryWrappedText(summary))])
     }
+
+    /// iOS 15 line: the composer has no context-usage readout (no glow, no usage
+    /// line), so a compaction has nothing to re-price here.
+    ///
+    /// The shared DSH adapter calls this on both lines
+    /// (`DSHTurnDriverAdapter.driver(_:didCompact:)`), because on the iOS 26 line
+    /// the glow otherwise keeps the pre-compaction figure. Keeping the name here is
+    /// cheaper than an `#if` in that shared file, and it is the honest declaration:
+    /// this build has no such readout to update.
+    func announceContextUsageAfterCompaction() {}
 }
