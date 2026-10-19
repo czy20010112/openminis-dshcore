@@ -174,8 +174,11 @@ enum DSHCompactionSettings {
     /// this screen's body, which is already on the main actor.
     @MainActor
     static var widestContextWindow: Int? {
+        // `contextWindowTokens`, not `contextWindow`: the latter is optional and is often
+        // nil for an entry whose window the app learned from the endpoint, which is the
+        // number `effectiveContextWindow(for:)` routes on and the one the trigger uses.
         ProviderConfigStore.shared.resolvedAgentLoopEntries
-            .compactMap { $0.model.contextWindow }
+            .map { $0.model.contextWindowTokens }
             .filter { $0 > 0 }
             .max()
     }
@@ -277,14 +280,20 @@ struct DSHCompactionSettingsView: View {
                 HStack {
                     Text("Steps")
                     Spacer(minLength: 12)
-                    TextField("steps", text: $stepCapText, onEditingChanged: { editing in
-                        if !editing { writeStepCap() }
-                    })
-                        .keyboardType(.numberPad)
-                        .multilineTextAlignment(.trailing)
-                        .frame(maxWidth: 110)
+                    if stepCapEnabled {
+                        TextField("steps", text: $stepCapText, onEditingChanged: { editing in
+                            if !editing { writeStepCap() }
+                        })
+                            .keyboardType(.numberPad)
+                            .multilineTextAlignment(.trailing)
+                            .frame(maxWidth: 110)
+                    } else {
+                        // No cap means no number: showing the stored 200 while the toggle
+                        // is off reads as "the cap is 200".
+                        Text("—")
+                            .foregroundStyle(.secondary)
+                    }
                 }
-                .disabled(!stepCapEnabled)
             } header: {
                 Text("Turn Steps")
             }
