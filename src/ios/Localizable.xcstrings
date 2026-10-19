@@ -125408,6 +125408,1203 @@
           }
         }
       }
+    },
+    "Session status": {
+      "extractionState": "manual",
+      "localizations": {
+      "de": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Sitzungsstatus"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Session status"
+        }
+      },
+      "es": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Estado de la sesión"
+        }
+      },
+      "fr": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "État de la session"
+        }
+      },
+      "ja": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "セッションの状態"
+        }
+      },
+      "ko": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "세션 상태"
+        }
+      },
+      "ru": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Состояние сеанса"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "会话状态"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "會話狀態"
+        }
+      }
+      }
+    },
+    "The reply reached this model's output limit. The text so far is kept — send a message to continue.": {
+      "extractionState": "manual",
+      "localizations": {
+      "extractionState": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "manual"
+        }
+      },
+      "localizations": {
+        "stringUnit": {
+          "state": "translated",
+          "value": {"en": {"stringUnit": {"state": "translated", "value": "The reply reached this model's output limit. The text so far is kept — send a message to continue."}}, "de": {"stringUnit": {"state": "translated", "value": "Die Antwort hat das Ausgabelimit dieses Modells erreicht. Der bisherige Text bleibt erhalten — senden Sie eine Nachricht, um fortzufahren."}}, "es": {"stringUnit": {"state": "translated", "value": "La respuesta alcanzó el límite de salida de este modelo. El texto ya generado se conserva: envía un mensaje para continuar."}}, "fr": {"stringUnit": {"state": "translated", "value": "La réponse a atteint la limite de sortie de ce modèle. Le texte déjà produit est conservé — envoyez un message pour continuer."}}, "ja": {"stringUnit": {"state": "translated", "value": "応答がこのモデルの出力上限に達しました。ここまでの文章は保持されています。続けるにはメッセージを送信してください。"}}, "ko": {"stringUnit": {"state": "translated", "value": "응답이 이 모델의 출력 한도에 도달했습니다. 지금까지의 텍스트는 유지됩니다 — 계속하려면 메시지를 보내세요."}}, "ru": {"stringUnit": {"state": "translated", "value": "Ответ достиг предельного объёма вывода этой модели. Уже созданный текст сохранён — отправьте сообщение, чтобы продолжить."}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "回复达到了此模型的输出上限。已生成的内容已保留 —— 发送一条消息即可继续。"}}, "zh-Hant": {"stringUnit": {"state": "translated", "value": "回覆已達此模型的輸出上限。已生成的內容已保留 —— 傳送一則訊息即可繼續。"}}}
+        }
+      }
+      }
+    },
+    "Context Compaction": {
+      "extractionState": "manual",
+      "localizations": {
+      "de": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Kontext-Verdichtung"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Context Compaction"
+        }
+      },
+      "es": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Compactación de contexto"
+        }
+      },
+      "fr": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Compactage du contexte"
+        }
+      },
+      "ja": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "コンテキスト圧縮"
+        }
+      },
+      "ko": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "컨텍스트 압축"
+        }
+      },
+      "ru": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Сжатие контекста"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "上下文压缩"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "上下文壓縮"
+        }
+      }
+      }
+    },
+    "Compaction Trigger": {
+      "extractionState": "manual",
+      "localizations": {
+      "de": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Auslöser der Verdichtung"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Compaction Trigger"
+        }
+      },
+      "es": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Disparador de compactación"
+        }
+      },
+      "fr": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Déclencheur du compactage"
+        }
+      },
+      "ja": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "圧縮のトリガー"
+        }
+      },
+      "ko": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "압축 트리거"
+        }
+      },
+      "ru": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Триггер сжатия"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "压缩触发"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "壓縮觸發"
+        }
+      }
+      }
+    },
+    "Trigger percentage": {
+      "extractionState": "manual",
+      "localizations": {
+      "de": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Auslöseschwelle in Prozent"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Trigger percentage"
+        }
+      },
+      "es": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Porcentaje de disparo"
+        }
+      },
+      "fr": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Pourcentage de déclenchement"
+        }
+      },
+      "ja": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "トリガー率（%）"
+        }
+      },
+      "ko": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "트리거 비율(%)"
+        }
+      },
+      "ru": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Порог срабатывания, %"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "压缩触发百分比"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "壓縮觸發百分比"
+        }
+      }
+      }
+    },
+    "Headroom": {
+      "extractionState": "manual",
+      "localizations": {
+      "de": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Reserve"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Headroom"
+        }
+      },
+      "es": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Margen"
+        }
+      },
+      "fr": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Marge"
+        }
+      },
+      "ja": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "余裕分（トークン）"
+        }
+      },
+      "ko": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "여유분"
+        }
+      },
+      "ru": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Запас"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "预留余量"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "預留餘量"
+        }
+      }
+      }
+    },
+    "Reset to the DSH defaults": {
+      "extractionState": "manual",
+      "localizations": {
+      "de": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Auf DSH-Standardwerte zurücksetzen"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Reset to the DSH defaults"
+        }
+      },
+      "es": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Restablecer los valores predeterminados de DSH"
+        }
+      },
+      "fr": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Rétablir les valeurs par défaut de DSH"
+        }
+      },
+      "ja": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "DSH の既定値に戻す"
+        }
+      },
+      "ko": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "DSH 기본값으로 재설정"
+        }
+      },
+      "ru": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Сбросить к значениям DSH по умолчанию"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "恢复 DSH 默认值"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "恢復 DSH 預設值"
+        }
+      }
+      }
+    },
+    "Widest model window": {
+      "extractionState": "manual",
+      "localizations": {
+      "de": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Größtes Modellfenster"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Widest model window"
+        }
+      },
+      "es": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Ventana de modelo más amplia"
+        }
+      },
+      "fr": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Fenêtre de modèle la plus large"
+        }
+      },
+      "ja": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "最大のモデルウィンドウ"
+        }
+      },
+      "ko": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "가장 큰 모델 창"
+        }
+      },
+      "ru": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Самое широкое окно модели"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "最宽模型窗口"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "最寬模型視窗"
+        }
+      }
+      }
+    },
+    "Trigger in force": {
+      "extractionState": "manual",
+      "localizations": {
+      "de": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Wirksamer Auslöser"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Trigger in force"
+        }
+      },
+      "es": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Disparador en vigor"
+        }
+      },
+      "fr": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Déclencheur en vigueur"
+        }
+      },
+      "ja": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "実際のトリガー値"
+        }
+      },
+      "ko": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "실제 적용 트리거"
+        }
+      },
+      "ru": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Действующий триггер"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "实际触发值"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "實際觸發值"
+        }
+      }
+      }
+    },
+    "By percentage": {
+      "extractionState": "manual",
+      "localizations": {
+      "de": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Nach Prozentsatz"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "By percentage"
+        }
+      },
+      "es": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Por porcentaje"
+        }
+      },
+      "fr": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Par pourcentage"
+        }
+      },
+      "ja": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "割合による値"
+        }
+      },
+      "ko": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "비율 기준"
+        }
+      },
+      "ru": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "По проценту"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "按百分比"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "按百分比"
+        }
+      }
+      }
+    },
+    "By headroom": {
+      "extractionState": "manual",
+      "localizations": {
+      "de": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Nach Reserve"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "By headroom"
+        }
+      },
+      "es": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Por margen"
+        }
+      },
+      "fr": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Par marge"
+        }
+      },
+      "ja": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "余裕分による値"
+        }
+      },
+      "ko": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "여유분 기준"
+        }
+      },
+      "ru": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "По запасу"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "按预留余量"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "按預留餘量"
+        }
+      }
+      }
+    },
+    "Binding": {
+      "extractionState": "manual",
+      "localizations": {
+      "de": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Maßgeblich"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Binding"
+        }
+      },
+      "es": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Determinante"
+        }
+      },
+      "fr": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Déterminant"
+        }
+      },
+      "ja": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "決定要因"
+        }
+      },
+      "ko": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "결정 요인"
+        }
+      },
+      "ru": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Определяющий"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "生效项"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "生效項"
+        }
+      }
+      }
+    },
+    "Retained tail": {
+      "extractionState": "manual",
+      "localizations": {
+      "de": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Behaltener Nachtrag"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Retained tail"
+        }
+      },
+      "es": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Cola retenida"
+        }
+      },
+      "fr": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Fin conservée"
+        }
+      },
+      "ja": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "保持する末尾"
+        }
+      },
+      "ko": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "유지되는 꼬리"
+        }
+      },
+      "ru": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Сохраняемый хвост"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "保留的尾部"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "保留的尾端"
+        }
+      }
+      }
+    },
+    "headroom": {
+      "extractionState": "manual",
+      "localizations": {
+      "de": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Reserve"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "headroom"
+        }
+      },
+      "es": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "margen"
+        }
+      },
+      "fr": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "marge"
+        }
+      },
+      "ja": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "余裕分"
+        }
+      },
+      "ko": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "여유분"
+        }
+      },
+      "ru": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "запас"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "预留余量"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "預留餘量"
+        }
+      }
+      }
+    },
+    "percentage": {
+      "extractionState": "manual",
+      "localizations": {
+      "de": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Prozentsatz"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "percentage"
+        }
+      },
+      "es": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "porcentaje"
+        }
+      },
+      "fr": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "pourcentage"
+        }
+      },
+      "ja": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "割合"
+        }
+      },
+      "ko": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "비율"
+        }
+      },
+      "ru": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "процент"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "百分比"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "百分比"
+        }
+      }
+      }
+    },
+    "Turn Steps": {
+      "extractionState": "manual",
+      "localizations": {
+      "de": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Schritte pro Zug"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Turn Steps"
+        }
+      },
+      "es": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Pasos por turno"
+        }
+      },
+      "fr": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Étapes par tour"
+        }
+      },
+      "ja": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "ターンごとのステップ数"
+        }
+      },
+      "ko": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "턴당 단계 수"
+        }
+      },
+      "ru": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Шаги за ход"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "单轮步数"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "單輪步數"
+        }
+      }
+      }
+    },
+    "Limit steps per turn": {
+      "extractionState": "manual",
+      "localizations": {
+      "de": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Schritte pro Zug begrenzen"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Limit steps per turn"
+        }
+      },
+      "es": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Limitar los pasos por turno"
+        }
+      },
+      "fr": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Limiter les étapes par tour"
+        }
+      },
+      "ja": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "ターンごとのステップ数を制限"
+        }
+      },
+      "ko": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "턴당 단계 수 제한"
+        }
+      },
+      "ru": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Ограничить шаги за ход"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "限制单轮步数"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "限制單輪步數"
+        }
+      }
+      }
+    },
+    "Steps": {
+      "extractionState": "manual",
+      "localizations": {
+      "de": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Schritte"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Steps"
+        }
+      },
+      "es": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Pasos"
+        }
+      },
+      "fr": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Étapes"
+        }
+      },
+      "ja": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "ステップ数"
+        }
+      },
+      "ko": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "단계"
+        }
+      },
+      "ru": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Шаги"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "步数"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "步數"
+        }
+      }
+      }
+    },
+    "none routed": {
+      "extractionState": "manual",
+      "localizations": {
+      "de": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "keine"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "none routed"
+        }
+      },
+      "es": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "ninguno"
+        }
+      },
+      "fr": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "aucun"
+        }
+      },
+      "ja": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "なし"
+        }
+      },
+      "ko": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "없음"
+        }
+      },
+      "ru": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "нет"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "无"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "無"
+        }
+      }
+      }
+    },
+    "unresolvable for this route": {
+      "extractionState": "manual",
+      "localizations": {
+      "de": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "für diese Route nicht auflösbar"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "unresolvable for this route"
+        }
+      },
+      "es": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "no resoluble para esta ruta"
+        }
+      },
+      "fr": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "non résoluble pour cette route"
+        }
+      },
+      "ja": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "このルートでは算出できません"
+        }
+      },
+      "ko": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "이 경로에서는 산출할 수 없음"
+        }
+      },
+      "ru": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "не разрешается для этого маршрута"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "该路由无法解析"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "此路由無法解析"
+        }
+      }
+      }
+    },
+    "Per reply, whatever the source; currently %lld tokens.": {
+      "extractionState": "manual",
+      "localizations": {
+      "de": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Pro Antwort, unabhängig von der Quelle; aktuell %lld Token."
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Per reply, whatever the source; currently %lld tokens."
+        }
+      },
+      "es": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Por respuesta, sea cual sea el origen; actualmente %lld tokens."
+        }
+      },
+      "fr": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Par réponse, quelle qu'en soit la source ; actuellement %lld jetons."
+        }
+      },
+      "ja": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "返答ごと（出所を問わず）。現在 %lld トークン。"
+        }
+      },
+      "ko": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "응답당(출처 무관), 현재 %lld 토큰."
+        }
+      },
+      "ru": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "На каждый ответ, независимо от источника; сейчас %lld токенов."
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "每次回复（无论来源）；当前 %lld 个 token。"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "每次回覆（無論來源）；目前 %lld 個 token。"
+        }
+      }
+      }
     }
   },
   "version" : "1.0"

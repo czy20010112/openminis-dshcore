@@ -349,7 +349,13 @@ private struct BridgedAssistantBlockV3: View {
         .frame(maxWidth: maxWidth > 0 ? maxWidth : nil, alignment: .leading)
         .frame(maxWidth: .infinity)
         .padding(.horizontal, 16)
-        .opacity(message.isCompactedHistory ? 0.5 : 1.0)
+        // [F4-compaction-visibility] Dim per BLOCK, ORed with the row's flag so a
+        // block inside a fully-compacted row is dimmed once, not twice (0.25 is a
+        // different look). Block granularity is what makes a compaction visible at
+        // all on a DSH session: the anchor lands inside a merged bubble as the
+        // norm, and a message-granular rule leaves that bubble — most of what is
+        // on screen — bright.
+        .opacity((message.isCompactedHistory || block.isCompactedHistory) ? 0.5 : 1.0)
         .accessibilityIdentifier(blockAccessibilityId)
         // Context menu on zero-size overlay so it doesn't inflate self-sizing
         // (same pattern as BridgedAssistantFooterV3).
@@ -760,6 +766,19 @@ extension CollectionViewMessageListV3 {
         #endif
 
         // === Scroll mode (replaces V2's 6+ mechanisms) ===
+        /// [F4-compaction-visibility] How long the auto-scroll pin stands down
+        /// after a compaction has been revealed.
+        ///
+        /// The reveal frames the compaction bar with the dimmed region above it —
+        /// which is ABOVE the live tail, so it is only visible while the pin is not
+        /// dragging the view back down. Two seconds of growth is usually a whole
+        /// model step (the recorded session ran ~10s per step), and it ends at the
+        /// first content growth after that, so this can never strand a running
+        /// reply off-screen for long.
+        static let compactionRevealHold: TimeInterval = 6
+        /// The pin stands down until this instant. `.distantPast` = not holding.
+        var revealHoldUntil: Date = .distantPast
+
         var scrollMode: ScrollMode = .autoScrolling {
             didSet {
                 // Mirror to the layout so its invalidationContext can glue the
@@ -1083,7 +1102,15 @@ extension CollectionViewMessageListV3 {
                     return
                 }
 
-                if delta > 0 && self.scrollMode == .autoScrolling {
+                if delta > 0 && self.scrollMode == .autoScrolling && Date() < self.revealHoldUntil {
+                    // [F4-compaction-visibility] The compaction reveal is on screen
+                    // and the pin would pull it away. Held (not cancelled): the
+                    // first growth after `revealHoldUntil` pins as usual, so the
+                    // reply is never left off-screen.
+                    AppLogger(category: "CompactDiag").info(
+                        "[CompactDiag] contentSize grew +\(String(format: "%.0f", delta)) — compaction reveal hold, no pin (\(String(format: "%.1f", self.revealHoldUntil.timeIntervalSinceNow))s left)"
+                    )
+                } else if delta > 0 && self.scrollMode == .autoScrolling {
                     // Pin to bottom — but if an animated scroll is in flight, directly
                     // mutating contentOffset corrupts UIKit's animation interpolation.
                     // Defer to a coalesced scroll that fires after the animation ends.
@@ -2602,9 +2629,34 @@ extension CollectionViewMessageListV3 {
                       let last = messages.last, last.role == .user else { return nil }
                 return last.id
             }()
+            // [F4-compaction-visibility] A divider that names a BLOCK renders after
+            // that block's cell, not at its own position in `messages`.
+            //
+            // The DSH driver's mid-turn compaction cuts inside the one assistant
+            // bubble the turn is streaming into (a turn is one row; the shadowed
+            // session entries are its earlier blocks). A message-granular divider
+            // can only be placed above that whole bubble, which is thousands of
+            // points above a viewport pinned to the bottom — the operator saw no
+            // bar and no dim at all. The divider row still lives in `messages`
+            // (so the reload path, the summary sheet and the greying rules are
+            // unchanged); only its emitted position moves.
+            //
+            // A divider whose anchor block is gone (a rebuild, a retry) is emitted
+            // at its own array position, which is the fallback that keeps a
+            // compaction record visible rather than dropping it.
+            var anchoredDividers: [UUID: ChatMessage] = [:]
+            for message in messages where message.role == .compactDivider {
+                if let anchorBlockId = message.compactionAnchorBlockId {
+                    anchoredDividers[anchorBlockId] = message
+                }
+            }
+            var emittedDividers: Set<UUID> = []
             for message in messages {
                 switch message.role {
                 case .user, .compactDivider, .systemInfo:
+                    if message.role == .compactDivider, emittedDividers.contains(message.id) {
+                        continue
+                    }
                     newItems.append(.wholeMessage(message.id))
                     if message.id == orphanTailUserId {
                         newItems.append(.assistantFooter(message.id))
@@ -2613,6 +2665,10 @@ extension CollectionViewMessageListV3 {
                     newItems.append(.assistantHeader(message.id))
                     for block in message.blocks {
                         newItems.append(.assistantBlock(message.id, block.id))
+                        if let divider = anchoredDividers[block.id] {
+                            newItems.append(.wholeMessage(divider.id))
+                            emittedDividers.insert(divider.id)
+                        }
                     }
                     // Only emit a footer cell when it will actually render
                     // content. A footer with zero visible content (no typing
@@ -3281,6 +3337,52 @@ extension CollectionViewMessageListV3 {
                     // the top-inset compensation tracking contentSize so the
                     // last cell stays pinned to the overlay top.
                     applySubViewportCompensation(caller: "snapshot-subVP")
+                }
+
+                // [F4-compaction-visibility] Reveal a compaction the user has not
+                // been shown yet.
+                //
+                // A DSH compaction fires mid-turn, above a viewport that is pinned
+                // to the live tail: the transcript above is rewritten (divider +
+                // dimmed region) and nothing the user can see changes — their
+                // report, verbatim: 「压缩的时候没有任何显示了，就像正常对话一样直接
+                // 继续，看不到压缩的横条啊上面变灰啊。只能从上下文的小圆圈看出已
+                // 压缩。」 No scroll, no toast, no status row.
+                //
+                // So the first snapshot that carries a divider still marked
+                // `compactionRevealPending` frames it once, bottom-aligned: the bar
+                // lands on the bottom edge and the dimmed region — everything the
+                // compaction replaced — fills the screen above it. The pin then
+                // stands down for `compactionRevealHold` so the frame is readable
+                // rather than a single frame of a scroll animation, and resumes at
+                // the first growth after that.
+                //
+                // Only ever fires for a divider the compacting side explicitly
+                // marked, and the flag is cleared here — one reveal per compaction,
+                // and a relaunch's restored divider (whose flag is never set) is
+                // left alone.
+                if let revealIdx = newItems.firstIndex(where: { item in
+                    guard case .wholeMessage(let mid) = item else { return false }
+                    return messages.first(where: { $0.id == mid })?.compactionRevealPending == true
+                }), case .wholeMessage(let revealMid) = newItems[revealIdx] {
+                    messages.first(where: { $0.id == revealMid })?.compactionRevealPending = false
+                    // Only a reader who is FOLLOWING the stream gets moved. Someone
+                    // scrolled up into the history is already looking at the region
+                    // this compaction dimmed, and yanking them elsewhere to show
+                    // them a bar would be worse than the silence this fixes.
+                    if scrollMode == .autoScrolling {
+                        revealHoldUntil = Date().addingTimeInterval(Self.compactionRevealHold)
+                        cv.scrollToItem(at: IndexPath(item: revealIdx, section: 0), at: .bottom, animated: true)
+                        AppLogger(category: "CompactDiag").warning(
+                            "[CompactDiag] compaction divider revealed at item \(revealIdx)/\(newItems.count) "
+                            + "— bottom-aligned, pin held \(Int(Self.compactionRevealHold))s"
+                        )
+                    } else {
+                        AppLogger(category: "CompactDiag").info(
+                            "[CompactDiag] compaction divider at item \(revealIdx)/\(newItems.count) NOT revealed "
+                            + "— the reader is browsing the history; the dimmed region is where they already are"
+                        )
+                    }
                 }
                 // Sync isNearBottom after snapshot apply. applySnapshot runs
                 // under isFlushing=true, which suppresses the contentSize KVO

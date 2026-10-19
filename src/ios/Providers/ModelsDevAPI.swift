@@ -328,9 +328,31 @@ enum ModelsDevAPI {
             }
         }
 
-        // Max output tokens: models.dev is the source of truth
+        // Max output tokens: same rule as the context window directly above, and
+        // for exactly the same reason.
+        //
+        // [T-modelsdev-output-is-not-a-cap] A relay's `/v1/models` states whether
+        // it caps a model's output, but only under a spelling
+        // `OpenAIModelsAPI` does not read — so the usual case is "the endpoint
+        // declared nothing", and a stage-2 (cross-provider) catalog match used to
+        // fill that silence with somebody else's number. The device log shows what
+        // that costs: `/v1/models` reports `context_length = 262144` and no output
+        // limit at all, and the conversation was capped at exactly 8192 output
+        // tokens per step — `output 8,192` on two consecutive llama-swap requests —
+        // while nothing about that endpoint says 8192. 105 of the catalog's Qwen
+        // entries carry `limit.output = 8192` (vs 288 carrying 65536 and 181
+        // carrying 32768 for the SAME bare model name), so the cap is a property of
+        // whichever publisher happened to sort first, not of the model.
+        //
+        // With no value here the request falls back to `provider.defaultMaxTokens`
+        // (`AIChatViewModel.dynamicMaxTokens`), which is a number the app states
+        // about the endpoint it is actually calling. An authoritative match — the
+        // model's OWN provider, which is what a first-party entry resolves through
+        // — still applies, unchanged.
         if let out = devModel.limit?.output {
-            result.maxOutputTokens = out
+            if authoritative || result.maxOutputTokens == nil {
+                result.maxOutputTokens = out
+            }
         }
 
         // Reasoning capability

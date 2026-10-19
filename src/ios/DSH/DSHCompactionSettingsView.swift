@@ -1,0 +1,376 @@
+//
+//  DSHCompactionSettingsView.swift
+//  Minis
+//
+//  The compaction trigger, and the runaway bound that is not a turn budget.
+//
+//  WHY THIS FILE SITS IN `src/ios/DSH/`
+//  ---------------------------------------------------------------------------
+//  `DSH/` is a `PBXFileSystemSynchronizedRootGroup` in Minis.xcodeproj, so a file
+//  dropped here is compiled with no project edit — in both trees, whose pbxproj
+//  files are not copies of each other. `DSHCompactionSettings` (the store this
+//  screen edits) lives in the same file for the same reason, and because the read
+//  sites are all inside `DSH/`.
+//
+//  WHAT THE NUMBERS MEAN
+//  ---------------------------------------------------------------------------
+//  The trigger is upstream's, unchanged:
+//
+//      threshold = floor(min(W × thresholdRatio, (W − O) − headroomTokens))
+//
+//  (`packages/compaction/compaction-basic/src/config.ts:191-194`; ratio 0.8 at
+//  `:20`, headroom 65 536 at `:75`.) Both terms are shown below because the user
+//  sets only one of them and the OTHER can be the one in force: on the 262 144
+//  route in `F:\smb\log\minis-2026-10-19.log` the ratio term resolves to 209 715
+//  and the headroom term to 188 416, so a slider reading "80%" was describing a
+//  trigger that was actually firing at 71.9% of the window. The `Binding` row
+//  names which term won.
+//
+//  `O` in that formula is the routed request's output reservation. This screen
+//  resolves the readout against the driver's own default reservation
+//  (`DSHTurnDriverConfig().maxTokens` — read from the type rather than typed in
+//  twice, so the two cannot drift). A conversation whose model carries a
+//  per-model output override reserves more, which lowers the headroom term and
+//  therefore the trigger — which is why the turn-start log line carries the
+//  numbers that were actually in force rather than only the two settings.
+//
+//  NO EXPLANATION COPY
+//  ---------------------------------------------------------------------------
+//  Same rule as `DSHSpillSettingsView`: the controls and the live readout only.
+//  Rows may say what they are and what the value currently is; a paragraph saying
+//  why is a comment, not a footer.
+//
+
+import SwiftUI
+
+// MARK: - Store
+
+/// The compaction settings, read live on every turn rather than cached.
+///
+/// Re-read per use for the reason `DSHSpillFeature.config` is: a turn is
+/// long-lived, the read is cheap, and a cached copy would keep a stale trigger for
+/// the rest of the process after the setting changed. The keys are registered
+/// here (`register(defaults:)`) so the app's own defaults carry the shipped values
+/// — this app rewrites its plist at launch and discards an external write, so a
+/// value that exists only as a fallback in code would be invisible to `-defaults`
+/// and to anyone inspecting the plist.
+enum DSHCompactionSettings {
+
+    /// Window fraction, as `DSHCompactionPolicy.thresholdRatio`.
+    static let triggerRatioKey = "minis.dshCompactTriggerRatio"
+
+    /// Pressure headroom, as `DSHCompactionPolicy.headroomTokens`.
+    static let headroomTokensKey = "minis.dshCompactHeadroomTokens"
+
+    /// Explicit per-turn step ceiling. 0 (the shipped value) means no ceiling.
+    ///
+    /// Deliberately a number rather than a switch plus a number: the driver's
+    /// field is already an `Int?`, and "the ceiling is off" is the same fact as
+    /// "there is no ceiling", which one key states without two sources of truth.
+    static let stepLimitKey = "minis.dshMaxStepsPerTurn"
+
+    /// DSH's own published defaults, and this app's shipped values.
+    ///
+    /// Not changed by this screen: the screen writes a stored override and the
+    /// policy is built from it, so a user who never opens the screen runs the
+    /// upstream values exactly.
+    static let shippedThresholdRatio = 0.8
+    static let shippedHeadroomTokens = 65_536
+
+    /// How far below DSH's 0.8 the slider is allowed to go. A trigger under a
+    /// tenth of the window would compact a conversation that has barely started.
+    static let minThresholdRatio = 0.1
+
+    /// The shipped step ceiling: none. See `DSHTurnDriverConfig.maxStepsPerTurn`.
+    static let shippedStepLimit = 0
+
+    /// Ceiling on the step-limit field. Above this the number is not a backstop,
+    /// it is a typo.
+    static let maxStepLimit = 10_000
+    /// Ceiling on the headroom field: beyond the largest window this app routes,
+    /// a larger headroom simply makes the trigger unresolvable.
+    static let maxHeadroomTokens = 200_000
+
+    /// The stored ratio, or DSH's default.
+    static var triggerRatio: Double {
+        let store = UserDefaults.standard
+        guard store.object(forKey: triggerRatioKey) != nil else { return shippedThresholdRatio }
+        let value = store.double(forKey: triggerRatioKey)
+        guard value >= minThresholdRatio, value <= 1 else { return shippedThresholdRatio }
+        return value
+    }
+
+    /// The stored headroom, or DSH's default.
+    static var headroomTokens: Int {
+        let store = UserDefaults.standard
+        guard let value = store.object(forKey: headroomTokensKey) as? Int,
+              value >= 0, value <= maxHeadroomTokens else { return shippedHeadroomTokens }
+        return value
+    }
+
+    /// The stored step ceiling, or nil for none.
+    ///
+    /// nil is the shipped answer and it is what every caller that has not opted in
+    /// gets: a turn's real bound is the context window, and a fixed step count
+    /// reported long work as a failure.
+    static var stepLimitPerTurn: Int? {
+        let store = UserDefaults.standard
+        guard let value = store.object(forKey: stepLimitKey) as? Int, value > 0 else { return nil }
+        return min(value, maxStepLimit)
+    }
+
+    /// The policy to hand a turn, built from the stored settings.
+    ///
+    /// `retainRatio` and the two retry budgets are DSH's own and are not exposed:
+    /// the screen moves the trigger, never what a compaction keeps.
+    static func policy() -> DSHCompactionPolicy {
+        DSHCompactionPolicy(
+            thresholdRatio: triggerRatio,
+            headroomTokens: headroomTokens
+        )
+    }
+
+    // MARK: Writes
+
+    static func store(triggerRatio ratio: Double) {
+        let clamped = min(1, max(minThresholdRatio, ratio))
+        let store = UserDefaults.standard
+        store.register(defaults: [triggerRatioKey: shippedThresholdRatio])
+        store.set(clamped, forKey: triggerRatioKey)
+    }
+
+    static func store(headroomTokens tokens: Int) {
+        let clamped = min(maxHeadroomTokens, max(0, tokens))
+        let store = UserDefaults.standard
+        store.register(defaults: [headroomTokensKey: shippedHeadroomTokens])
+        store.set(clamped, forKey: headroomTokensKey)
+    }
+
+    /// Store an explicit ceiling, or remove it.
+    ///
+    /// `0` is written rather than the key removed, so "no ceiling" is a recorded
+    /// choice — the same reason `DSHSpillConfig.setEnabled` writes 0 instead of
+    /// deleting its key.
+    static func store(stepLimitPerTurn limit: Int?) {
+        let store = UserDefaults.standard
+        store.register(defaults: [stepLimitKey: shippedStepLimit])
+        guard let limit, limit > 0 else {
+            store.set(0, forKey: stepLimitKey)
+            return
+        }
+        store.set(min(limit, maxStepLimit), forKey: stepLimitKey)
+    }
+
+    /// The largest context window this device currently routes, for the readout.
+    ///
+    /// The trigger is per-route, so showing one number for "the" window would be a
+    /// claim this screen cannot make. The widest route is used because it is the
+    /// one where the headroom term binds — that is, the case the percentage alone
+    /// gets wrong, which is the whole reason the readout exists.
+    ///
+    /// `@MainActor` because `ProviderConfigStore` is: the store is main-actor
+    /// state (it publishes the picker's model list), and a nonisolated reader
+    /// would be a data race the compiler is right to refuse. The only caller is
+    /// this screen's body, which is already on the main actor.
+    @MainActor
+    static var widestContextWindow: Int? {
+        ProviderConfigStore.shared.resolvedAgentLoopEntries
+            .compactMap { $0.model.contextWindow }
+            .filter { $0 > 0 }
+            .max()
+    }
+
+    /// One rendering of the trigger for the readout.
+    static func readout(window: Int?, reserved: Int) -> DSHCompactionThresholdBreakdown? {
+        guard let window else { return nil }
+        return policy().thresholdBreakdown(
+            contextWindow: window,
+            reservedCompletionTokens: reserved
+        )
+    }
+}
+
+// MARK: - View
+
+struct DSHCompactionSettingsView: View {
+
+    /// Percent form of the ratio, so the slider's own unit and the label match.
+    @State private var triggerPercent: Double
+    @State private var headroomText: String
+    @State private var stepCapEnabled: Bool
+    @State private var stepCapText: String
+
+    /// Retained-tail ratio is DSH's (`0.16`) and is not editable; this is only
+    /// here so the "Retained tail" row can state the budget in effect.
+    private let reservedCompletionTokens = DSHTurnDriverConfig().maxTokens
+
+    init() {
+        let policy = DSHCompactionSettings.policy()
+        _triggerPercent = State(initialValue: (policy.thresholdRatio * 100).rounded())
+        _headroomText = State(initialValue: String(policy.headroomTokens))
+        let limit = DSHCompactionSettings.stepLimitPerTurn
+        _stepCapEnabled = State(initialValue: limit != nil)
+        _stepCapText = State(initialValue: String(limit ?? 200))
+    }
+
+    var body: some View {
+        List {
+            Section {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("Trigger percentage")
+                        Spacer(minLength: 12)
+                        Text("\(Int(triggerPercent))%")
+                            .foregroundStyle(.secondary)
+                    }
+                    Slider(
+                        value: $triggerPercent,
+                        in: (DSHCompactionSettings.minThresholdRatio * 100)...100,
+                        step: 5,
+                        onEditingChanged: { editing in
+                            if !editing { DSHCompactionSettings.store(triggerRatio: triggerPercent / 100) }
+                        }
+                    )
+                }
+
+                HStack {
+                    Text("Headroom")
+                    Spacer(minLength: 12)
+                    // Persisted when the field is LEFT, not on every keystroke: a
+                    // half-typed 50000 passes through 5, and a stored headroom of
+                    // 5 would make every request trip the trigger.
+                    TextField("tokens", text: $headroomText, onEditingChanged: { editing in
+                        if !editing { writeHeadroom() }
+                    })
+                        .keyboardType(.numberPad)
+                        .multilineTextAlignment(.trailing)
+                        .frame(maxWidth: 110)
+                    Text("tokens")
+                        .foregroundStyle(.secondary)
+                }
+
+                Button("Reset to the DSH defaults") {
+                    triggerPercent = (DSHCompactionSettings.shippedThresholdRatio * 100).rounded()
+                    headroomText = String(DSHCompactionSettings.shippedHeadroomTokens)
+                    DSHCompactionSettings.store(triggerRatio: DSHCompactionSettings.shippedThresholdRatio)
+                    DSHCompactionSettings.store(headroomTokens: DSHCompactionSettings.shippedHeadroomTokens)
+                }
+            } header: {
+                Text("Compaction Trigger")
+            }
+
+            Section {
+                readout("Widest model window", windowLabel)
+                readout("Trigger in force", thresholdLabel)
+                readout("By percentage", percentTermLabel)
+                readout("By headroom", headroomTermLabel)
+                readout("Binding", bindingLabel)
+                readout("Retained tail", retainLabel)
+            } header: {
+                Text("Current Effect")
+            }
+
+            Section {
+                Toggle("Limit steps per turn", isOn: $stepCapEnabled)
+                    .onChange(of: stepCapEnabled) { _ in writeStepCap() }
+
+                HStack {
+                    Text("Steps")
+                    Spacer(minLength: 12)
+                    TextField("steps", text: $stepCapText, onEditingChanged: { editing in
+                        if !editing { writeStepCap() }
+                    })
+                        .keyboardType(.numberPad)
+                        .multilineTextAlignment(.trailing)
+                        .frame(maxWidth: 110)
+                }
+                .disabled(!stepCapEnabled)
+            } header: {
+                Text("Turn Steps")
+            }
+        }
+        .listStyle(.insetGrouped)
+        .navigationTitle("Context Compaction")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    // MARK: - Rows
+
+    /// One label/value row. Both halves are `LocalizedStringKey`s: `Text(_:
+    /// String)` does not consult the catalog, so a plain-`String` value renders
+    /// English on a Chinese device — the same defect `DSHSpillSettingsView`
+    /// carries a note about.
+    private func readout(_ label: LocalizedStringKey, _ value: LocalizedStringKey) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(label)
+            Spacer(minLength: 12)
+            Text(value)
+                .font(AppFont.sw(13))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.trailing)
+        }
+    }
+
+    private var breakdown: DSHCompactionThresholdBreakdown? {
+        DSHCompactionSettings.readout(
+            window: DSHCompactionSettings.widestContextWindow,
+            reserved: reservedCompletionTokens
+        )
+    }
+
+    private var windowLabel: LocalizedStringKey {
+        guard let window = DSHCompactionSettings.widestContextWindow else { return "none routed" }
+        return "\(DSHCompactionThresholdBreakdown.format(window)) tok"
+    }
+
+    private var thresholdLabel: LocalizedStringKey {
+        guard let breakdown else { return "unresolvable for this route" }
+        return "\(DSHCompactionThresholdBreakdown.format(breakdown.threshold)) tok"
+    }
+
+    private var percentTermLabel: LocalizedStringKey {
+        guard let breakdown else { return "-" }
+        return "\(DSHCompactionThresholdBreakdown.format(breakdown.windowFraction)) tok"
+    }
+
+    private var headroomTermLabel: LocalizedStringKey {
+        guard let breakdown else { return "-" }
+        return "\(DSHCompactionThresholdBreakdown.format(breakdown.headroomBound)) tok"
+    }
+
+    private var bindingLabel: LocalizedStringKey {
+        guard let breakdown else { return "-" }
+        return breakdown.binding == .headroom ? "headroom" : "percentage"
+    }
+
+    private var retainLabel: LocalizedStringKey {
+        guard let window = DSHCompactionSettings.widestContextWindow else { return "-" }
+        guard let spec = try? DSHCompactionSettings.policy().resolveSpec(
+            targetKey: "readout",
+            contextWindow: window,
+            reservedCompletionTokens: reservedCompletionTokens
+        ) else { return "-" }
+        return "\(DSHCompactionThresholdBreakdown.format(spec.retainTokens)) tok"
+    }
+
+    // MARK: - Write
+
+    /// A field that does not parse is ignored rather than clamped to something
+    /// surprising: the text stays as typed so the mistake is visible and the
+    /// stored value keeps applying. Same rule as the spill screen.
+    private func writeHeadroom() {
+        guard let tokens = Int(headroomText.trimmingCharacters(in: .whitespaces)) else { return }
+        DSHCompactionSettings.store(headroomTokens: tokens)
+        headroomText = String(DSHCompactionSettings.headroomTokens)
+    }
+
+    private func writeStepCap() {
+        guard stepCapEnabled else {
+            DSHCompactionSettings.store(stepLimitPerTurn: nil)
+            return
+        }
+        let typed = Int(stepCapText.trimmingCharacters(in: .whitespaces))
+        DSHCompactionSettings.store(stepLimitPerTurn: typed ?? DSHCompactionSettings.maxStepLimit)
+        stepCapText = String(DSHCompactionSettings.stepLimitPerTurn ?? 200)
+    }
+}

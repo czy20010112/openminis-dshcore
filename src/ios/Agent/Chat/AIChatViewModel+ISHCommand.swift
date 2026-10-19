@@ -195,8 +195,9 @@ extension AIChatViewModel {
             output = head
                 + "\n\n...\n\n"
                 + tail
-                + "\n\n[OUTPUT TRUNCATED] Showing first & last \(halfLen) of \(totalChars) chars (\(totalLines) lines total)."
-                + "\nUse file_read tool to read specific sections."
+                + "\n\n[OUTPUT SHORTENED] Showing first & last \(halfLen) of \(totalChars) chars (\(totalLines) lines total)."
+                + "\nNothing was lost: the complete output is saved to the path above. To read other"
+                + "\nparts, call file_read with an offset on that path, or run a shell_execute grep on it."
         }
 
         return CommandResult(output: output, exitCode: result.exitCode)

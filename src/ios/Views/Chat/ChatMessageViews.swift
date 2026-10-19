@@ -519,6 +519,12 @@ struct ChatMessageRow: View {
                     highlightedBlockId: $highlightedBlockId,
                     detailBlock: $detailBlock
                 )
+                // [F4-compaction-visibility] Dim per BLOCK, ORed with the row's
+                // flag so a block inside a fully-compacted row is dimmed once. The
+                // row this branch renders can hold both compacted and retained
+                // blocks (a merged bubble, or the turn a mid-turn compaction cut
+                // through), and the row-level opacity above cannot express that.
+                .opacity((message.isCompactedHistory || block.isCompactedHistory) ? 0.5 : 1.0)
             }
 
             // Typing indicator — "request out, nothing back yet", evaluated per
