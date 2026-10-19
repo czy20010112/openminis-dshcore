@@ -311,6 +311,110 @@ public struct DSHCompactionPolicy: Sendable {
     }
 }
 
+// MARK: - Unified Trigger
+
+/// Which of the two terms of `min()` is holding the trigger down.
+///
+/// The formula is a `min` of two bounds and the user only ever set one of them,
+/// so "why is it firing here and not there" is otherwise unanswerable from the
+/// settings screen. Named terms rather than two raw numbers for that reason.
+public enum DSHCompactionThresholdBinding: String, Sendable, Equatable {
+    /// `W × thresholdRatio` is the smaller term: the window fraction decides.
+    case windowRatio = "window-ratio"
+    /// `(W − O) − headroomTokens` is the smaller term: headroom decides.
+    case headroom = "headroom"
+}
+
+/// The trigger, with the two terms it was chosen from.
+///
+/// ONE resolution of one formula, shared by every path that decides whether a
+/// conversation is under pressure — the engine's mid-turn check
+/// (`DSHTurnDriver.compactForPressure`) and the pre-send capacity check on the
+/// view-model side. Log 2026-10-19 showed the same conversation carrying two
+/// rulers: `[CtxMeter] … threshold=242144` (legacy `W − 20000`) against
+/// `[CompactDiag] … threshold=188416` (this policy). Two numbers for one
+/// decision is a bug even when both are individually defensible, so the
+/// arithmetic moved here and the legacy site is meant to read it too.
+public struct DSHCompactionThresholdBreakdown: Sendable, Equatable {
+    /// Capacity of the routed model.
+    public let window: Int
+    /// Output tokens the routed request reserves.
+    public let reserved: Int
+    /// Pressure headroom beyond the output reservation.
+    public let headroom: Int
+    /// `floor(W × ratio)`.
+    public let windowFraction: Int
+    /// `(W − O) − headroom`.
+    public let headroomBound: Int
+    /// `min(windowFraction, headroomBound)` — the trigger actually in force.
+    public let threshold: Int
+    /// Which term produced `threshold`.
+    public let binding: DSHCompactionThresholdBinding
+
+    /// `windowFraction` as a percentage of the window, for the settings readout.
+    public var windowPercentLabel: String {
+        guard window > 0 else { return "0%" }
+        return "\(Int((Double(windowFraction) / Double(window) * 100).rounded()))%"
+    }
+
+    /// Thousands-separated token count, for the settings readout.
+    public static func format(_ tokens: Int) -> String {
+        let digits = Array(String(tokens))
+        var out = ""
+        for (i, ch) in digits.enumerated() {
+            if i > 0, (digits.count - i) % 3 == 0 { out.append(",") }
+            out.append(ch)
+        }
+        return out
+    }
+}
+
+extension DSHCompactionPolicy {
+
+    /// Resolve the trigger from one policy and one model capacity, keeping both
+    /// terms.
+    ///
+    /// The formula is upstream's, unchanged and unabridged:
+    /// `Math.floor(Math.min(contextWindow * thresholdRatio, pressureBudgetTokens))`
+    /// (`packages/compaction/compaction-basic/src/config.ts:191-194`, with
+    /// `pressureBudgetTokens = contextWindow - reservedCompletionTokens -
+    /// headroomTokens` at `:181` and `:172`). The defaults are upstream's own
+    /// published values (`DEFAULT_THRESHOLD_RATIO = 0.8` at `:20`,
+    /// `headroomTokens ?? 65_536` at `:75`, `DEFAULT_RETAIN_RATIO = 0.16` at
+    /// `:23`) and are NOT changed by the settings screen: the screen writes a
+    /// stored override, and `resolveSpec` keeps applying this formula to it. The
+    /// same clamps `resolveSpec` enforces apply here, so a caller can show the
+    /// resolved number without first being able to throw.
+    ///
+    /// - Parameters:
+    ///   - contextWindow: adapter-declared capacity for the routed model.
+    ///   - reservedCompletionTokens: output tokens one routed request reserves.
+    /// - Returns: the trigger with both of its terms, or nil when the pair cannot
+    ///   yield one (non-positive window, or nothing left after output and
+    ///   headroom) — the cases `resolveSpec` reports as misconfiguration.
+    public func thresholdBreakdown(
+        contextWindow: Int,
+        reservedCompletionTokens: Int
+    ) -> DSHCompactionThresholdBreakdown? {
+        guard contextWindow > 0, reservedCompletionTokens >= 0 else { return nil }
+        let messageBudget = contextWindow - reservedCompletionTokens
+        guard messageBudget > 0 else { return nil }
+        let pressureBudget = messageBudget - headroomTokens
+        guard pressureBudget > 0 else { return nil }
+        let windowFraction = Int((Double(contextWindow) * thresholdRatio).rounded(.down))
+        let threshold = min(windowFraction, pressureBudget)
+        return DSHCompactionThresholdBreakdown(
+            window: contextWindow,
+            reserved: reservedCompletionTokens,
+            headroom: headroomTokens,
+            windowFraction: windowFraction,
+            headroomBound: pressureBudget,
+            threshold: threshold,
+            binding: windowFraction <= pressureBudget ? .windowRatio : .headroom
+        )
+    }
+}
+
 // MARK: - Overflow Classification
 
 /// Recognizes the provider wording that means "this request exceeded the model's

@@ -407,13 +407,16 @@ extension AIChatViewModel {
         let rangeInfo = "showing lines \(effectiveStart)-\(effectiveEnd) of \(totalLines)"
         var header = "[\(path) | \(fileData.count) bytes | \(totalLines) lines | \(rangeInfo)"
         if wasTruncated {
-            header += " | truncated at \(maxLength) chars"
+            // [T-truncation-is-not-failure] "truncated" read to the model as "the result
+            // is broken", and it told the user so. Say what happened (a window, not a
+            // loss) and what to do next; the tool still returns exactly the same bytes.
+            header += " | showing \(maxLength) chars"
             if let nextOffset {
                 // Named to match the tool's own `offset` parameter so the model
                 // can copy it straight into the next call.
                 header += ", next_offset=\(nextOffset)"
             } else {
-                header += ", retry with a smaller lines value"
+                header += ", call again with a larger offset for the rest"
             }
         }
         header += "]"

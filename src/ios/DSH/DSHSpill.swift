@@ -440,8 +440,20 @@ public enum DSHSpill {
     /// The sentence that tells the model how to read the whole thing back. Both
     /// notice forms end with it, `hasNotice` matches it literally, and the two
     /// therefore cannot drift apart.
+    ///
+    /// [T-spill-notice-voice] This sentence is the one place a spill says what to
+    /// DO, so it carries the whole burden of keeping the model on task. It used to
+    /// read `Use file_read with offset/limit, or a shell_execute grep on this path
+    /// to search within it.` — an accurate sentence that names no offset and does
+    /// not say the content is recoverable, which is how a bounded result got
+    /// reported to the user as "内容被截断了" (operator report, 2026-10-19). A
+    /// truncation the tool handled is not a failure the user needs to hear about;
+    /// it is an instruction the model should follow. The wording is an imperative
+    /// naming the offset parameter, and states outright that nothing was lost.
     public static let recoveryTail =
-        ". Use file_read with offset/limit, or a shell_execute grep on this path to search within it.)"
+        ". Nothing was lost: the result was relocated to disk, not discarded."
+        + " To read it, call file_read with offset=<line number> on this path,"
+        + " or run a shell_execute grep on this path to search within it.)"
 
     /// Provenance sentence for a result this pass shortened from the original.
     public static let fullResultProvenance = " Full formatted result stored at: "
@@ -455,15 +467,29 @@ public enum DSHSpill {
     /// `… saved to: <path>` clause), but not always — the offload read-back branch
     /// truncates in place and names no new file. `hasNotice` keys on the shared
     /// prefix, so all three forms are recognised as previews.
+    ///
+    /// [T-spill-notice-voice] Was `The tool layer had already truncated this
+    /// result; `. "Already truncated" reads as a fault the model should report and
+    /// is the second half of the same operator complaint the recovery tail carries
+    /// a note about; the replacement states the same fact as a description of the
+    /// text in hand ("a preview"), which is what the model needs in order to tell
+    /// a bounded result from a lost one.
     public static let priorTruncationProvenance =
-        " The tool layer had already truncated this result; "
+        " This result was cut to a preview before this pass saw it; "
 
     /// Completion of that sentence when the tool layer named a file.
-    public static let priorTruncationCompleteClause = "the complete output is stored at: "
+    public static let priorTruncationCompleteClause = "the complete output is saved at: "
 
     /// Completion of that sentence when it did not.
+    ///
+    /// [T-spill-notice-voice] Was `no complete copy of it is addressable from
+    /// here.` — the one sentence in either notice that gives the model nothing to
+    /// do, which made it the most likely thing in the result to be quoted back to
+    /// the user as a defect. The replacement is true in the same case and points
+    /// at the two things that actually remain available.
     public static let priorTruncationNoCopyClause =
-        "no complete copy of it is addressable from here."
+        "the untruncated text is not addressable as a file from here;"
+        + " work from the preview above, or re-run the command with a narrower query."
 
     /// Whether a result carries a spill notice at its end.
     ///
@@ -692,6 +718,15 @@ extension DSHSpill {
     /// false. Both markers are therefore recognised here.
     public static let toolTruncationMarker = "[OUTPUT TRUNCATED]"
 
+    /// The same marker after it was reworded to stop reading as a failure.
+    ///
+    /// The sentence that follows it now says the result was moved rather than lost and
+    /// names the call that reaches the rest, because the model used to relay "the tool
+    /// output was truncated" to the user as if the work had failed. Both spellings name
+    /// a second file, so both have to resolve a locator — results written by older
+    /// builds are still on disk.
+    public static let toolShortenedMarker = "[OUTPUT SHORTENED]"
+
     /// Whether a result was already shortened by the tool layer.
     ///
     /// `file_read`'s header form is deliberately NOT included: it is a paging
@@ -699,7 +734,7 @@ extension DSHSpill {
     /// second file behind it, so there is nothing to point a notice at, and the
     /// spill budget still has to be able to bound that result.
     public static func hasToolTruncationMarker(_ text: String) -> Bool {
-        text.contains(toolTruncationMarker)
+        text.contains(toolTruncationMarker) || text.contains(toolShortenedMarker)
     }
 
     /// The path the tool layer named as holding the complete output, when it

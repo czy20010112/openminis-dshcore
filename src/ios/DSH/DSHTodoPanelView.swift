@@ -33,6 +33,13 @@
 //  (`conversation.input.dock: padding: 0 … 4px`), and a panel that does not
 //  overlap cannot have that defect.
 //
+//  SUPERSEDED BY `DSHStatusPanelView` (2026-10-18). The placement rules below
+//  still hold; what changed is that this bar is no longer a SECOND card. It is
+//  the bottom section of `DSHStatusPanelView`'s single card, under the goal, so
+//  this view must NOT be mounted alongside it — that would draw the list twice.
+//  It is kept in the tree as the source of the task rows and of the pill/list
+//  geometry, which moved across unchanged.
+//
 
 import SwiftUI
 

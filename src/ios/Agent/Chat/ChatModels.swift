@@ -70,6 +70,37 @@ final class ChatMessage: Identifiable, ObservableObject {
     @Published var isQueued = false
     /// True if this message is from the compacted history zone (read-only, no actions).
     @Published var isCompactedHistory = false
+    /// [F4-compaction-visibility] For a `compactDivider` that was inserted by the
+    /// DSH driver's mid-turn compaction: the id of the BLOCK it follows.
+    ///
+    /// The driver's compaction fires in the middle of a turn, and a turn is ONE
+    /// assistant bubble — the shadowed entries are the earlier blocks *inside* the
+    /// row the turn is still streaming into, so a message-level position cannot
+    /// name the boundary. The divider used to be placed above that whole bubble
+    /// (`dshDividerPosition` clamps to the live row), which put it — and the whole
+    /// greyed region — thousands of points above a viewport that is pinned to the
+    /// bottom, and left the compacted blocks inside the bubble undimmed. That is
+    /// the operator's report: 「压缩的时候没有任何显示了…看不到压缩的横条啊上面
+    /// 变灰啊」.
+    ///
+    /// With an anchor the list emits this divider's row immediately AFTER that
+    /// block's cell instead of at the divider's own array position, so the bar sits
+    /// exactly where the compaction cut the transcript and every block the turn
+    /// writes next lands BELOW it.
+    ///
+    /// nil — the divider is a normal row between two messages (the reload path, the
+    /// in-loop compactor, and every DSH compaction whose boundary really is between
+    /// two rows).
+    var compactionAnchorBlockId: UUID?
+    /// [F4-compaction-visibility] True on a divider the user has not been SHOWN yet.
+    ///
+    /// Compaction is otherwise invisible while it happens: the transcript is
+    /// rewritten above the viewport and the reply simply continues. The list
+    /// consumes this flag on the snapshot that first carries the divider and brings
+    /// it into view once (see the coordinator's compaction reveal). A flag on the
+    /// row rather than a signal on the view model keeps the whole mechanism inside
+    /// the files that own it — no new published state, nothing to keep in sync.
+    var compactionRevealPending = false
     /// True when this compact divider is still loading (LLM generating summary).
     @Published var isCompactLoading = false
     /// SF Symbol name for systemInfo rows (e.g. "brain.head.profile", "arrow.down.right.and.arrow.up.left").
@@ -644,6 +675,24 @@ final class AssistantBlock: Identifiable, ObservableObject {
     /// `isThinkingExpanded` alone so a tap on an earlier (frozen) block can't
     /// be silently undone by a streaming sibling's recomposition.
     @Published var thinkingUserToggled: Bool = false
+    /// [F4-compaction-visibility] This block is inside the region a compaction
+    /// shadows — the model no longer sees it verbatim, so it renders dimmed.
+    ///
+    /// Per BLOCK, not per message: Phase 2 folds a whole assistant/tool run into
+    /// one bubble (a device session measured 231 database rows becoming 15 UI
+    /// rows), so the compaction anchor lands mid-bubble as the norm. Greying the
+    /// whole bubble would dim blocks the model still sees (the over-claim
+    /// `DSHCompactBoundary` refuses); greying nothing — which is what a
+    /// message-granular rule does for every bubble the anchor lands inside — made
+    /// the compaction invisible, because on a DSH session that bubble is most of
+    /// what the user has on screen.
+    ///
+    /// Written by the reload path from each row's per-block provenance
+    /// (`ChatMessage.blockSortOrders`) and by the DSH adapter from the shadowed
+    /// entries' own tool-call ids. @Published because the cell observes the block:
+    /// without a publish, a block that is dimmed mid-turn keeps its bright render
+    /// until some unrelated state change repaints it.
+    @Published var isCompactedHistory: Bool = false
 
     init(kind: AssistantBlockKind, content: String, toolStatus: ToolBlockStatus? = nil, toolUseId: String? = nil) {
         self.kind = kind
