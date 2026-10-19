@@ -317,6 +317,23 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
         )
         dshLastCompaction = outcome
 
+        // [T-ctx-usage-after-dsh-compact] Re-price the composer's usage NOW.
+        //
+        // The legacy in-loop compaction ends by calling this
+        // (`AIChatViewModel+Compaction.swift`'s `announceContextUsageAfterCompaction`),
+        // but the DSH path installs its marker here and re-priced nothing. After a
+        // mid-turn compaction the composer kept the PRE-compaction figure, so a
+        // 560k-window session that had just dropped to tens of thousands kept
+        // glowing red — and re-entering the conversation changed nothing, because a
+        // cached view model publishes no usage on its own. The device showed exactly
+        // that (2026-10-20 00:26:46 "compacted 60 entries, 59886 -> 20845"): the glow
+        // cleared only when the operator stopped the turn.
+        //
+        // Measured, not reported-forward: `publishMeasuredContextUsage` prices what
+        // the next request will send, which is the only figure that describes the
+        // compacted surface before any response arrives.
+        announceContextUsageAfterCompaction()
+
         // Capture the durable anchor now, while the shadowed rows are still in
         // `agentHistory` — the anchor is a database id that only lives there, and
         // the reconcile that runs at the end of the turn replaces that array with
