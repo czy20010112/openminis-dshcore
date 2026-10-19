@@ -2113,7 +2113,20 @@ public final class DSHTurnDriver {
             sectionNames: assembly.sections.filter { !$0.text.isEmpty }.map(\.name),
             model: provider.model.id,
             provider: provider.name,
-            sessionKey: config.sessionKey
+            sessionKey: config.sessionKey,
+            // The capacity THIS STEP was assembled for, which is the settings
+            // screen's "session model window" and the turn-start log's `window=`.
+            //
+            // `config.contextWindow` is `effectiveContextWindow(for: entry.model)`
+            // (`DSHTurnDriverRun.swift:806`) — the SAME call, on the same model, that
+            // the turn-start line captures into `resolvedWindow` and prints as
+            // `window=` (`:862`, logged at `:874-889`). Both run before `driver.run()`,
+            // so within a turn they are one value: `init` only clamps a non-positive
+            // window to nil (`DSHTurnDriver.swift:270-274`), which is the one case
+            // where this field is nil and the log would print 0 — "no capacity" either
+            // way. Recording it here rather than re-resolving it in the settings screen
+            // is what keeps that row from describing a different route than the turn.
+            windowTokens: config.contextWindow
         )
 
         // Price the envelope here, where all three of its inputs are in hand at

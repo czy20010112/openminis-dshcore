@@ -125881,6 +125881,65 @@
       }
       }
     },
+    "Session model window": {
+      "extractionState": "manual",
+      "localizations": {
+      "de": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Modellfenster der Sitzung"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Session model window"
+        }
+      },
+      "es": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Ventana de modelo de la sesión"
+        }
+      },
+      "fr": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Fenêtre de modèle de la session"
+        }
+      },
+      "ja": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "セッションのモデルウィンドウ"
+        }
+      },
+      "ko": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "세션 모델 창"
+        }
+      },
+      "ru": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Окно модели сессии"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "会话模型窗口"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "工作階段模型視窗"
+        }
+      }
+      }
+    },
     "Trigger in force": {
       "extractionState": "manual",
       "localizations": {
