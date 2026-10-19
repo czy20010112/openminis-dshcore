@@ -879,6 +879,16 @@ enum RequestBodyPatcher {
     /// patchers below round-trip through `JSONSerialization`. Without `.sortedKeys`,
     /// the key ordering is non-deterministic and can change between requests even
     /// for identical logical content, breaking cache prefix matching.
+    ///
+    /// This is the Anthropic side's counterpart to `AgentToolArguments.canonical`
+    /// on the OpenAI-compatible side: `JSONSerialization`'s `.sortedKeys` sorts
+    /// every nested object, so the key order of each historical `tool_use.input`
+    /// is decided **here**, not by the `[String: Any]` the agent loop handed to
+    /// the SDK. All three URLProtocols that carry `/v1/messages`
+    /// (`OAuthURLProtocol`, `EagerStreamingURLProtocol`, `DualAuthURLProtocol`)
+    /// call it first in `startLoading()`, before any other patcher, and the body
+    /// they upload is the one this produced — so a `tool_use` input cannot reach
+    /// the wire in dictionary order.
     static func normalizeKeyOrder(in request: NSMutableURLRequest) {
         guard let body = request.httpBody,
               let json = try? JSONSerialization.jsonObject(with: body),

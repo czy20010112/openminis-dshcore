@@ -86,19 +86,33 @@ enum AgentContentPart: @unchecked Sendable {
 /// Rules: keys sorted, no escaped slashes, no pretty printing. Byte-identical
 /// for semantically identical input; nothing else changes.
 enum AgentToolArguments {
-    static func canonical(_ input: [String: Any]) -> String {
+    /// Canonical form of `input`, or `nil` when the value cannot be JSON-encoded
+    /// (non-string keys, NaN/Infinity, … — theoretical for arguments that were
+    /// themselves parsed from JSON, but the distinction matters to `wire()`).
+    ///
+    /// Split out of `canonical()` so that "encoding failed" can be told apart
+    /// from "the value really is the empty object": the fallback string for both
+    /// used to be `{}`, which is a *legal* payload and must not be handed to a
+    /// caller that then treats it as canonical bytes.
+    static func canonicalIfPossible(_ input: [String: Any]) -> String? {
         guard let data = try? JSONSerialization.data(
             withJSONObject: input,
             options: [.sortedKeys, .withoutEscapingSlashes]
-        ), let text = String(data: data, encoding: .utf8) else { return "{}" }
+        ), let text = String(data: data, encoding: .utf8) else { return nil }
         return text
+    }
+
+    static func canonical(_ input: [String: Any]) -> String {
+        canonicalIfPossible(input) ?? "{}"
     }
 
     /// The boundaries of the raw-bytes fast path: the bytes that replay, and the
     /// canonical form of the same value so a rewrite can be detected without
     /// re-parsing. See `AgentMessage.toolArguments`.
     struct Record {
-        /// Verbatim `arguments` text as received — what goes back on the wire.
+        /// Verbatim `arguments` text as received. Replayed by `wire()` only when
+        /// it is byte-identical to the canonical form of `input`; otherwise the
+        /// canonical form wins (see `wire()`).
         let text: String
         /// `canonical()` of the value `text` carries.
         ///
@@ -114,17 +128,42 @@ enum AgentToolArguments {
 
     /// The `arguments` string to put on the wire for one tool call.
     ///
-    /// Verbatim when the message still carries the bytes the model emitted and
-    /// they still describe `input`; otherwise the canonical form of `input`.
+    /// Canonical, always — the only exception is an `input` the canonicalizer
+    /// cannot encode at all.
     ///
-    /// The equality check is not defensive padding — context offloading rewrites
-    /// a tool call's parsed `input` in place (it replaces a large `content` with
-    /// a stub pointing at the file it was saved to). Replaying the pre-rewrite
-    /// text verbatim would silently undo that rewrite and put the whole file
-    /// back into the request, so a stale record must lose to the dictionary.
+    /// ## Why verbatim replay and `rewritten=0` are mutually exclusive
+    ///
+    /// The model emits its own key order, so `record.text` is almost never
+    /// key-sorted, while the server-side proxy re-serializes **every**
+    /// historical `tool_calls[].function.arguments` as
+    /// `json.dumps(parsed, sort_keys=True, ensure_ascii=False, separators=(",", ":"))`
+    /// before forwarding the body. Any byte that differs from that form is
+    /// counted as a rewrite, and a rewrite of a *historical* tool call moves the
+    /// first divergence to that call — everything after it re-prefills. So
+    /// replaying raw bytes verbatim can only ever buy a `rewritten` count > 0.
+    ///
+    /// The fast path therefore only fires when the raw bytes **already are** the
+    /// canonical bytes: `record.text == canonicalInput` makes the replay
+    /// byte-identical to returning `canonicalInput`, so nothing is lost — the
+    /// shortcut survives without moving a single byte on the wire.
+    ///
+    /// The `record.canonical == canonicalInput` check is not defensive padding —
+    /// context offloading rewrites a tool call's parsed `input` in place (it
+    /// replaces a large `content` with a stub pointing at the file it was saved
+    /// to). Replaying the pre-rewrite text would silently undo that rewrite and
+    /// put the whole file back into the request, so a stale record must lose to
+    /// the dictionary.
     static func wire(_ input: [String: Any], record: Record?) -> String {
-        let canonicalInput = canonical(input)
-        guard let record, record.canonical == canonicalInput else { return canonicalInput }
+        guard let canonicalInput = canonicalIfPossible(input) else {
+            // Not encodable (theoretical boundary). Replaying the raw text is the
+            // only option that loses no information, and it is exactly what the
+            // pre-fix code did; the proxy will not rewrite it either, because it
+            // is not a JSON object it can parse.
+            return record?.text ?? "{}"
+        }
+        guard let record, record.canonical == canonicalInput, record.text == canonicalInput else {
+            return canonicalInput
+        }
         return record.text
     }
 }
@@ -197,8 +236,9 @@ struct AgentMessage: @unchecked Sendable {
     /// and serializer do not agree on key order, so a historical turn came back
     /// different from the one the server had cached. The verbatim bytes are what
     /// the model actually emitted (or what the DB row holds) — see
-    /// `AgentToolArguments.wire` for when they are used and why a rewritten
-    /// dictionary has to win over them.
+    /// `AgentToolArguments.wire` for when they are used: only while they are
+    /// **already** the canonical form (replaying anything else is exactly what
+    /// the proxy rewrites), and a rewritten dictionary always wins over them.
     var toolArguments: [String: AgentToolArguments.Record] = [:]
 }
 
