@@ -23,6 +23,16 @@ extension AIChatViewModel {
         let success: Bool
     }
 
+    /// [T-file-write-overwrite-guard] Smallest existing file the overwrite guard
+    /// will speak up for, in characters.
+    ///
+    /// The failure this protects against is a *large* file destroyed by a small
+    /// payload — an append chunk sent without `append: true`, which used to
+    /// overwrite silently. Below this size "much shorter" is ordinary editing
+    /// (rewriting a 200-character config from scratch is a normal thing to ask
+    /// for), and refusing it would cost the model a round trip for nothing.
+    static let kOverwriteGuardMinExistingChars = 256
+
     /// Snapshot all files under /var/minis/ with their modification dates.
     func snapshotMinisFiles() -> [String: Date] {
         let fm = FileManager.default
@@ -250,8 +260,37 @@ extension AIChatViewModel {
         // Mirror the Android FileReadTool 80 KB cap so both platforms refuse
         // the same oversized reads regardless of the agent-supplied value.
         let kMaxFileReadChars = 80_000
-        let requested = (dict["max_length"] as? Int) ?? Self.kMaxToolResultChars
-        let maxLength = min(requested, kMaxFileReadChars)
+        // [T-fileread-max-length-honest] `max_length` is honoured up to
+        // `kMaxFileReadChars`, but the result still has to survive the inline
+        // tool-result cap: `executeSingleToolUse` truncates EVERY tool output
+        // longer than `kMaxToolResultChars` (15 000 —
+        // `AIChatViewModel.swift`) to that many characters and swaps the tail
+        // for an offload notice. That cut cannot see this header — which is why
+        // `max_length=20000` “did not work”: the 20 000-char window built here
+        // was re-cut to 15 000 downstream, and because the file tool had not
+        // truncated anything there was no `next_offset` for the model to page
+        // from either, only a notice pointing at a copy of the same bytes.
+        //
+        // So the envelope is applied HERE, where the cut can land on a line
+        // boundary and be described in words: the window is at most the cap
+        // minus the header/`minis_url` allowance, and the header states the
+        // value actually used. A request at or below the envelope is untouched
+        // (same bytes as before this existed).
+        let kToolResultEnvelopeAllowance = 512
+        // A read of a file the OFFLOADER wrote is exempt from the inline cap
+        // downstream — `kOffloadReadbackAllowance` (4× the cap) exists so one
+        // call can fetch a spilled result whole instead of paging it back in and
+        // writing a second copy. Mirroring that exemption here is what keeps the
+        // envelope from cutting a readback the executor would have allowed.
+        let envelopeCap = Self.isOffloadStorePath(path)
+            ? Self.kOffloadReadbackAllowance
+            : Self.kMaxToolResultChars
+        let envelopeMaxLength = max(1, envelopeCap - kToolResultEnvelopeAllowance)
+        let explicitMaxLength = dict["max_length"] as? Int
+        let requestedMaxLength = explicitMaxLength ?? Self.kMaxToolResultChars
+        let clampedRequest = min(max(1, requestedMaxLength), kMaxFileReadChars)
+        let maxLength = min(clampedRequest, envelopeMaxLength)
+        let cappedByEnvelope = clampedRequest > envelopeMaxLength
         let direction = (dict["direction"] as? String)?.lowercased() ?? "head"
 
         guard FileManager.default.fileExists(atPath: hostURL.path) else {
@@ -296,6 +335,39 @@ extension AIChatViewModel {
 
         let allLines = fullText.components(separatedBy: "\n")
         let totalLines = allLines.count
+
+        // [T-fileread-empty-file] A zero-byte file used to come back as
+        // `showing lines 1-1 of 1` with an empty body, which reads as "the first
+        // line is empty" rather than as "this file has nothing in it".
+        if fileData.isEmpty {
+            var emptyOutput = "[\(path) | 0 bytes | empty file — nothing to read]"
+            if let minisURL = linuxPathToMinisURL(path) {
+                emptyOutput += "\nminis_url: \(minisURL)"
+            }
+            return FileToolResult(output: emptyOutput, success: true)
+        }
+
+        // [T-fileread-offset-out-of-range] An offset past the last line used to
+        // slice an empty window and then report it backwards — `showing lines
+        // 312-311 of 311`, no content, no error. The model read that as a
+        // damaged file and kept retrying instead of paging correctly. A file
+        // with 311 lines has no line 312, so say that, and name the range that
+        // does exist.
+        if direction != "tail", offset > totalLines {
+            let lineWord = totalLines == 1 ? "line" : "lines"
+            return FileToolResult(
+                output: "Error: offset=\(offset) is past the end of \(path) — the file has \(totalLines) \(lineWord). Nothing was read. Use an offset between 1 and \(totalLines), or omit `offset` to start from the top.",
+                success: false
+            )
+        }
+        // `lines` is a window SIZE, so 0 (or a negative) selects nothing. An
+        // explicit refusal beats an empty body with an inverted range.
+        if let maxLines, maxLines <= 0 {
+            return FileToolResult(
+                output: "Error: lines=\(maxLines) selects no lines from \(path). Use lines >= 1, or omit it to read the rest of the file.",
+                success: false
+            )
+        }
 
         // Apply offset/direction and line limit
         let selectedLines: ArraySlice<String>
@@ -364,13 +436,31 @@ extension AIChatViewModel {
             }
         }
 
-        let rangeInfo = "showing lines \(effectiveStart)-\(effectiveEnd) of \(totalLines)"
+        // The header reports what actually survived, not the cap that was asked
+        // for: backing off the half line above leaves `content` shorter than
+        // `maxLength`, and a header naming the cap invites the model to believe
+        // it received that many characters.
+        let keptChars = content.count
+        let rangeInfo = effectiveEnd >= effectiveStart
+            ? "showing lines \(effectiveStart)-\(effectiveEnd) of \(totalLines)"
+            : "showing no lines of \(totalLines)"
         var header = "[\(path) | \(fileData.count) bytes | \(totalLines) lines | \(rangeInfo)"
         if wasTruncated {
             // [T-truncation-is-not-failure] "truncated" read to the model as "the result
             // is broken", and it told the user so. Say what happened (a window, not a
             // loss) and what to do next; the tool still returns exactly the same bytes.
-            header += " | showing \(maxLength) chars"
+            header += " | showing \(keptChars) of \(maxLength) chars"
+            if cappedByEnvelope {
+                // [T-fileread-max-length-honest] Never let the model believe it got
+                // the 20 000 characters it asked for when the one tool result cannot
+                // carry them, and say which value IS in force so the next call can
+                // be sized against it.
+                header += " (window capped at \(maxLength) chars: one tool result carries at most \(envelopeCap)"
+                if let explicitMaxLength {
+                    header += ", so max_length=\(explicitMaxLength) cannot be honoured in one read"
+                }
+                header += ")"
+            }
             if let nextOffset {
                 // Named to match the tool's own `offset` parameter so the model
                 // can copy it straight into the next call.
@@ -500,6 +590,11 @@ extension AIChatViewModel {
 
         let appendMode = (dict["append"] as? Bool) ?? false
         let createDirs = (dict["create_dirs"] as? Bool) ?? false
+        // [T-file-write-overwrite-guard] Opt-in escape hatch for a deliberate
+        // whole-file replacement with a SHORTER body. Only ever required when
+        // the guard below would otherwise refuse; absent means false, so every
+        // existing caller keeps its meaning.
+        let overwriteMode = (dict["overwrite"] as? Bool) ?? false
 
         let fm = FileManager.default
         let parentDir = hostURL.deletingLastPathComponent()
@@ -543,6 +638,56 @@ extension AIChatViewModel {
                 #endif
                 return FileToolResult(
                     output: "Error: mount for \(path) is not active — the file would be written to an internal location invisible to both iSH and the real folder. Ensure the folder is mounted in Settings → Mount External Folders, then retry.",
+                    success: false
+                )
+            }
+        }
+
+        // [T-file-write-overwrite-guard] Refuse a write that would DESTROY an
+        // existing file with a much shorter payload.
+        //
+        // The failure, observed on device: a model appending a long document
+        // chapter by chapter forgot `append: true` on one chunk, and that chunk
+        // — a few KB — replaced a summary file of a hundred-odd chapters. Every
+        // layer reported success, and the only surviving copy of the old text
+        // was the conversation, so the file had to be rebuilt from context.
+        //
+        // What is refused is deliberately narrow: the target already exists,
+        // `append` is not true, and the new body is CLEARLY shorter — less than
+        // half of the existing file, or a prefix of it (the truncated-rewrite
+        // shape). A new file, an append, an equal-or-longer rewrite, a full
+        // rewrite that merely differs, and a deliberate `overwrite: true` all
+        // pass exactly as before, so ordinary file_write usage is unaffected.
+        if !appendMode, fm.fileExists(atPath: hostURL.path) {
+            let existingData = (try? Data(contentsOf: hostURL)) ?? Data()
+            let existingText = String(data: existingData, encoding: .utf8)
+            let existingChars = existingText?.count ?? existingData.count
+            let newChars = content.count
+            let shrink = existingChars - newChars
+            let truncatedRewrite = existingText.map { $0.hasPrefix(content) } ?? false
+            let guarded = existingChars >= Self.kOverwriteGuardMinExistingChars
+                && shrink > 0
+                && (newChars * 2 < existingChars || truncatedRewrite)
+            // [T-file-write-overwrite-guard] One WARN per write to an existing
+            // file, refused or allowed. Until now a destructive overwrite left
+            // no trace anywhere — no log line, and the tool result said
+            // "Wrote" — so "how big was it before it was gone?" was not
+            // answerable after the fact.
+            logger.warning(
+                "[FileTools] file_write existing path=\(path) old=\(existingChars) new=\(newChars) append=\(appendMode) overwrite=\(overwriteMode) prefixOfExisting=\(truncatedRewrite) guardFired=\(guarded && !overwriteMode)"
+            )
+            if guarded && !overwriteMode {
+                return FileToolResult(
+                    output: """
+                    Error: file_write refused — nothing was written, \(path) is unchanged.
+
+                    This call would have replaced an existing \(existingChars)-character file with \(newChars) characters, with `append` not set to true. That is the shape of a truncated write, or of an append chunk sent as a whole-file write, so it was refused rather than executed.
+
+                    How to continue:
+                    - To add this text to the END of the file: re-issue with `append: true` (the existing content is kept).
+                    - To replace the whole file with this shorter content on purpose: re-issue with `overwrite: true`.
+                    - To change part of the file: file_read it, then use file_edit with the exact old_string.
+                    """,
                     success: false
                 )
             }
