@@ -409,9 +409,7 @@ extension AIChatViewModel {
                     // Finalize thinking block content if it was streaming
                     if let thinkIdx = currentThinkingBlockIdx, !result.thinkingText.isEmpty {
                         await MainActor.run {
-                            guard msgIdx < messages.count,
-                                  thinkIdx < messages[msgIdx].blocks.count else { return }
-                            messages[msgIdx].blocks[thinkIdx].flushThinkingBuffer()
+                            flushThinkingBlock(messageIdx: msgIdx, blockIdx: thinkIdx)
                         }
                         currentThinkingBlockIdx = nil
                         result.thinkingText = ""
@@ -443,9 +441,7 @@ extension AIChatViewModel {
                     // so the next thinking segment (after this tool) opens its own block.
                     if let thinkIdx = currentThinkingBlockIdx, !result.thinkingText.isEmpty {
                         await MainActor.run {
-                            guard msgIdx < messages.count,
-                                  thinkIdx < messages[msgIdx].blocks.count else { return }
-                            messages[msgIdx].blocks[thinkIdx].flushThinkingBuffer()
+                            flushThinkingBlock(messageIdx: msgIdx, blockIdx: thinkIdx)
                         }
                         currentThinkingBlockIdx = nil
                         result.thinkingText = ""
@@ -940,9 +936,11 @@ extension AIChatViewModel {
                     lastThinkingDeltaFlush = thinkNow
                     await MainActor.run {
                         guard msgIdx < self.messages.count,
-                              let thinkIdx = currentThinkingBlockIdx,
-                              thinkIdx < self.messages[msgIdx].blocks.count else { return }
-                        self.messages[msgIdx].blocks[thinkIdx].flushThinkingBuffer()
+                              let thinkIdx = currentThinkingBlockIdx else { return }
+                        // Fill signal included: the first flush is the block's
+                        // empty → non-empty edge, and without it the cell keeps its
+                        // pre-fill height. [T-thinking-cell-height]
+                        self.flushThinkingBlock(messageIdx: msgIdx, blockIdx: thinkIdx)
                         // [T-ios-stream-publish-transition-gap]
                         self.publishUnlessTransitioning()
                         if self.isNearBottom { self.scrollToBottomSignal.send() }

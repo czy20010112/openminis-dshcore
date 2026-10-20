@@ -138,7 +138,10 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
         let interval = AssistantBlock.thinkingFlushInterval(forLength: dshPendingReasoning.count)
         if now.timeIntervalSince(dshLastThinkingFlush) >= interval {
             dshLastThinkingFlush = now
-            messages[idx].blocks[blockIdx].flushThinkingBuffer()
+            // Same helper as the segment flush: the first publish is the block's
+            // empty → non-empty edge, which is what tells the list to re-measure.
+            // [T-thinking-cell-height]
+            flushThinkingBlock(messageIdx: idx, blockIdx: blockIdx)
             publishUnlessTransitioning()
             if isNearBottom { scrollToBottomSignal.send() }
         }
@@ -161,7 +164,12 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
         guard dshThinkingBlockIdx >= 0,
               dshStreamingMsgIdx >= 0, dshStreamingMsgIdx < messages.count,
               dshThinkingBlockIdx < messages[dshStreamingMsgIdx].blocks.count else { return }
-        messages[dshStreamingMsgIdx].blocks[dshThinkingBlockIdx].flushThinkingBuffer()
+        // [T-thinking-cell-height] Goes through the view model's helper, which also
+        // sends the empty → filled height nudge. A plain `flushThinkingBuffer()`
+        // grew the block without telling the list, so the cell kept the height it
+        // had while the block was empty and the new lines painted over the answer
+        // below it.
+        flushThinkingBlock(messageIdx: dshStreamingMsgIdx, blockIdx: dshThinkingBlockIdx)
     }
 
     public func driver(
