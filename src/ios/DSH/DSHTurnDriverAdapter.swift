@@ -367,7 +367,14 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
         // Measured, not reported-forward: `publishMeasuredContextUsage` prices what
         // the next request will send, which is the only figure that describes the
         // compacted surface before any response arrives.
-        announceContextUsageAfterCompaction()
+        //
+        // [T-ctx-usage-after-dsh-compact] `surfaceEstimate` is what makes that
+        // literally true: a mid-turn compaction shrinks the SESSION surface, while
+        // the app's model-facing history is only reconciled at turn end, so
+        // measuring the history here priced the conversation that was just replaced
+        // (the device announced 136% · 761.9k / 560k right after compacting to ~46k
+        // estimator tokens). The outcome carries the compacted size.
+        announceContextUsageAfterCompaction(surfaceEstimate: outcome.afterTokens)
 
         // Capture the durable anchor now, while the shadowed rows are still in
         // `agentHistory` — the anchor is a database id that only lives there, and
