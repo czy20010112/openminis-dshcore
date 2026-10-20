@@ -120,6 +120,14 @@ final class DSHToolGate: @unchecked Sendable {
             let bucket = count / warning
             if let last = warningBuckets[key], last >= bucket { return .pass }
             warningBuckets[key] = bucket
+            // [T-dsh-gate-scalar-hash] The gate is otherwise silent, which is why
+            // the false positive it just had (every result of a tool shared one
+            // key, so the tenth call always warned) could only be seen in the
+            // transcript and never in a device log. One line where a warning is
+            // actually emitted is what makes the next report diagnosable.
+            AppLogger(category: "DSHLoop").warning(
+                "[DSH] loop gate: \(toolName) produced the same outcome \(count)× "
+                + "(warning=\(warning) critical=\(critical) key=\(key.prefix(24))…)")
             return Verdict(
                 level: .warning,
                 message: "[LOOP WARNING] This call has produced the same outcome \(count) times. Change approach or report the result."
@@ -141,13 +149,25 @@ final class DSHToolGate: @unchecked Sendable {
 
     /// Stable hash over a JSON-serializable value, so semantically equal
     /// arguments collapse to one counter.
+    ///
+    /// [T-dsh-gate-scalar-hash] A tool RESULT is a bare `String`, and
+    /// `JSONSerialization.isValidJSONObject` accepts only an array or a
+    /// dictionary at the top level — every string fell through to the `"?"`
+    /// fallback. So `record`'s key `"\(toolName):?"` was the SAME for every
+    /// result of a given tool: ten `file_read`s of different pages (or of
+    /// different files, with different content) incremented one shared counter
+    /// and the tenth got "[LOOP WARNING] This call has produced the same
+    /// outcome 10 times", which was simply false. `.fragmentsAllowed` is what
+    /// lets a scalar serialize at the root, so the guard has no job here — the
+    /// same reason `BrowserUseManager.stringifyJSReturn` keeps it for
+    /// containers only. (The repository already records this behaviour:
+    /// `BrowserUseManager.swift` — "`isValidJSONObject` requires the top level
+    /// to be an array or dictionary, so naked scalars fall here.")
     private func stableHash(_ value: Any) -> String {
         let normalized = normalize(value)
-        guard JSONSerialization.isValidJSONObject(normalized),
-              let data = try? JSONSerialization.data(
-                withJSONObject: normalized, options: [.sortedKeys, .fragmentsAllowed]
-              ),
-              let text = String(data: data, encoding: .utf8) else {
+        guard let data = try? JSONSerialization.data(
+            withJSONObject: normalized, options: [.sortedKeys, .fragmentsAllowed]
+        ), let text = String(data: data, encoding: .utf8) else {
             return "?"
         }
         return text
