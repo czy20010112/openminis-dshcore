@@ -199,7 +199,23 @@ final class OpenAIAgentProvider: AgentProvider {
             body["service_tier"] = "priority"
         }
 
-        let (lineStream, _) = try await provider.streamRaw(body: body, isResponsesAPI: false)
+        // [T-stream-open-errors-are-mapped] Opening the stream is where a
+        // transport failure actually lands: `URLSession.bytes(for:)` throws the
+        // raw `NSURLErrorTimedOut` (-1001) / `NSURLErrorCannotConnectToHost`
+        // before any SSE byte exists, and this line used to let that NSError
+        // escape unmapped. The DSH driver catches anything that is not an
+        // `LLMError`, so a timeout became `DSHFailure(code: "PROVIDER_ERROR")` —
+        // a broken backend in the transcript, with no retry (device 2026-10-20
+        // 12:43:50: a 30 s ETIMEDOUT on a 177k-token request, reported as
+        // PROVIDER_ERROR, turn dead). `mapError` turns it into `.networkError`,
+        // which `LLMError.isRetryable` already backs off and retries.
+        let openedStream: (AsyncThrowingStream<String, Error>, Int)
+        do {
+            openedStream = try await provider.streamRaw(body: body, isResponsesAPI: false)
+        } catch {
+            throw provider.mapError(error)
+        }
+        let (lineStream, _) = openedStream
 
         return AsyncThrowingStream { continuation in
             let task = Task {
@@ -677,7 +693,18 @@ final class OpenAIAgentProvider: AgentProvider {
             body["service_tier"] = "priority"
         }
 
-        let (lineStream, _) = try await provider.streamRaw(body: body, isResponsesAPI: true)
+        // [T-stream-open-errors-are-mapped] Same unmapped path as the Chat
+        // Completions stream above: the Responses request is opened by the same
+        // `URLSession.bytes(for:)`, so a connection timeout must reach the driver
+        // as `.networkError` (retryable) rather than as a raw NSError the driver
+        // would relabel `PROVIDER_ERROR`.
+        let openedStream: (AsyncThrowingStream<String, Error>, Int)
+        do {
+            openedStream = try await provider.streamRaw(body: body, isResponsesAPI: true)
+        } catch {
+            throw provider.mapError(error)
+        }
+        let (lineStream, _) = openedStream
 
         return AsyncThrowingStream { continuation in
             let task = Task {
