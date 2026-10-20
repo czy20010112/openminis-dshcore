@@ -1430,6 +1430,32 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
             // no turn has reported usage yet.
             publishMeasuredContextUsage()
         }
+        // [T-ctx-usage-after-dsh-compact] A request can never be larger than its
+        // own window, so a figure that is belongs to the ESTIMATE, not to the
+        // conversation. The path above is the honest fix (the driver hands over the
+        // compacted size); this is the backstop for every other caller — the legacy
+        // tail announces without one, and its history may still describe the
+        // pre-compaction conversation. Prefer the last assembled envelope, and if
+        // that is impossible too, publish nothing rather than a percentage the
+        // composer would paint as 136% red.
+        if let usage = contextUsage, usage.windowTokens > 0, usage.usedTokens > usage.windowTokens {
+            if let breakdown = DSHContextBreakdownStore.shared.latest,
+               breakdown.sessionKey == nil || breakdown.sessionKey == sessionId,
+               breakdown.estimatedTotal > 0 {
+                let ratio = contextCalibrationRatio(for: currentContextModelId())
+                let fromAssembly = ContextSizeMeter.calibrated(breakdown.estimatedTotal, ratio: ratio)
+                publishContextUsage(liveContextTokens: fromAssembly)
+            }
+            if let usage = contextUsage, usage.usedTokens > usage.windowTokens {
+                logger.warning(
+                    "[ContextUsageHint] post-compact → dropped: the estimate "
+                    + "\(usage.usedTokens) exceeds the window \(usage.windowTokens); "
+                    + "neither figure describes a request this route could send")
+                contextUsage = nil
+                contextUsageHint = nil
+                return
+            }
+        }
         guard let usage = contextUsage else {
             logger.info("[ContextUsageHint] post-compact → NO hint: usage unknown")
             return
