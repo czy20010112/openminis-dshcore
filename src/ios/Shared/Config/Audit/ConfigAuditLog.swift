@@ -58,18 +58,42 @@ final class ConfigAuditLog: ObservableObject {
                 caption       TEXT
             )
         """)
-        // Idempotent migration for databases created before `caption`
-        // existed. SQLite has no `ADD COLUMN IF NOT EXISTS`; the second
-        // run errors with "duplicate column name", which `exec` swallows
-        // by logging — that's the desired no-op.
-        exec("ALTER TABLE config_audit ADD COLUMN caption TEXT")
+        // Idempotent migration for databases created before `caption` existed.
+        //
+        // [T-config-audit-migration-noise] This used to rely on the second run
+        // failing with "duplicate column name" and being swallowed — but `exec`
+        // logs failures at ERROR, so every launch after the first printed an
+        // ERROR that read like a broken migration (device 2026-10-20, three
+        // times). SQLite still has no `ADD COLUMN IF NOT EXISTS`, so ask the
+        // table first.
+        if !columnExists("caption", in: "config_audit") {
+            exec("ALTER TABLE config_audit ADD COLUMN caption TEXT")
+        }
         exec("CREATE INDEX IF NOT EXISTS idx_audit_at ON config_audit(at DESC)")
         exec("CREATE INDEX IF NOT EXISTS idx_audit_scope ON config_audit(scope, at DESC)")
         exec("CREATE INDEX IF NOT EXISTS idx_audit_revert_of ON config_audit(revert_of)")
     }
 
-    private func exec(_ sql: String) {
-        var err: UnsafeMutablePointer<CChar>?
+    /// Whether `table` already has `column`.
+    ///
+    /// `PRAGMA table_info` is the only portable answer; the schema is small, so
+    /// reading it once per migration is cheaper than an ERROR line that looks
+    /// like a failure in every device log.
+    private func columnExists(_ column: String, in table: String) -> Bool {
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, "PRAGMA table_info(\(table))", -1, &stmt, nil) == SQLITE_OK else {
+            return false
+        }
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if let name = sqlite3_column_text(stmt, 1), String(cString: name) == column {
+                return true
+            }
+        }
+        return false
+    }
+
+    private func exec(_ sql: String) {        var err: UnsafeMutablePointer<CChar>?
         if sqlite3_exec(db, sql, nil, nil, &err) != SQLITE_OK {
             let msg = err.map { String(cString: $0) } ?? "?"
             auditLogger.error("exec failed: \(msg) | \(sql)")
