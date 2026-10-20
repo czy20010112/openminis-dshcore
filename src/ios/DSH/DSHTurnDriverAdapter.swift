@@ -45,6 +45,15 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
 
         // Text ends the current reasoning segment, so the next thinking delta
         // opens a new block rather than appending behind the answer.
+        //
+        // [T-thinking-count-matches-text] FLUSH before letting go of the segment.
+        // The adaptive throttle holds the newest second of reasoning in a buffer
+        // that the body does not render, so resetting the index here dropped that
+        // tail: the device showed a count of "1" beside a single "i" until the
+        // block was expanded by hand (expanding forces the flush) and the real
+        // sentence appeared. The legacy stream flushes at the same two boundaries
+        // (`AIChatViewModel+SSEStream`: `.text` and `.toolUse` block starts).
+        dshFlushThinkingSegment()
         dshThinkingBlockIdx = -1
 
         // The presenter is told which row it writes into before anything else: the
@@ -135,6 +144,26 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
         }
     }
 
+    /// Push one reasoning segment's unpublished tail into its block.
+    ///
+    /// [T-thinking-count-matches-text] The throttle above deliberately keeps the
+    /// newest second of reasoning in a buffer that the body does not render, and
+    /// every boundary that ENDS a segment has to force it out: the text starting,
+    /// a tool call starting, and the turn sealing. Only the last of those did, so
+    /// a reasoning segment that ended in a tool call or an answer left its tail
+    /// behind — the device showed a count of "1" and a single "i" until the block
+    /// was expanded by hand, which forces the same flush.
+    ///
+    /// The whole block is the unit here, not one delta: `flushThinkingBuffer`
+    /// copies the buffer the block has been accumulating, so calling it once per
+    /// boundary is enough.
+    private func dshFlushThinkingSegment() {
+        guard dshThinkingBlockIdx >= 0,
+              dshStreamingMsgIdx >= 0, dshStreamingMsgIdx < messages.count,
+              dshThinkingBlockIdx < messages[dshStreamingMsgIdx].blocks.count else { return }
+        messages[dshStreamingMsgIdx].blocks[dshThinkingBlockIdx].flushThinkingBuffer()
+    }
+
     public func driver(
         _ driver: DSHTurnDriver,
         willRunTool name: String,
@@ -159,6 +188,12 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
         // the tail of that block sat in the throttle and only appeared later — the
         // "swallowed text" report.
         dshCommitTextForToolBoundary()
+        // [T-thinking-count-matches-text] Same rule as the text block above, and
+        // for the same reason: a tool call ends the reasoning segment and the
+        // throttle still holds its tail. Resetting the index without flushing left
+        // the block one flush short — a tool-first reply showed "1" and "i" until
+        // the user expanded it.
+        dshFlushThinkingSegment()
         dshThinkingBlockIdx = -1
         dshTextPresenter?.endBlock()
 
@@ -704,9 +739,7 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
 
         // The throttle holds the tail of the reasoning in an unpublished buffer,
         // so seal it here or the last second of thinking never appears.
-        if dshThinkingBlockIdx >= 0, dshThinkingBlockIdx < messages[idx].blocks.count {
-            messages[idx].blocks[dshThinkingBlockIdx].flushThinkingBuffer()
-        }
+        dshFlushThinkingSegment()
         dshThinkingBlockIdx = -1
         dshPendingReasoning = ""
 
