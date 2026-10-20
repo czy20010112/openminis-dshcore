@@ -163,8 +163,22 @@ struct DSHStatusPanelView: View {
         }
         .padding(.top, 7)
         .padding(.bottom, 6)
-        .background(cardBackground)
-        .overlay(cardStroke)
+        // [T-status-panel-glass] The card used to be a flat `ChatColors.inputBg`
+        // fill on BOTH lines, while the composer it sits on became Liquid Glass on
+        // iOS 26 — so the goal/todo card read as a plain swatch beside a glass
+        // surface ("todo goal 的气泡没有对话框那种液态玻璃的感觉"). It now draws the
+        // same surface family: `.glassEffect(.regular, in:)` on iOS 26, the old
+        // flat fill + hairline everywhere else.
+        //
+        // The `compiler` branch is what keeps this file byte-identical across the
+        // two lines: the iOS 15 line builds with Xcode 16 (iOS 18 SDK), where
+        // `glassEffect` does not exist at all, so `#available` alone would not
+        // compile there.
+        .modifier(CardSurface(
+            shape: RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous),
+            edge: Self.edge,
+            edgeWidth: Self.edgeWidth
+        ))
         // The pill is sized by its content; the list takes the width the caller
         // offers, because its rows need it. Belt and braces with the missing
         // spacer in `todoHeader`: this holds even if a flexible child is added
@@ -174,14 +188,35 @@ struct DSHStatusPanelView: View {
         .accessibilityLabel("Session status")
     }
 
-    private var cardBackground: some View {
-        RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous)
-            .fill(ChatColors.inputBg)
-    }
+    /// The card's surface: Liquid Glass on iOS 26, the original flat fill below.
+    private struct CardSurface: ViewModifier {
+        let shape: RoundedRectangle
+        let edge: Color
+        let edgeWidth: CGFloat
 
-    private var cardStroke: some View {
-        RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous)
-            .stroke(Self.edge, lineWidth: Self.edgeWidth)
+        func body(content: Content) -> some View {
+            #if compiler(>=6.2)
+            if #available(iOS 26.0, *) {
+                content
+                    .glassEffect(.regular, in: shape)
+                    .clipShape(shape)
+            } else {
+                flat(content)
+            }
+            #else
+            flat(content)
+            #endif
+        }
+
+        /// The pre-iOS-26 look, byte-for-byte: a flat fill from the composer's own
+        /// colour plus the hairline. A material here read as a grey smudge over the
+        /// chat background — see this file's header.
+        @ViewBuilder
+        private func flat(_ content: Content) -> some View {
+            content
+                .background(ChatColors.inputBg, in: shape)
+                .overlay(shape.stroke(edge, lineWidth: edgeWidth))
+        }
     }
 
     // MARK: - Goal section
