@@ -56,7 +56,7 @@ extension AIChatViewModel {
                     "path": AgentToolParam(type: .string, description: "Absolute Linux path to read (e.g. /var/minis/workspace/data.csv)"),
                     "offset": AgentToolParam(type: .integer, description: "1-based line number to start reading from (default: 1). Ignored when direction is 'tail'. If a previous read was truncated, its header ends with next_offset=N — pass that as offset to continue from where it stopped."),
                     "lines": AgentToolParam(type: .integer, description: "Maximum number of lines to return (default: all lines up to max_length)"),
-                    "max_length": AgentToolParam(type: .integer, description: "Maximum character length of returned content (default: 15000)"),
+                    "max_length": AgentToolParam(type: .integer, description: "Maximum character length of returned content (default: 15000). Honoured up to 80000, but ONE tool result carries at most 15000 characters, so a larger value is capped at 14488 (15000 minus the header allowance) and the header states the value actually used. To read further, page with the next_offset the header names."),
                     "direction": AgentToolParam(type: .string, description: "Read direction: 'head' (from start, default) or 'tail' (from end of file)"),
                 ],
                 required: ["tool_title", "path"],
@@ -82,9 +82,10 @@ extension AIChatViewModel {
                     "content": AgentToolParam(type: .string, description: "The text content to write to the file. For large content prefer several appending calls over one huge one — see the tool description."),
                     "append": AgentToolParam(type: .boolean, description: "If true, append to existing file instead of overwriting (default: false)"),
                     "create_dirs": AgentToolParam(type: .boolean, description: "If true, create parent directories if they don't exist (default: false)"),
+                        "overwrite": AgentToolParam(type: .boolean, description: "Only when deliberately replacing an existing file with clearly shorter content. Without it, file_write refuses to shrink an existing file below half its size, or to a prefix of it — use append: true to add to a file, file_edit to change part of one, and overwrite: true only for a real replacement. (default: false)"),
                 ],
                 required: ["tool_title", "path", "content"],
-                propertyOrdering: ["tool_title", "path", "content", "append", "create_dirs"]
+                propertyOrdering: ["tool_title", "path", "content", "append", "create_dirs", "overwrite"]
             ),
             AgentToolDefinition(
                 name: "file_edit",

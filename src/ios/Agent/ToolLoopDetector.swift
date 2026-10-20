@@ -216,7 +216,7 @@ final class ToolLoopDetector {
     }
 
     /// Stable JSON serialization with sorted keys (recursively).
-    private func stableJson(_ value: Any) -> String {
+    private static func stableJson(_ value: Any) -> String {
         let normalized = normalizeForStableJson(value)
         guard let data = try? JSONSerialization.data(
             withJSONObject: normalized,
@@ -229,7 +229,7 @@ final class ToolLoopDetector {
     }
 
     /// Recursively normalize so we never feed un-serializable types to JSONSerialization.
-    private func normalizeForStableJson(_ value: Any) -> Any {
+    private static func normalizeForStableJson(_ value: Any) -> Any {
         if let dict = value as? [String: Any] {
             var out: [String: Any] = [:]
             for (k, v) in dict { out[k] = normalizeForStableJson(v) }
@@ -246,7 +246,7 @@ final class ToolLoopDetector {
         return String(describing: value)
     }
 
-    private func sha256(_ s: String) -> String {
+    static func sha256(_ s: String) -> String {
         let digest = SHA256.hash(data: Data(s.utf8))
         return digest.map { String(format: "%02x", $0) }.joined()
     }
@@ -259,9 +259,79 @@ final class ToolLoopDetector {
     ]
 
     private func argsHashFor(_ toolName: String, _ params: [String: Any]) -> String {
+        Self.sha256("\(toolName):\(Self.dedupIdentity(toolName: toolName, params: params))")
+    }
+
+    // MARK: - Dedup identity
+    //
+    // [T-loop-detector-shard-key] What "the same call" MEANS, per tool.
+    //
+    // Hashed over every argument, the key answers "did the model send this exact
+    // call again?" — correct, but silent about the one distinction that matters
+    // for the file tools: a SHARD. Ten `file_read`s of one long document differ
+    // only in `offset`, and ten `file_write` appends differ only in their chunk
+    // of `content`; both are progress, and neither may be mistaken for a repeat.
+    //
+    // Spelling is not meaning, either: `offset: 1` and an omitted `offset` are
+    // the same read (the default is a literal in the tool itself). `max_length`
+    // is deliberately NOT resolved: its default lives in another file, and a
+    // repeat spelled differently is better left unrecognised than manufactured
+    // — this key may under-report a repeat, never invent one.
+    //
+    // Each file tool therefore states its identity: a read is (path, offset,
+    // lines, direction, max_length) = one shard; a write is (path, append,
+    // overwrite, length, content hash) = one chunk; an edit is (path, old, new,
+    // replace_all). Every other tool keeps the whole-argument hash, byte for
+    // byte the value it produced before this existed.
+    //
+    // This detector WARNS; it does not intercept. (`check` can only block at the
+    // 30-repeat circuit breaker, which needs identical arguments AND identical
+    // results.) So naming the shard cannot turn a legitimate page into a
+    // refusal — it only stops the warning from lying about one.
+    static func dedupIdentity(toolName: String, params: [String: Any]) -> String {
+        switch toolName {
+        case "file_read":
+            // Defaults resolved so equivalent spellings collapse: "the first
+            // page" is one identity whether the model said `offset: 1` or said
+            // nothing.
+            let path = (params["path"] as? String) ?? ""
+            let offset = (params["offset"] as? Int) ?? 1
+            let lines = (params["lines"] as? Int).map(String.init) ?? "all"
+            let direction = ((params["direction"] as? String) ?? "head").lowercased()
+            let maxLength = (params["max_length"] as? Int).map(String.init) ?? "default"
+            return "file_read|path=\(path)|offset=\(offset)|lines=\(lines)"
+                + "|direction=\(direction)|max_length=\(maxLength)"
+        case "file_write":
+            // A chunk is identified by where it lands, how it lands, and its own
+            // bytes: appending chapter 3 twice is a repeat, appending chapter 4
+            // is not, and sending chapter 3 as a whole-file write is a third
+            // thing again (which is exactly the mistake the overwrite guard in
+            // `executeFileWrite` now refuses).
+            let path = (params["path"] as? String) ?? ""
+            let append = (params["append"] as? Bool) ?? false
+            let overwrite = (params["overwrite"] as? Bool) ?? false
+            let content = (params["content"] as? String) ?? ""
+            return "file_write|path=\(path)|append=\(append)|overwrite=\(overwrite)"
+                + "|chars=\(content.count)|sha=\(sha256(content))"
+        case "file_edit":
+            let path = (params["path"] as? String) ?? ""
+            let old = (params["old_string"] as? String) ?? ""
+            let new = (params["new_string"] as? String) ?? ""
+            let all = (params["replace_all"] as? Bool) ?? false
+            return "file_edit|path=\(path)|old=\(sha256(old))|new=\(sha256(new))"
+                + "|replace_all=\(all)"
+        default:
+            return genericIdentity(toolName: toolName, params: params)
+        }
+    }
+
+    /// The pre-existing key: every argument except the UI-only ones, as stable
+    /// JSON. Kept as its own function so the per-tool identities above cannot
+    /// quietly change what every other tool hashes.
+    static func genericIdentity(toolName: String, params: [String: Any]) -> String {
         var filtered = params
-        for k in Self.argsHashIgnoredKeys { filtered.removeValue(forKey: k) }
-        return sha256("\(toolName):\(stableJson(filtered))")
+        for k in argsHashIgnoredKeys { filtered.removeValue(forKey: k) }
+        return stableJson(filtered)
     }
 
     /// Hash only the "did the world change" facets of a tool's outcome.
@@ -269,10 +339,10 @@ final class ToolLoopDetector {
     /// before hashing so that genuinely identical outcomes collapse to one hash.
     private func resultHashFor(result: String?, errorMessage: String?) -> String {
         if let err = errorMessage, !err.isEmpty {
-            return sha256("ERR:\(stripVolatile(err))")
+            return Self.sha256("ERR:\(stripVolatile(err))")
         }
         let payload = result ?? ""
-        return sha256("OK:\(stripVolatile(payload))")
+        return Self.sha256("OK:\(stripVolatile(payload))")
     }
 
     private func stripVolatile(_ s: String) -> String {
