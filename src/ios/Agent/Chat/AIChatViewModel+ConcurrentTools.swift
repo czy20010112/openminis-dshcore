@@ -562,10 +562,15 @@ extension AIChatViewModel {
                 // concurrent execution — sibling shell tasks still need
                 // the signal to abort their own delay loops. The outer
                 // dispatcher resets it once per batch.
-                toolOutput = "<system-reminder>The user cancelled this operation. The returned result may be incomplete.</system-reminder>\n" + result.output
+                toolOutput = "<system-reminder>The user cancelled this operation. The returned result may be incomplete.</system-reminder>\n" + (result.fullOutput ?? result.output)
                 cancelledHere = true
             } else {
-                toolOutput = result.output
+                // One shortening point for the model: the envelope below. It
+                // hands whatever it is given to `offloadToolOutput`, so give it
+                // the uncut text — otherwise the file it advertises as the full
+                // output is the already-shortened copy. [T-shell-offload-lies]
+                // The transcript still shows `result.output` (see above).
+                toolOutput = result.fullOutput ?? result.output
             }
             toolSuccess = result.exitCode == 0
 
