@@ -6711,9 +6711,34 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
         }
     }
 
+    /// Push a reasoning block's unpublished tail into its `content`, and — when
+    /// that takes the block from empty to non-empty — send the SAME fill signal
+    /// text blocks use.
+    ///
+    /// [T-thinking-cell-height] `blockContentFilledSignal` was only ever sent
+    /// from the TEXT path (`applyStreamingTextBlockContent`), so a thinking block
+    /// that went empty → non-empty never nudged the list: the cell kept the
+    /// height it had while the block was empty, and the lines added afterwards
+    /// painted outside it and over the row below — the reported "正文和思考的块
+    /// 重叠". Reasoning now fills mid-stream (it used to sit in the throttle until
+    /// the turn sealed, when a full reconfigure happened anyway), so the nudge
+    /// has to exist.
     @MainActor
-    private func flushDeferredStreamingTextUpdateIfNeeded() {
-        guard !deferredStreamingTextUpdates.isEmpty else { return }
+    func flushThinkingBlock(messageIdx: Int, blockIdx: Int) {
+        guard messageIdx >= 0, messageIdx < messages.count,
+              blockIdx >= 0, blockIdx < messages[messageIdx].blocks.count else { return }
+        let message = messages[messageIdx]
+        let block = message.blocks[blockIdx]
+        guard block.kind == .thinking else { return }
+        let wasEmpty = block.content.isEmpty
+        block.flushThinkingBuffer()
+        guard wasEmpty, !block.content.isEmpty else { return }
+        logger.info("[TextDrift] thinking empty→filled blockIdx=\(blockIdx) len=\(block.content.count)")
+        blockContentFilledSignal.send((messageId: message.id, blockId: block.id))
+    }
+
+    @MainActor
+    private func flushDeferredStreamingTextUpdateIfNeeded() {        guard !deferredStreamingTextUpdates.isEmpty else { return }
         let pendingUpdates = deferredStreamingTextUpdates
         deferredStreamingTextUpdates.removeAll()
         for pending in pendingUpdates {
