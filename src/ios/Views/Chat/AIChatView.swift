@@ -3376,12 +3376,14 @@ struct AIChatView: View {
                 readAloudToolbarToggle
                 Spacer()
             }
-            micButtonContainer
-            // [T-ctx-ring] Between the mic and send: the ring reports how full
-            // the context window is, and opens the breakdown. It is always
-            // drawn (an empty ring means nothing measured yet), so the row's
-            // width stays a constant.
+            // [T-ctx-ring] [T-ring-mic-order] The ring sits BEFORE the mic, not
+            // between the mic and send. Aiming for the ring used to mean aiming
+            // at the slot next to the send button, which turns into STOP while a
+            // turn runs — the operator's mis-taps ended conversations. The mic
+            // now holds the slot next to send: a stray tap there only starts
+            // dictation, which is recoverable.
             contextRingButton
+            micButtonContainer
             sendButton
         }
         return AnyView(row)
