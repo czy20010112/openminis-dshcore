@@ -1402,13 +1402,34 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
     /// pre-compaction figure the composer was still showing. Without this the
     /// line kept the old percentage until the user typed, so compaction looked
     /// like it had no effect.
-    func announceContextUsageAfterCompaction() {
+    func announceContextUsageAfterCompaction(surfaceEstimate: Int? = nil) {
         usageReportSupersededByCompaction = messages.last(where: {
             $0.role == .assistant && ($0.usage?.latestContextTokens ?? 0) > 0
         })?.id
-        // Live measured size, not the message-derived path: it also works when
-        // no turn has reported usage yet.
-        publishMeasuredContextUsage()
+        // [T-ctx-usage-after-dsh-compact] A DSH mid-turn compaction leaves
+        // `agentHistory` — the model-facing array `publishMeasuredContextUsage`
+        // measures — untouched until the turn ends; what shrank is the SESSION
+        // surface. Measuring it here therefore describes the history that was just
+        // replaced: the device announced "136% · 761.9k / 560k" over a conversation
+        // whose compacted surface was ~46k estimator tokens, which turned the
+        // composer red at the exact moment compaction had made it small. The
+        // driver's outcome carries the post-compaction surface size, so use it when
+        // the caller has one.
+        if let surfaceEstimate, surfaceEstimate > 0 {
+            ensureContextFixedTokens()
+            let ratio = contextCalibrationRatio(for: currentContextModelId())
+            let measured = ContextSizeMeter.calibrated(
+                surfaceEstimate + contextFixedTokens, ratio: ratio)
+            publishContextUsage(liveContextTokens: measured)
+            logger.info(
+                "[ContextUsageHint] post-compact → re-priced from the compacted surface "
+                + "(surfaceEst=\(surfaceEstimate) fixed=\(contextFixedTokens) "
+                + "ratio=\(ratio) measured=\(measured))")
+        } else {
+            // Live measured size, not the message-derived path: it also works when
+            // no turn has reported usage yet.
+            publishMeasuredContextUsage()
+        }
         guard let usage = contextUsage else {
             logger.info("[ContextUsageHint] post-compact → NO hint: usage unknown")
             return
