@@ -10,8 +10,21 @@ extension AIChatViewModel {
 
     /// Result of command execution containing output text and exit code.
     struct CommandResult {
+        /// What the transcript renders and the message row stores: capped at
+        /// `kMaxToolResultChars` so a 300 k-character build log cannot bloat the
+        /// database or the view.
         let output: String
         let exitCode: Int
+        /// The same text *before* that cap, present only when the cap fired.
+        ///
+        /// [T-shell-offload-lies] The tool-result envelope is the single place
+        /// that shortens a result for the model, and it writes what it is handed
+        /// to `/var/minis/offloads/`. While `runRaw` cut the output first, the
+        /// envelope saved the cut copy — so a 274 893-character command output
+        /// left a 15 255-character "full output" file, with one sentence at each
+        /// layer promising nothing had been lost. The transcript keeps the capped
+        /// string; the model gets this one.
+        var fullOutput: String? = nil
     }
 
     /// Execute a command via ISHExecutionCoordinator (serialized, mount-safe).
@@ -120,7 +133,13 @@ extension AIChatViewModel {
         guard let reminder else { return result }
         let shouldAppend = result.exitCode != 0 || silentClass
         guard shouldAppend else { return result }
-        return CommandResult(output: result.output + "\n\n" + reminder, exitCode: result.exitCode)
+        // The reminder is aimed at the model, so it rides on BOTH copies: the
+        // transcript keeps its tail, and the uncut copy the envelope may relocate
+        // keeps it too (otherwise the file the model is told to read would be the
+        // one place the reminder went missing).
+        return CommandResult(output: result.output + "\n\n" + reminder,
+                             exitCode: result.exitCode,
+                             fullOutput: result.fullOutput.map { $0 + "\n\n" + reminder })
     }
 
     /// The original coordinator call + output sanitation/truncation, factored
@@ -184,24 +203,34 @@ extension AIChatViewModel {
         // every update is captured verbatim, ballooning the output with hundreds of redundant lines.
         // We replay each \r as a real terminal would: later text on the same line overwrites earlier text,
         // so only the final state of each line is kept — matching what you would actually see on screen.
-        var output = Self.sanitizeTerminalOutput(result.output)
+        let output = Self.sanitizeTerminalOutput(result.output)
 
-        // Apply truncation — keep head + tail so the model sees both the beginning and end
+        // Two destinations, one cap each:
+        //
+        //   * the transcript shows `display`, cut here so a huge log cannot land
+        //     in a message row;
+        //   * the model gets `full`, and the tool-result envelope is the single
+        //     place that decides whether to inline it or relocate it to
+        //     `/var/minis/offloads/`. It writes exactly what it is handed — which
+        //     is why handing it a pre-cut string made the offload file hold 15 k
+        //     of a 274 k result while both layers claimed nothing was lost.
+        //
+        // Head + tail is kept for the transcript: the first lines identify the
+        // command, the last ones carry the error or the summary.
+        var display = output
+        var full: String? = nil
         if output.count > Self.kMaxToolResultChars {
             let totalChars = output.count
             let totalLines = output.components(separatedBy: "\n").count
             let halfLen = Self.kMaxToolResultChars / 2
-            let head = String(output.prefix(halfLen))
-            let tail = String(output.suffix(halfLen))
-            output = head
+            display = String(output.prefix(halfLen))
                 + "\n\n...\n\n"
-                + tail
+                + String(output.suffix(halfLen))
                 + "\n\n[OUTPUT SHORTENED] Showing first & last \(halfLen) of \(totalChars) chars (\(totalLines) lines total)."
-                + "\nNothing was lost: the complete output is saved to the path above. To read other"
-                + "\nparts, call file_read with an offset on that path, or run a shell_execute grep on it."
+            full = output
         }
 
-        return CommandResult(output: output, exitCode: result.exitCode)
+        return CommandResult(output: display, exitCode: result.exitCode, fullOutput: full)
     }
 
     /// Sanitize raw shell output so it matches what a user would actually see on a terminal.
