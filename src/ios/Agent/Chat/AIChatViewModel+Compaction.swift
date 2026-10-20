@@ -1372,5 +1372,5 @@ extension AIChatViewModel {
     /// the glow otherwise keeps the pre-compaction figure. Keeping the name here is
     /// cheaper than an `#if` in that shared file, and it is the honest declaration:
     /// this build has no such readout to update.
-    func announceContextUsageAfterCompaction() {}
+    func announceContextUsageAfterCompaction(surfaceEstimate: Int? = nil) {}
 }
