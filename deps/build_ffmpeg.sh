@@ -704,6 +704,18 @@ build_slice() {
         log_info "make clean before reconfiguring"
         ( cd "$FFMPEG_DIR" && make clean >/dev/null 2>&1 ) || true
     fi
+    # `make clean` misses the Metal objects: they are built by a custom rule
+    # straight into libavfilter/metal/, so the simulator pass would link the
+    # device pass's utils.o and die with
+    #   building for 'iOS-simulator', but linking in object file
+    #   (…/libavfilter/metal/utils.o) built for 'iOS'
+    # (seen on the macos-14 runner; a machine whose configure disabled Metal
+    # never reproduces it, which is exactly why it slipped through locally).
+    # Any object left in the source tree at this point belongs to the previous
+    # slice — installed artifacts live in $SCRIPT_DIR, not here.
+    if [ -d "$FFMPEG_DIR" ]; then
+        find "$FFMPEG_DIR" \( -name '*.o' -o -name '*.dylib' -o -name '*.a' \) -delete 2>/dev/null || true
+    fi
 
     configure_ffmpeg
     build_ffmpeg
