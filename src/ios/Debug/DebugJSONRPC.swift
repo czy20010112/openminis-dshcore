@@ -2254,7 +2254,11 @@ final class DebugJSONRPC: @unchecked Sendable {
         }
 
         let decided = full &+ single
-        return [
+        // [T-debugjsonrpc-typecheck] 这个字典有 ~18 个键、值类型混杂（Int/UInt64/Double/String），
+        // 直接 `return [ … ]` 让 Swift 的类型检查器指数爆炸：ios26 树的 Debug 构建会报
+        // "unable to type-check this expression in reasonable time"（ios15 树那份字面量小一点，
+        // 侥幸能过）。给它一个显式类型即可，语义完全不变。
+        let out: [String: Any] = [
             "clusterCalls": calls,
             "clusterFull": full,
             "clusterSingle": single,
@@ -2273,6 +2277,7 @@ final class DebugJSONRPC: @unchecked Sendable {
             "hostPageSize": hostPage,
             "appFootprintMB": footprintMB,
         ]
+        return out
     }
 
     private func handleAppInfo(params: [String: Any] = [:]) -> Any {
