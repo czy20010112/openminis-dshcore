@@ -18,12 +18,36 @@ set -e
 #   - Xcode with iOS SDK
 #   - pkg-config (brew install pkg-config) - optional
 #
+# Two slices are produced, because the device and the simulator are both arm64
+# and lipo cannot merge two arm64 binaries of different platforms:
+#
+#   device     iphoneos        -> deps/frameworks/<Name>.framework      (unchanged)
+#   simulator  iphonesimulator -> deps/frameworks-sim/<Name>.framework  (scratch)
+#
+# xcodebuild -create-xcframework then combines them into
+# deps/frameworks/<Name>.xcframework, which is what src/ios/Minis.xcodeproj
+# links and embeds. The device slice inside the xcframework is a byte copy of
+# the device framework, so the shipped IPA is bit-for-bit what it was before.
+#
 # Usage:
-#   ./build_ffmpeg.sh [clean]
+#   ./build_ffmpeg.sh          # device + simulator + xcframeworks (CI path)
+#   ./build_ffmpeg.sh device   # device slice + xcframeworks
+#   ./build_ffmpeg.sh sim      # simulator slice + xcframeworks (device slice reused)
+#   ./build_ffmpeg.sh clean
 #
 # Output:
-#   deps/frameworks/FFmpeg.framework/
-#   deps/frameworks/lib{avcodec,avformat,avutil,avfilter,swresample,swscale}.framework/
+#   deps/frameworks/FFmpeg.xcframework/                  (ios-arm64 + ios-arm64-simulator)
+#   deps/frameworks/lib{avcodec,avformat,avutil,avfilter,swresample,swscale}.xcframework/
+#   deps/frameworks/FFmpeg.framework/                    (device slice, unchanged shape)
+#   deps/frameworks/lib{...}.framework/                  (device slice, unchanged shape)
+#   deps/frameworks-sim/FFmpeg.framework/                (simulator slice, intermediate)
+#
+# NOTE: the plain device <Name>.framework bundles must stay on disk.
+# src/ios/NativeOffloads/FFmpegOffload.m does `#include <FFmpeg/FFmpeg.h>`, which
+# clang resolves through -F $(SRCROOT)/../../deps/frameworks, i.e. through
+# FFmpeg.framework/Headers — an .xcframework is not a framework directory and
+# cannot satisfy that lookup. They are also the device slice the .xcframework is
+# assembled from.
 # ============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -33,6 +57,33 @@ FRAMEWORK_DIR="$SCRIPT_DIR/frameworks/FFmpeg.framework"
 FRAMEWORKS_BASE="$SCRIPT_DIR/frameworks"
 
 IOS_DEPLOYMENT_TARGET="14.0"
+
+# ── Per-slice state ─────────────────────────────────────────────────────────
+# build_slice() reassigns every variable below before running one pass, so a
+# pass is fully described by (SDK, ARCH_FLAGS, BUILD_DIR, output dir). Nothing
+# else in this script hardcodes iphoneos any more.
+SDK="iphoneos"
+ARCH_FLAGS="-arch arm64 -miphoneos-version-min=$IOS_DEPLOYMENT_TARGET"
+BITCODE_FLAG="-fembed-bitcode"
+LAME_DIR="$SCRIPT_DIR/lame-build"
+PLIST_PLATFORM="iPhoneOS"
+MINVER="$IOS_DEPLOYMENT_TARGET"
+
+# Frozen copies of the device values: main() hands these to build_slice() so the
+# device pass keeps the exact command lines it had before this script learned
+# about the simulator.
+DEVICE_ARCH_FLAGS="$ARCH_FLAGS"
+DEVICE_BITCODE_FLAG="$BITCODE_FLAG"
+
+# Simulator slice. Both arches are arm64, so this can never be lipo'd together
+# with the device slice; it gets its own build tree, its own output directory
+# and is folded in with -create-xcframework at the end.
+SIM_BUILD_DIR="$FFMPEG_DIR/build-sim"
+SIM_FRAMEWORKS_BASE="$SCRIPT_DIR/frameworks-sim"
+SIM_DEPLOYMENT_TARGET="15.0"
+SIM_ARCH_FLAGS="-target arm64-apple-ios${SIM_DEPLOYMENT_TARGET}-simulator"
+SIM_BITCODE_FLAG=""
+SIM_LAME_DIR="$SCRIPT_DIR/lame-build-sim"
 
 # Colors for output
 RED='\033[0;31m'
@@ -65,8 +116,14 @@ clean_build() {
     log_info "Cleaning build artifacts..."
 
     rm -rf "$BUILD_DIR"
+    rm -rf "$SIM_BUILD_DIR"
     rm -rf "$FRAMEWORK_DIR"
     rm -rf "$FRAMEWORKS_BASE"/lib*.framework
+    # xcframeworks only — Rclone.xcframework must survive, it is a build input,
+    # not something this script produces.
+    rm -rf "$FRAMEWORKS_BASE"/FFmpeg.xcframework
+    rm -rf "$FRAMEWORKS_BASE"/lib*.xcframework
+    rm -rf "$SIM_FRAMEWORKS_BASE"
 
     # Revert main rename patch if applied
     if [ -f "$FFMPEG_DIR/fftools/ffmpeg.c" ]; then
@@ -192,24 +249,26 @@ apply_source_patches() {
 # Configure FFmpeg
 # ============================================================================
 configure_ffmpeg() {
-    log_info "Configuring FFmpeg for iOS arm64..."
+    log_info "Configuring FFmpeg for $SDK ($ARCH_FLAGS)..."
 
-    IOS_SDK=$(xcrun --sdk iphoneos --show-sdk-path)
-    CC="$(xcrun --sdk iphoneos -f clang)"
+    IOS_SDK=$(xcrun --sdk "$SDK" --show-sdk-path)
+    CC="$(xcrun --sdk "$SDK" -f clang)"
 
     mkdir -p "$BUILD_DIR"
 
     cd "$FFMPEG_DIR"
 
-    # Check for libmp3lame (built by build_lame.sh)
+    # Check for libmp3lame (built by build_lame.sh). Each slice must link the
+    # libmp3lame built for the same platform — a device .a cannot be linked into
+    # a simulator dylib even though both are arm64.
     LAME_FLAGS=""
-    if [ -f "$SCRIPT_DIR/lame-build/lib/libmp3lame.a" ]; then
-        log_info "Found libmp3lame — enabling MP3 encoding"
+    if [ -f "$LAME_DIR/lib/libmp3lame.a" ]; then
+        log_info "Found libmp3lame at $LAME_DIR — enabling MP3 encoding"
         LAME_FLAGS="--enable-libmp3lame"
-        LAME_CFLAGS="-I$SCRIPT_DIR/lame-build/include"
-        LAME_LDFLAGS="-L$SCRIPT_DIR/lame-build/lib"
+        LAME_CFLAGS="-I$LAME_DIR/include"
+        LAME_LDFLAGS="-L$LAME_DIR/lib"
     else
-        log_warning "libmp3lame not found — MP3 encoding will be unavailable"
+        log_warning "libmp3lame not found at $LAME_DIR — MP3 encoding will be unavailable"
         log_warning "Run ./build_lame.sh first to enable MP3 encoding"
         LAME_CFLAGS=""
         LAME_LDFLAGS=""
@@ -222,8 +281,8 @@ configure_ffmpeg() {
         --target-os=darwin \
         --cc="$CC" \
         --sysroot="$IOS_SDK" \
-        --extra-cflags="-arch arm64 -miphoneos-version-min=$IOS_DEPLOYMENT_TARGET -fembed-bitcode -DCONFIG_FFMPEG_MAIN=1 $LAME_CFLAGS" \
-        --extra-ldflags="-arch arm64 -miphoneos-version-min=$IOS_DEPLOYMENT_TARGET -isysroot $IOS_SDK $LAME_LDFLAGS" \
+        --extra-cflags="$ARCH_FLAGS $BITCODE_FLAG -DCONFIG_FFMPEG_MAIN=1 $LAME_CFLAGS" \
+        --extra-ldflags="$ARCH_FLAGS -isysroot $IOS_SDK $LAME_LDFLAGS" \
         --enable-pic \
         --enable-videotoolbox \
         --enable-hwaccel=h264_videotoolbox \
@@ -275,10 +334,10 @@ build_ffmpeg() {
 # Build fftools (ffmpeg_main and supporting code)
 # ============================================================================
 build_fftools() {
-    log_info "Building fftools (ffmpeg_main)..."
+    log_info "Building fftools (ffmpeg_main) for $SDK..."
 
-    IOS_SDK=$(xcrun --sdk iphoneos --show-sdk-path)
-    CC="$(xcrun --sdk iphoneos -f clang)"
+    IOS_SDK=$(xcrun --sdk "$SDK" --show-sdk-path)
+    CC="$(xcrun --sdk "$SDK" -f clang)"
     INSTALL_DIR="$BUILD_DIR/install"
 
     FFTOOLS_OBJ_DIR="$BUILD_DIR/fftools-objs"
@@ -308,7 +367,7 @@ build_fftools() {
     )
 
     # Common CFLAGS: use the source tree for headers (has config.h, libav* headers, and libavdevice)
-    FFTOOLS_CFLAGS="-arch arm64 -miphoneos-version-min=$IOS_DEPLOYMENT_TARGET -isysroot $IOS_SDK"
+    FFTOOLS_CFLAGS="$ARCH_FLAGS -isysroot $IOS_SDK"
     FFTOOLS_CFLAGS="$FFTOOLS_CFLAGS -I$FFMPEG_DIR -I$INSTALL_DIR/include"
     FFTOOLS_CFLAGS="$FFTOOLS_CFLAGS -DCONFIG_FFMPEG_MAIN=1 -Oz -fPIC"
     # Force-include the stdio redirect header so all fprintf/printf/fputs/vfprintf
@@ -328,7 +387,7 @@ build_fftools() {
     # Compile the stdio redirect implementation WITHOUT the -include flag
     # to avoid recursive macro expansion.
     log_info "  Compiling fftools/fftools_stdio_redirect.c..."
-    REDIRECT_CFLAGS="-arch arm64 -miphoneos-version-min=$IOS_DEPLOYMENT_TARGET -isysroot $IOS_SDK"
+    REDIRECT_CFLAGS="$ARCH_FLAGS -isysroot $IOS_SDK"
     REDIRECT_CFLAGS="$REDIRECT_CFLAGS -I$FFMPEG_DIR -I$INSTALL_DIR/include -Oz -fPIC"
     $CC $REDIRECT_CFLAGS -c fftools/fftools_stdio_redirect.c -o "$FFTOOLS_OBJ_DIR/fftools_stdio_redirect.o"
     FFTOOLS_OBJS+=("$FFTOOLS_OBJ_DIR/fftools_stdio_redirect.o")
@@ -341,14 +400,29 @@ build_fftools() {
 }
 
 # ============================================================================
+# Simulator-only Info.plist annotations
+# ============================================================================
+# A framework inside an .xcframework is identified by (SupportedPlatform,
+# SupportedPlatformVariant). PlistBuddy keeps this additive: the device plist is
+# generated by the same heredoc it always was and is left untouched.
+mark_simulator_plist() {
+    local plist="$1"
+    [ "$PLIST_PLATFORM" = "iPhoneOS" ] && return 0
+    /usr/libexec/PlistBuddy \
+        -c "Add :SupportedPlatform string ios" \
+        -c "Add :SupportedPlatformVariant string simulator" \
+        "$plist" >/dev/null 2>&1 || true
+}
+
+# ============================================================================
 # Package as individual .framework bundles + umbrella FFmpeg.framework
 # ============================================================================
 package_framework() {
-    log_info "Packaging individual .framework bundles + FFmpeg.framework..."
+    log_info "Packaging individual .framework bundles + FFmpeg.framework for $SDK..."
 
     INSTALL_DIR="$BUILD_DIR/install"
-    IOS_SDK=$(xcrun --sdk iphoneos --show-sdk-path)
-    CC="$(xcrun --sdk iphoneos -f clang)"
+    IOS_SDK=$(xcrun --sdk "$SDK" --show-sdk-path)
+    CC="$(xcrun --sdk "$SDK" -f clang)"
 
     # Clean previous output
     rm -rf "$FRAMEWORK_DIR"
@@ -422,14 +496,20 @@ package_framework() {
     <key>CFBundleVersion</key>
     <string>6.1.2</string>
     <key>MinimumOSVersion</key>
-    <string>14.0</string>
+    <string>${MINVER}</string>
     <key>CFBundleSupportedPlatforms</key>
     <array>
-        <string>iPhoneOS</string>
+        <string>${PLIST_PLATFORM}</string>
     </array>
 </dict>
 </plist>
 PLISTEOF
+
+        # A simulator slice needs the platform variant spelled out, otherwise
+        # Xcode refuses to embed it ("no matching slice") even though the Mach-O
+        # carries the right LC_BUILD_VERSION. Added only for the simulator so the
+        # device Info.plist stays byte-identical to what it was before.
+        mark_simulator_plist "$FW_DIR/Info.plist"
 
         # Code sign
         codesign --force --sign - "$FW_DIR"
@@ -447,8 +527,7 @@ PLISTEOF
 
     # Link fftools static archive into the umbrella dylib
     # -force_load ensures all symbols (including ffmpeg_main) are included
-    $CC -arch arm64 \
-        -miphoneos-version-min=$IOS_DEPLOYMENT_TARGET \
+    $CC $ARCH_FLAGS \
         -isysroot "$IOS_SDK" \
         -dynamiclib \
         -install_name @rpath/FFmpeg.framework/FFmpeg \
@@ -521,7 +600,7 @@ void ffmpeg_reset_statics(void);
 EOF
 
     # Create Info.plist
-    cat > "$FRAMEWORK_DIR/Info.plist" << 'EOF'
+    cat > "$FRAMEWORK_DIR/Info.plist" << EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -543,14 +622,15 @@ EOF
     <key>CFBundleVersion</key>
     <string>6.1.2</string>
     <key>MinimumOSVersion</key>
-    <string>14.0</string>
+    <string>${MINVER}</string>
     <key>CFBundleSupportedPlatforms</key>
     <array>
-        <string>iPhoneOS</string>
+        <string>${PLIST_PLATFORM}</string>
     </array>
 </dict>
 </plist>
 EOF
+    mark_simulator_plist "$FRAMEWORK_DIR/Info.plist"
 
     # Code sign umbrella framework
     log_info "Code signing FFmpeg.framework..."
@@ -597,29 +677,134 @@ print_summary() {
 }
 
 # ============================================================================
+# One platform pass
+# ============================================================================
+# sdk, arch flags, build tree, output dir, plist platform, min OS, libmp3lame
+# dir — that is the whole difference between the device and simulator passes.
+build_slice() {
+    local tag="$1" sdk="$2" arch_flags="$3" bitcode="$4" build_dir="$5" \
+          out_base="$6" plist_platform="$7" minver="$8" lame_dir="$9"
+
+    SDK="$sdk"
+    ARCH_FLAGS="$arch_flags"
+    BITCODE_FLAG="$bitcode"
+    BUILD_DIR="$build_dir"
+    FRAMEWORKS_BASE="$out_base"
+    FRAMEWORK_DIR="$out_base/FFmpeg.framework"
+    PLIST_PLATFORM="$plist_platform"
+    MINVER="$minver"
+    LAME_DIR="$lame_dir"
+
+    log_info "──── $tag slice ── sdk=$SDK ── flags=$ARCH_FLAGS ── out=$out_base ────"
+
+    # FFmpeg has no out-of-tree build: configure rewrites the source tree in
+    # place and object files are not invalidated by a flag change. Wipe them, or
+    # the second pass silently relinks the first pass's platform-tagged objects.
+    if [ -f "$FFMPEG_DIR/Makefile" ]; then
+        log_info "make clean before reconfiguring"
+        ( cd "$FFMPEG_DIR" && make clean >/dev/null 2>&1 ) || true
+    fi
+
+    configure_ffmpeg
+    build_ffmpeg
+    build_fftools
+    package_framework
+}
+
+# ============================================================================
+# Fold the two slices into .xcframework bundles
+# ============================================================================
+# The device slice is copied verbatim out of deps/frameworks/<Name>.framework —
+# xcodebuild does not rebuild or strip it — so the binary the IPA ships is
+# bit-for-bit the one the device-only build produced.
+create_xcframeworks() {
+    log_info "Assembling xcframeworks (device: frameworks/, simulator: frameworks-sim/)..."
+
+    local names=(FFmpeg libavcodec libavformat libavutil libavfilter libswresample libswscale)
+    local n dev sim out
+    for n in "${names[@]}"; do
+        dev="$SCRIPT_DIR/frameworks/$n.framework"
+        sim="$SIM_FRAMEWORKS_BASE/$n.framework"
+        out="$SCRIPT_DIR/frameworks/$n.xcframework"
+        [ -f "$dev/$n" ] || log_error "missing device framework: $dev/$n"
+        [ -f "$sim/$n" ] || log_error "missing simulator framework: $sim/$n"
+        rm -rf "$out"
+        if ! xcodebuild -create-xcframework \
+                -framework "$dev" \
+                -framework "$sim" \
+                -output "$out" >/dev/null; then
+            log_error "create-xcframework failed for $n"
+        fi
+        log_success "$n.xcframework ($(ls "$out" | tr '\n' ' '))"
+    done
+}
+
+# ============================================================================
 # Main
 # ============================================================================
 main() {
     echo ""
     echo "============================================================"
     echo "  FFmpeg 6.1.2 iOS Dynamic Framework Builder"
-    echo "  Target: arm64, iOS $IOS_DEPLOYMENT_TARGET+"
+    echo "  Target: arm64 (device iOS $IOS_DEPLOYMENT_TARGET+ / simulator iOS $SIM_DEPLOYMENT_TARGET+)"
     echo "  Features: VideoToolbox hardware encoding/decoding"
     echo "============================================================"
     echo ""
 
-    if [ "$1" == "clean" ]; then
-        clean_build
-        exit 0
-    fi
+    local do_device do_sim
+    case "${1:-all}" in
+        clean)
+            clean_build
+            exit 0
+            ;;
+        all|"")
+            do_device=1; do_sim=1
+            ;;
+        device|device-only)
+            do_device=1; do_sim=0
+            ;;
+        sim|simulator|sim-only)
+            do_device=0; do_sim=1
+            ;;
+        *)
+            echo "usage: $0 [device|sim|clean]" >&2
+            exit 2
+            ;;
+    esac
 
     check_prerequisites
     patch_main_symbol
     apply_source_patches
-    configure_ffmpeg
-    build_ffmpeg
-    build_fftools
-    package_framework
+
+    if [ "$do_device" = "1" ]; then
+        build_slice "device" iphoneos "$DEVICE_ARCH_FLAGS" "$DEVICE_BITCODE_FLAG" \
+            "$FFMPEG_DIR/build-ios" "$SCRIPT_DIR/frameworks" "iPhoneOS" \
+            "$IOS_DEPLOYMENT_TARGET" "$SCRIPT_DIR/lame-build"
+    else
+        log_info "device pass skipped — reusing $SCRIPT_DIR/frameworks/*.framework"
+    fi
+
+    if [ "$do_sim" = "1" ]; then
+        if [ ! -f "$SIM_LAME_DIR/lib/libmp3lame.a" ]; then
+            log_warning "no simulator libmp3lame at $SIM_LAME_DIR"
+            log_warning "the simulator slice will have no MP3 encoding — run ./build_lame.sh sim"
+        fi
+        build_slice "simulator" iphonesimulator "$SIM_ARCH_FLAGS" "$SIM_BITCODE_FLAG" \
+            "$SIM_BUILD_DIR" "$SIM_FRAMEWORKS_BASE" "iPhoneSimulator" \
+            "$SIM_DEPLOYMENT_TARGET" "$SIM_LAME_DIR"
+    fi
+
+    if [ -f "$SCRIPT_DIR/frameworks/FFmpeg.framework/FFmpeg" ] && \
+       [ -f "$SIM_FRAMEWORKS_BASE/FFmpeg.framework/FFmpeg" ]; then
+        create_xcframeworks
+    else
+        log_warning "skipping xcframework assembly — one of the two slices is missing"
+    fi
+
+    # print_summary() describes the device slice, so restore those globals.
+    SDK="iphoneos"
+    FRAMEWORKS_BASE="$SCRIPT_DIR/frameworks"
+    FRAMEWORK_DIR="$SCRIPT_DIR/frameworks/FFmpeg.framework"
     print_summary
 }
 
