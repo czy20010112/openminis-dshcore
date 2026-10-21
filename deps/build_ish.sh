@@ -18,12 +18,16 @@ set -e
 #   - libarchive (brew install libarchive)
 #
 # Usage:
-#   ./build_ish.sh [clean|debug|release]
+#   ./build_ish.sh [release|debug|clean] [all|device|sim]
 #
 # Output:
-#   deps/libs/      - Static libraries (.a files)
-#   deps/include/   - Header files
-#   deps/resources/ - VDSO and other resources
+#   deps/libs/      - Device static libraries (.a files)
+#   deps/libs-sim/  - Simulator static libraries (.a files). Same arm64 arch as
+#                     the device set, so the two can never be lipo'd together:
+#                     src/ios/Minis.xcodeproj selects this directory through
+#                     LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*].
+#   deps/include/   - Header files (platform independent)
+#   deps/resources/ - VDSO and other resources (platform independent)
 # ============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -34,8 +38,26 @@ OUTPUT_RESOURCES="$SCRIPT_DIR/resources"
 
 # Build configuration
 BUILD_TYPE="${1:-release}"
+SLICES="${2:-all}"
 ARCHS="arm64"
 IOS_DEPLOYMENT_TARGET="14.0"
+
+# Simulator slice. Device and simulator are both arm64, so these three archives
+# can never be lipo'd into one another: the simulator set lives in its own
+# directory and the Xcode project picks it with
+# LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*].
+SIM_OUTPUT_LIBS="$SCRIPT_DIR/libs-sim"
+SIM_BUILD_DIR="$ISH_DIR/build-ios-sim"
+SIM_DEPLOYMENT_TARGET="15.0"
+
+# Per-slice state, assigned by select_slice(). setup_cross_compile/build_ish/
+# copy_outputs read these instead of hardcoding iphoneos.
+SLICE_TAG="device"
+SDK="iphoneos"
+SLICE_BUILD_DIR="$ISH_DIR/build-ios"
+SLICE_CROSS_ARGS="'-arch', 'arm64', '-miphoneos-version-min=$IOS_DEPLOYMENT_TARGET'"
+SLICE_OUTPUT_LIBS="$OUTPUT_LIBS"
+COPY_SHARED_OUTPUTS=1
 
 # Colors for output
 RED='\033[0;31m'
@@ -131,7 +153,9 @@ clean_build() {
     log_info "Cleaning build artifacts..."
 
     rm -rf "$ISH_DIR/build-ios"
+    rm -rf "$SIM_BUILD_DIR"
     rm -rf "$OUTPUT_LIBS"
+    rm -rf "$SIM_OUTPUT_LIBS"
     rm -rf "$OUTPUT_INCLUDE"
     rm -rf "$OUTPUT_RESOURCES"
 
@@ -139,23 +163,52 @@ clean_build() {
 }
 
 # ============================================================================
+# Select the slice that the build/copy functions below operate on
+# ============================================================================
+select_slice() {
+    case "$1" in
+        device)
+            SLICE_TAG="device"
+            SDK="iphoneos"
+            SLICE_BUILD_DIR="$ISH_DIR/build-ios"
+            SLICE_CROSS_ARGS="'-arch', 'arm64', '-miphoneos-version-min=$IOS_DEPLOYMENT_TARGET'"
+            SLICE_OUTPUT_LIBS="$OUTPUT_LIBS"
+            COPY_SHARED_OUTPUTS=1
+            ;;
+        simulator)
+            SLICE_TAG="simulator"
+            SDK="iphonesimulator"
+            SLICE_BUILD_DIR="$SIM_BUILD_DIR"
+            SLICE_CROSS_ARGS="'-target', 'arm64-apple-ios${SIM_DEPLOYMENT_TARGET}-simulator'"
+            SLICE_OUTPUT_LIBS="$SIM_OUTPUT_LIBS"
+            # deps/include and deps/resources are platform independent (headers
+            # plus the arm64 *guest* VDSO) and stay owned by the device pass.
+            COPY_SHARED_OUTPUTS=0
+            ;;
+        *)
+            log_error "unknown slice: $1"
+            ;;
+    esac
+}
+
+# ============================================================================
 # Setup Cross Compilation
 # ============================================================================
 setup_cross_compile() {
-    log_info "Setting up iOS cross-compilation..."
+    log_info "Setting up iOS cross-compilation for the $SLICE_TAG slice ($SDK)..."
 
-    BUILD_DIR="$ISH_DIR/build-ios"
+    BUILD_DIR="$SLICE_BUILD_DIR"
     mkdir -p "$BUILD_DIR"
 
-    # Get iOS SDK path
-    IOS_SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+    # Get the SDK path for this slice
+    IOS_SDK=$(xcrun --sdk "$SDK" --show-sdk-path)
 
     # Create cross-compilation file for meson
     CROSS_FILE="$BUILD_DIR/ios-cross.txt"
 
     cat > "$CROSS_FILE" << EOF
 [binaries]
-c = ['clang', '-arch', 'arm64', '-isysroot', '$IOS_SDK', '-miphoneos-version-min=$IOS_DEPLOYMENT_TARGET']
+c = ['clang', $SLICE_CROSS_ARGS, '-isysroot', '$IOS_SDK']
 ar = 'ar'
 strip = 'strip'
 pkg-config = 'false'
@@ -183,9 +236,9 @@ EOF
 # Build iSH Libraries
 # ============================================================================
 build_ish() {
-    log_info "Building iSH libraries for iOS ($BUILD_TYPE)..."
+    log_info "Building iSH libraries for iOS ($BUILD_TYPE, $SLICE_TAG slice)..."
 
-    BUILD_DIR="$ISH_DIR/build-ios"
+    BUILD_DIR="$SLICE_BUILD_DIR"
     CROSS_FILE="$BUILD_DIR/ios-cross.txt"
 
     cd "$ISH_DIR"
@@ -243,12 +296,24 @@ build_ish() {
 # Copy Output Files
 # ============================================================================
 copy_outputs() {
-    log_info "Copying output files..."
+    log_info "Copying output files ($SLICE_TAG)..."
 
-    BUILD_DIR="$ISH_DIR/build-ios"
+    BUILD_DIR="$SLICE_BUILD_DIR"
 
     # Create output directories
-    mkdir -p "$OUTPUT_LIBS"
+    mkdir -p "$SLICE_OUTPUT_LIBS"
+
+    # Copy static libraries
+    log_info "Copying libraries..."
+    cp "$BUILD_DIR/libish.a" "$SLICE_OUTPUT_LIBS/"
+    cp "$BUILD_DIR/libish_emu.a" "$SLICE_OUTPUT_LIBS/"
+    cp "$BUILD_DIR/libfakefs.a" "$SLICE_OUTPUT_LIBS/"
+
+    if [ "$COPY_SHARED_OUTPUTS" != "1" ]; then
+        log_success "Libraries copied to $SLICE_OUTPUT_LIBS (headers/VDSO: device pass only)"
+        return 0
+    fi
+
     mkdir -p "$OUTPUT_INCLUDE/ish"
     mkdir -p "$OUTPUT_INCLUDE/ish/emu"
     mkdir -p "$OUTPUT_INCLUDE/ish/kernel"
@@ -258,12 +323,6 @@ copy_outputs() {
     mkdir -p "$OUTPUT_INCLUDE/ish/platform"
     mkdir -p "$OUTPUT_INCLUDE/ish/asbestos"
     mkdir -p "$OUTPUT_RESOURCES"
-
-    # Copy static libraries
-    log_info "Copying libraries..."
-    cp "$BUILD_DIR/libish.a" "$OUTPUT_LIBS/"
-    cp "$BUILD_DIR/libish_emu.a" "$OUTPUT_LIBS/"
-    cp "$BUILD_DIR/libfakefs.a" "$OUTPUT_LIBS/"
 
     # Copy VDSO if built (arm64 guest VDSO path)
     if [ -f "$BUILD_DIR/vdso/arm64/libvdso.so.elf" ]; then
@@ -400,8 +459,13 @@ print_summary() {
     echo -e "${GREEN}🎉 iSH-ARM64 Build Complete!${NC}"
     echo "============================================================"
     echo ""
-    echo "Libraries:"
+    echo "Device libraries ( $OUTPUT_LIBS ):"
     ls -lh "$OUTPUT_LIBS"/*.a 2>/dev/null || echo "  (none)"
+    if [ -d "$SIM_OUTPUT_LIBS" ]; then
+        echo ""
+        echo "Simulator libraries ( $SIM_OUTPUT_LIBS ):"
+        ls -lh "$SIM_OUTPUT_LIBS"/*.a 2>/dev/null || echo "  (none)"
+    fi
     echo ""
     echo "Headers:   $OUTPUT_INCLUDE/ish/"
     echo "Resources: $OUTPUT_RESOURCES/"
@@ -413,6 +477,16 @@ print_summary() {
     echo "  4. Link with: libsqlite3.tbd"
     echo ""
     echo "============================================================"
+}
+
+# ============================================================================
+# Build one slice end to end
+# ============================================================================
+build_slice() {
+    select_slice "$1"
+    setup_cross_compile
+    build_ish
+    copy_outputs
 }
 
 # ============================================================================
@@ -431,6 +505,22 @@ main() {
         exit 0
     fi
 
+    local do_device do_sim
+    case "$SLICES" in
+        all|"")
+            do_device=1; do_sim=1
+            ;;
+        device|device-only)
+            do_device=1; do_sim=0
+            ;;
+        sim|simulator|sim-only)
+            do_device=0; do_sim=1
+            ;;
+        *)
+            log_error "usage: $0 [release|debug|clean] [all|device|sim]"
+            ;;
+    esac
+
     # Check if ish directory exists
     if [ ! -d "$ISH_DIR" ]; then
         log_error "iSH directory not found at $ISH_DIR"
@@ -438,10 +528,23 @@ main() {
 
     check_prerequisites
     init_submodules
-    setup_cross_compile
-    build_ish
-    copy_outputs
-    create_umbrella_header
+
+    if [ "$do_device" = "1" ]; then
+        build_slice device
+    else
+        log_info "device pass skipped — reusing $OUTPUT_LIBS"
+    fi
+
+    if [ "$do_sim" = "1" ]; then
+        build_slice simulator
+    fi
+
+    # Umbrella header lives in deps/include/ish and is platform independent, so
+    # it is only (re)written when the device pass produced it.
+    if [ "$do_device" = "1" ]; then
+        create_umbrella_header
+    fi
+
     print_summary
 }
 
