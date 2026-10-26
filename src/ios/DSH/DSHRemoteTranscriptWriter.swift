@@ -136,6 +136,9 @@ final class DSHRemoteTranscriptWriter: ObservableObject {
         NSLog("[DSH] snapshot in records=\(records.count) cursor=\(cursor) running=\(running)")
         sealActiveTurnInternal(publish: false)
         projection.reset()
+        // This is a PAGE (it can start mid-conversation) — arm the marker so a
+        // window whose first record is mid-turn says so instead of looking empty.
+        projection.beginPage()
         rowChat = [:]
         rowState = [:]
         renderedOrder = []
@@ -363,7 +366,7 @@ final class DSHRemoteTranscriptWriter: ObservableObject {
         }
         vm.publishUnlessTransitioning()
         let elapsed = (CFAbsoluteTimeGetCurrent() - started) * 1000
-        NSLog("[DSH] renderAll records=\(projection.rows.count) msgs=\(vm.messages.count) ms=\(Int(elapsed))")
+        NSLog("[DSH] renderAll rows=\(projection.rows.count) msgs=\(vm.messages.count) ms=\(Int(elapsed))")
     }
 
     /// Keep `vm.messages` in the projection's order, reusing existing objects.

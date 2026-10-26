@@ -33230,7 +33230,23 @@
         }
       }
     },
-    "Edit Connection" : {
+    "Earlier messages are not in this window." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Earlier messages are not in this window."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "更早的消息不在这一页"
+          }
+        }
+      }
+    },    "Edit Connection" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {

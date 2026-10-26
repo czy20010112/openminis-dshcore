@@ -141,7 +141,11 @@ class SelfSizingCell: UICollectionViewCell {
     }
 
     private static let sizingLogger = AppLogger(category: "CellSizing")
-
+    // [T-ios-sizing-throw-counter] How many hosting measures have thrown since
+    // launch. Instrumentation only — nothing reads it but the log line in the
+    // `super.preferredLayoutAttributesFitting` catch below, where it turns "how
+    // many cells fell back" into a single number per pull instead of a grep count.
+    private static var measureThrowCount: Int = 0
     // [ScrollStall] 1Hz-aggregated cache-hit counters.
     private static var dedupHits: Int = 0
     private static var dedupLastFlush: CFTimeInterval = 0
@@ -347,7 +351,17 @@ class SelfSizingCell: UICollectionViewCell {
             // super's hosting measure threw an ObjC exception mid-race. Fall
             // back to the best height we have (cached, else the proposed one)
             // rather than crashing.
-            Self.sizingLogger.info("[CellSizing] ⚠️ super.preferredLayoutAttributesFitting threw — using fallback height")
+            //
+            // [T-ios-sizing-throw-counter] Instrumentation only: a running count
+            // so "how many cells fell back this session" is one number in the
+            // pulled device log instead of a line count. `fallback` says WHICH
+            // height was used, which is the half that decides whether the cell
+            // overlaps: `cached` is a real measure (safe), `proposed` is the
+            // layout's seed — for a text block that seed is only as good as
+            // `block.cachedAttributedString` was when the snapshot was applied.
+            Self.measureThrowCount += 1
+            let fallbackKind = lastComputedHeight == nil ? "proposed" : "cached"
+            Self.sizingLogger.info("[CellSizing] throws=\(Self.measureThrowCount) fallback=\(fallbackKind) — super.preferredLayoutAttributesFitting threw")
             if let cached = lastComputedHeight {
                 let copy = layoutAttributes.copy() as! UICollectionViewLayoutAttributes
                 copy.size.height = cached
