@@ -397,6 +397,65 @@ final class DSHRemoteClient: @unchecked Sendable {
         _ = try? await refreshShared(path: "events")
     }
 
+    // MARK: Harness team (protocol §1, verify/DSH-REMOTE-TEAM-CONTRACT.md)
+
+    /// `GET /mobile/v1/dsh/team/members` — the roster of teammates on that host.
+    func listTeamMembers() async throws -> DSHRemoteTeamRoster {
+        let data = try await teamData(path: "/dsh/team/members", method: "GET")
+        return try JSONDecoder().decode(DSHRemoteTeamRoster.self, from: data)
+    }
+
+    /// `POST /mobile/v1/dsh/team/spawn` — create a durable teammate on the host.
+    ///
+    /// The name is the identity: `409 team/name-taken` and `429 team/max-members`
+    /// are passed through UNTOUCHED so the caller can pick another name instead of
+    /// seeing "something failed".
+    func spawnTeammate(name: String, description: String?, task: String,
+                       context: String? = nil) async throws -> DSHRemoteTeamMember {
+        var body: [String: Any] = ["name": name, "task": task]
+        if let description, !description.isEmpty { body["description"] = description }
+        if let context, !context.isEmpty { body["context"] = context }
+        let data = try await teamData(path: "/dsh/team/spawn", method: "POST", json: body)
+        return try JSONDecoder().decode(DSHRemoteTeamSpawn.self, from: data).member
+    }
+
+    /// `POST /mobile/v1/dsh/team/message` — deliver a message to one teammate.
+    /// Same teammate, same Session: this is what makes it a teammate and not a
+    /// one-shot sub-agent.
+    func sendTeamMessage(target: String, text: String) async throws -> DSHRemoteTeamDelivery {
+        let data = try await teamData(path: "/dsh/team/message", method: "POST",
+                                     json: ["target": target, "text": text])
+        return try JSONDecoder().decode(DSHRemoteTeamDelivery.self, from: data)
+    }
+
+    /// `POST /mobile/v1/dsh/team/interrupt` — stop a teammate's running turn.
+    func interruptTeammate(target: String) async throws -> DSHRemoteTeamInterrupt {
+        let data = try await teamData(path: "/dsh/team/interrupt", method: "POST",
+                                     json: ["target": target])
+        return try JSONDecoder().decode(DSHRemoteTeamInterrupt.self, from: data)
+    }
+
+    /// Every team call, with the one translation the callers cannot do themselves:
+    /// an older host has no `/dsh/team/*` routes at all, and a bridge-level 404
+    /// (`NOT_FOUND`) would read as "my request was wrong". Those become
+    /// `team/unavailable`, the code the tool layer degrades on.
+    ///
+    /// A `team/…` code keeps its own status: `team/no-such-member` (404) and
+    /// `team/name-taken` (409) are actionable and must NOT look like "the host
+    /// cannot do teams at all".
+    private func teamData(path: String, method: String, json: [String: Any]? = nil) async throws -> Data {
+        do {
+            return try await authorizedData(path: path, method: method, json: json as Any?)
+        } catch let error as DSHRemoteError
+            where !error.code.hasPrefix("team/")
+            && (error.status == 404 || error.status == 503 || error.code == "http_404" || error.code == "not_found") {
+            NSLog("[DSH] team route unavailable path=\(path) status=\(error.status ?? -1) code=\(error.code)")
+            throw DSHRemoteError(code: "team/unavailable",
+                                 message: AppLocalized("This computer does not have the teammate feature."),
+                                 status: 503)
+        }
+    }
+
     func conversations() async throws -> [DSHRemoteConversation] {
         let data = try await authorizedData(path: "/conversations")
         struct Envelope: Decodable { var items: [DSHRemoteConversation]?; var conversations: [DSHRemoteConversation]? }

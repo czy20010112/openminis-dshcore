@@ -859,6 +859,20 @@ extension AIChatViewModel {
                 messages[msgIdx].blocks[blockIdx].content = toolOutput
             }
 
+        case "remote_team_spawn", "remote_team_message", "remote_team_list", "remote_team_interrupt":
+            // [T-tools-remote-team] Dispatching work to the paired computer. The
+            // whole feature lives in `DSHRemoteTeamTools.swift` (naming, the 409
+            // rename retry, availability), and the transport is the SAME
+            // authenticated path every other `/dsh/*` call uses, so this branch
+            // only routes the outcome. No stream is opened: the teammate's own
+            // Session (returned as `session=…`) is where its output lives.
+            let teamResult = await DSHRemoteTeamTools.run(name: tu.name, arguments: toolArgs)
+            toolOutput = teamResult.success ? teamResult.output : "Error: \(teamResult.output)"
+            toolSuccess = teamResult.success
+            if msgIdx < messages.count, blockIdx < messages[msgIdx].blocks.count {
+                messages[msgIdx].blocks[blockIdx].content = toolOutput
+            }
+
         default:
             toolOutput = "Error: Unknown tool '\(tu.name)'"
             toolSuccess = false
