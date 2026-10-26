@@ -251,8 +251,19 @@ struct ToolResult: Codable, Hashable {
 }
 
 /// A single content part within a message — the atomic unit.
+///
+/// [T-dsh-remote-reasoning-order] `.reasoning` exists because a harness turn is
+/// interleaved: `thinking → text → tool → thinking → text`. Folding every
+/// reasoning segment of a turn into `RawMessage.reasoningContent` produced ONE
+/// thinking block pinned above the text, so the remote transcript never matched
+/// the local one. A reasoning part keeps its arrival position instead, and
+/// `toChatMessage` turns each of them into its own `.thinking` block in order.
+///
+/// Additive and decode-compatible: the case is only written by the DSH remote
+/// projection, so rows persisted before it existed decode unchanged.
 enum ContentPart: Codable, Hashable {
     case text(String)
+    case reasoning(String)
     case mediaRef(MediaRef)
     case toolUse(ToolUse)
     case toolResult(ToolResult)
@@ -266,6 +277,7 @@ enum ContentPart: Codable, Hashable {
 
     private enum PartType: String, Codable {
         case text
+        case reasoning
         case mediaRef
         case toolUse
         case toolResult
@@ -276,6 +288,9 @@ enum ContentPart: Codable, Hashable {
         switch self {
         case .text(let s):
             try container.encode(PartType.text, forKey: .type)
+            try container.encode(s, forKey: .value)
+        case .reasoning(let s):
+            try container.encode(PartType.reasoning, forKey: .type)
             try container.encode(s, forKey: .value)
         case .mediaRef(let ref):
             try container.encode(PartType.mediaRef, forKey: .type)
@@ -295,6 +310,8 @@ enum ContentPart: Codable, Hashable {
         switch partType {
         case .text:
             self = .text(try container.decode(String.self, forKey: .value))
+        case .reasoning:
+            self = .reasoning(try container.decode(String.self, forKey: .value))
         case .mediaRef:
             self = .mediaRef(try container.decode(MediaRef.self, forKey: .value))
         case .toolUse:
@@ -396,6 +413,20 @@ struct RawMessage: Identifiable, Codable, Hashable {
     var providerType: String? = nil
     /// Diagnostics / disambiguation only; the UI never resolves through it.
     var providerInstanceId: String? = nil
+
+    /// [T-dsh-remote-brand] Display name of the assistant that produced this row,
+    /// when it is not the app's own persona.
+    ///
+    /// Only the remote DSH projection sets it (`"DSH"`): the identity header used
+    /// to be derived from the local SOUL name, so a harness Session rendered as
+    /// "✦ Minis". Kept on the row instead of on the header view's signature so the
+    /// header needs no new parameter and every local row keeps resolving to
+    /// Minis / the user's SOUL name. `toChatMessage` copies it onto
+    /// `ChatMessage.assistantDisplayName`.
+    ///
+    /// nil on rows written before this field existed — a plain optional, so the
+    /// synthesized decoder reads them unchanged.
+    var assistantName: String? = nil
 
     /// True if this message contains only tool results (no user text).
     /// These are internal agent loop messages that shouldn't render as user bubbles.
@@ -1132,7 +1163,11 @@ actor ChatStore {
                 flags |= partFlagHasText
             case .toolUse:
                 flags |= partFlagHasToolUse
-            case .mediaRef, .toolResult:
+            case .mediaRef, .toolResult, .reasoning:
+                // Reasoning sets no bit, exactly like mediaRef/toolResult: the
+                // flags feed the session-list PREVIEW, and thinking is not a
+                // preview candidate (a thinking-only row is not what the user
+                // wrote or what the answer says).
                 break
             }
         }
@@ -2654,6 +2689,14 @@ actor ChatStore {
             return msg.parts.contains { part in
                 switch part {
                 case .text(let s): return !s.isEmpty
+                // Reasoning counts as content for the SAME reason text does: it
+                // is what the user sees in the row. Dropping a thinking-only
+                // assistant row would make a reloaded transcript lose blocks
+                // that were on screen while streaming (the "block sequence must
+                // be identical after reload" invariant). No local provider path
+                // writes reasoning parts, so this cannot resurrect the empty
+                // rows this filter was added for.
+                case .reasoning(let s): return !s.isEmpty
                 case .toolUse, .toolResult, .mediaRef: return true
                 }
             }
@@ -4615,6 +4658,15 @@ extension Array where Element == ContentPart {
             case .text(let s):
                 objects.append(.text(s))
 
+            case .reasoning:
+                // Thinking is NOT replayed as message content. Echoing it back
+                // would send the model its own reasoning as if the user (or the
+                // assistant) had said it — the wire-level version of the
+                // "thinking block became the answer" defect. Providers that
+                // want thinking echoed carry it on the request's own
+                // thinking/`reasoning_content` channel instead.
+                continue
+
             case .mediaRef(let ref):
                 if let data = await store.loadMediaData(ref) {
                     let base64 = data.base64EncodedString()
@@ -4689,6 +4741,12 @@ extension Array where Element == ContentPart {
             case .text(let s):
                 parts.append(["text": s])
 
+            case .reasoning:
+                // Same rule as toAnthropicContent: thinking stays out of the
+                // replayed conversation. Gemini has no reasoning-content field
+                // in this payload, so it is simply not sent.
+                continue
+
             case .mediaRef(let ref):
                 if let data = await store.loadMediaData(ref) {
                     let base64 = data.base64EncodedString()
@@ -4745,6 +4803,13 @@ extension RawMessage {
         /// Track the last known browser URL across tool blocks so actions like
         /// get_readable (which don't carry a url arg) can inherit it.
         var lastBrowserURL: String?
+
+        /// True once ANY `.reasoning` part has been turned into a thinking block.
+        /// The legacy `reasoningContent` prepend below is skipped when it is true:
+        /// a row can carry both (a remote turn records each segment as a part,
+        /// older local rows record the whole thing in `reasoningContent`), and
+        /// prepending the same thinking again would show it twice.
+        var sawReasoningPart = false
 
         for part in parts {
             switch part {
@@ -4885,6 +4950,21 @@ extension RawMessage {
                     blocks.append(block)
                 }
 
+            case .reasoning(let s):
+                // [T-dsh-remote-reasoning-order] One thinking block PER reasoning
+                // part, appended where the part sits in `parts`. That is what makes
+                // a reloaded remote transcript read `thinking → text → tool →
+                // thinking → text` instead of one merged thinking block on top: the
+                // interleaving is carried by the part order, so nothing has to be
+                // re-derived here.
+                //
+                // Gate is `showThinking`, the same one the reasoningContent prepend
+                // below uses — thinking off must hide BOTH shapes.
+                if showThinking, role == .assistant, !s.isEmpty {
+                    blocks.append(AssistantBlock(kind: .thinking, content: s))
+                    sawReasoningPart = true
+                }
+
             case .toolUse(let tu):
                 let kind: AssistantBlockKind
                 let content: String
@@ -4969,12 +5049,23 @@ extension RawMessage {
             }
         }
 
-        // Prepend thinking block if reasoning content was stored and thinking display is enabled
-        if showThinking, role == .assistant, let rc = reasoningContent, !rc.isEmpty {
+        // Prepend thinking block if reasoning content was stored and thinking display is enabled.
+        //
+        // [T-dsh-remote-reasoning-order] Only when the row has no `.reasoning`
+        // part. Local history still stores thinking in `reasoningContent`
+        // (written per turn, prepended as blocks[0]) and depends on this arm;
+        // a remote turn stores each segment as a part instead and must NOT get
+        // an extra merged block on top of them.
+        if showThinking, role == .assistant, !sawReasoningPart,
+           let rc = reasoningContent, !rc.isEmpty {
             blocks.insert(AssistantBlock(kind: .thinking, content: rc), at: 0)
         }
 
         let msg = ChatMessage(role: uiRole, content: textContent, blocks: blocks)
+        // [T-dsh-remote-brand] Assistant identity for the header row. nil on
+        // every local row, so the app's own name resolution (Minis / SOUL name)
+        // is untouched.
+        msg.assistantDisplayName = assistantName
         // Deduplicate attachments by path
         var seenPaths = Set<String>()
         msg.attachments = userAttachments.filter { seenPaths.insert($0.path).inserted }
@@ -5099,6 +5190,12 @@ extension RawMessage {
             switch part {
             case .text(let s):
                 agentParts.append(.text(s))
+            case .reasoning:
+                // Deliberately not an AgentContentPart: the model must not
+                // receive its own thinking as ordinary assistant text. Rows
+                // that still carry `reasoningContent` keep the legacy echo path
+                // below, which is the provider-correct channel for it.
+                continue
             case .mediaRef(let ref):
                 if let data = try? Data(contentsOf: mediaResolver(ref)) {
                     agentParts.append(.imageData(data: data, mimeType: ref.mimeType, linuxPath: ref.linuxPath))

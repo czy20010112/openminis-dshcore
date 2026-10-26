@@ -258,7 +258,11 @@ private struct BridgedAssistantHeaderV3: View {
                     endPoint: .bottomTrailing
                 )
             )
-            Text(soulMeta.name.isEmpty ? "Minis" : soulMeta.name)
+            // [remote-brand] `assistantDisplayName` is how a remote harness
+            // Session says "this turn came from DSH": `DSHTranscript` stamps
+            // "DSH" on the rows it builds. nil — every local conversation —
+            // keeps the SOUL name exactly as before.
+            Text(message.assistantDisplayName ?? (soulMeta.name.isEmpty ? "Minis" : soulMeta.name))
                 .font(AppFont.sw(17, weight: .semibold, category: .body))
                 .foregroundStyle(ChatColors.primaryText)
         }

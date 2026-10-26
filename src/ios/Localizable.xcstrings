@@ -517,6 +517,30 @@
         }
       }
     },
+    "%lld turns" : {
+      "comment" : "Sidebar subtitle of a remote DSH Session that has no message preview yet: the number of completed turns.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld turns"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$lld 轮对话"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$lld 輪對話"
+          }
+        }
+      }
+    },
     "%@ — %lld %@ in %@" : {
       "extractionState" : "manual",
       "localizations" : {
