@@ -101,12 +101,21 @@ final class DSHRemoteStore: ObservableObject {
         if let rawEnv { injectedData = Data(rawEnv.utf8) }
         else if let rawArg { injectedData = Data(base64Encoded: rawArg) }
         if let data = injectedData,
-           let injected = try? JSONDecoder().decode(DSHRemoteSession.self, from: data) {
+           var injected = try? JSONDecoder().decode(DSHRemoteSession.self, from: data) {
+            // `/auth/refresh` ROTATES the refresh token, so the injected payload
+            // is only valid until the first rotation. A locally persisted session
+            // with a later expiry therefore wins: replaying the stale injected
+            // token would 401 forever and look like a dead pairing.
+            if let persisted = DSHRemoteKeychain.load(account: injected.serverId),
+               persisted.expiresAt > injected.expiresAt {
+                NSLog("[DSH] init: using persisted rotated session (injected expiresIn=\(Int((injected.expiresAt - Date().timeIntervalSince1970 * 1000) / 1000))s)")
+                injected = persisted
+            }
             host = DSHRemoteHost(url: injected.baseURL, serverId: injected.serverId,
                                  name: injected.hostName ?? "DSH", tlsPin: nil)
             client = DSHRemoteClient(session: injected)
             mode = .dsh
-            NSLog("[DSH] init: injected session host=\(injected.baseURL)")
+            NSLog("[DSH] init: injected session host=\(injected.baseURL) server=\(injected.serverId.prefix(12))")
             Task { await connect() }
             return
         } else if injectedData != nil {

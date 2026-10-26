@@ -170,9 +170,11 @@ final class DSHRemoteClient: @unchecked Sendable {
 
     /// Same token, refreshed first when it is within a minute of expiry.
     ///
-    /// Everything here is bounded: `makeStreamRequest` calls it BEFORE the socket
-    /// opens, so an unbounded wait would show up as "the stream never starts"
-    /// rather than as a transport failure — hence the two log lines.
+    /// One of only two entry points into the refresh path (the other is a 401 on
+    /// any request). Both go through `refreshShared`, so N concurrent callers
+    /// produce exactly one POST — which matters because the host ROTATES the
+    /// refresh token: two parallel refreshes would invalidate each other and the
+    /// device would be told to pair again while holding a perfectly good token.
     func freshAccessToken() async throws -> String {
         let current = currentSession()
         let remaining = current.expiresAt - Date().timeIntervalSince1970 * 1000
@@ -180,17 +182,75 @@ final class DSHRemoteClient: @unchecked Sendable {
         guard remaining < 60_000 else {
             return current.accessToken
         }
-        NSLog("[DSH] token expired/expiring — refreshing")
-        let fresh = try await refreshed(current)
-        NSLog("[DSH] token refreshed ok")
-        return fresh.accessToken
+        return try await refreshShared(path: "proactive").accessToken
     }
 
-    private func store(_ value: DSHRemoteSession) {
+    private func store(_ value: DSHRemoteSession, previous: DSHRemoteSession? = nil) {
         lock.lock(); session = value; lock.unlock()
-        // A refreshed session is persisted for the paired host; an injected
-        // DEBUG session is not, so this stays best-effort.
+        // The rotated token has to survive a relaunch: `/auth/refresh` returns a
+        // NEW refreshToken and the old one stops working immediately.
         DSHRemoteKeychain.save(value, account: value.serverId)
+        if let previous, previous.serverId != value.serverId {
+            // The host may reissue the id. Keep the old lookup working so a
+            // restored pairing does not resurrect a dead token.
+            DSHRemoteKeychain.save(value, account: previous.serverId)
+            NSLog("[DSH] auth serverId changed old=\(previous.serverId.prefix(8)) new=\(value.serverId.prefix(8))")
+        }
+    }
+
+    // MARK: Refresh (shared, rotating, deduplicated)
+
+    /// The in-flight refresh, if any. A shared `Task` rather than a `Bool` flag:
+    /// the waiters need the RESULT, not just "someone is working on it".
+    private var refreshTask: Task<DSHRemoteSession, Error>?
+
+    /// Refresh once, no matter how many callers ask.
+    private func refreshShared(path: String) async throws -> DSHRemoteSession {
+        lock.lock()
+        if let inFlight = refreshTask {
+            lock.unlock()
+            NSLog("[DSH] auth join in-flight refresh path=\(path)")
+            return try await inFlight.value
+        }
+        let stale = session
+        // Created inside the lock (the body is only scheduled, never run inline),
+        // so two callers cannot both see `nil`.
+        let task = Task<DSHRemoteSession, Error> { [self] in
+            try await performRefresh(stale)
+        }
+        refreshTask = task
+        lock.unlock()
+
+        defer {
+            lock.lock()
+            if refreshTask == task { refreshTask = nil }
+            lock.unlock()
+        }
+        return try await task.value
+    }
+
+    private func performRefresh(_ stale: DSHRemoteSession) async throws -> DSHRemoteSession {
+        do {
+            let next = try await DSHRemoteClient.refresh(session: stale, urlSession: urlSession)
+            store(next, previous: stale)
+            let expiresIn = Int((next.expiresAt - Date().timeIntervalSince1970 * 1000) / 1000)
+            let rotated = next.refreshToken != stale.refreshToken
+            NSLog("[DSH] auth refreshed rotated=\(rotated) expiresIn=\(expiresIn)")
+            return next
+        } catch let error as DSHRemoteError where error.needsRepair {
+            // Only an auth rejection means "pair again". A transport failure is
+            // rethrown untouched: telling the user to re-pair because the phone
+            // was offline would be worse than the original bug.
+            NSLog("[DSH] auth refresh failed status=\(error.status ?? -1) code=\(error.code)")
+            throw DSHRemoteError(
+                code: "pair_again",
+                message: AppLocalized("This session has expired or was revoked. Pair the device again."),
+                status: 401
+            )
+        } catch {
+            NSLog("[DSH] auth refresh unavailable: \(error.localizedDescription)")
+            throw error
+        }
     }
 
     // MARK: Anonymous endpoints
@@ -257,12 +317,56 @@ final class DSHRemoteClient: @unchecked Sendable {
 
     // MARK: Authenticated endpoints
 
-    /// Refreshes once when the access token is rejected, then retries.
-    func authorizedData(path: String, method: String = "GET", json: Any? = nil, query: [URLQueryItem] = [], retry: Bool = true) async throws -> Data {
+    /// EVERY Bearer request goes through here — list, messages, submit, cancel.
+    /// (The SSE stream has its own loop but the same two rules; see `run`.)
+    ///
+    /// Rules, in order:
+    ///   1. refresh proactively when the access token is within 60 s of expiry;
+    ///   2. on 401, refresh ONCE (shared with every other 401 in flight) and
+    ///      retry the request ONCE;
+    ///   3. a second 401 means the pairing itself is gone → `pairAgain`.
+    ///
+    /// Before this, only some endpoints refreshed: `GET /dsh/sessions` could fail
+    /// with "session expired" while the token still had minutes left, and the
+    /// sidebar stayed empty until the user re-paired by hand.
+    func authorizedData(path: String, method: String = "GET", json: Any? = nil,
+                        query: [URLQueryItem] = [], retry: Bool = true) async throws -> Data {
+        let tag = DSHRemoteClient.pathTag(path)
         var session = currentSession()
-        if session.expiresAt - Date().timeIntervalSince1970 * 1000 < 30_000, retry {
-            session = try await refreshed(session)
+        if session.expiresAt - Date().timeIntervalSince1970 * 1000 < 60_000 {
+            session = try await refreshShared(path: "\(tag)-proactive")
         }
+
+        let (data, response) = try await send(path: path, method: method, json: json,
+                                             query: query, session: session)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 401, retry else {
+            try DSHRemoteClient.check(response: response, data: data)
+            return data
+        }
+
+        // 401: the token was rejected even though the clock said it was fine.
+        let rejected = DSHRemoteClient.error(from: data, status: http.statusCode)
+        NSLog("[DSH] auth 401 path=\(tag) action=refresh code=\(rejected.code)")
+        let fresh = try await refreshShared(path: tag)
+        let (retryData, retryResponse) = try await send(path: path, method: method, json: json,
+                                                       query: query, session: fresh)
+        do {
+            try DSHRemoteClient.check(response: retryResponse, data: retryData)
+            return retryData
+        } catch let error as DSHRemoteError where error.needsRepair {
+            // Freshly rotated token rejected as well: the pairing is dead.
+            NSLog("[DSH] auth 401 path=\(tag) after refresh → pair again")
+            throw DSHRemoteError(
+                code: "pair_again",
+                message: AppLocalized("This session has expired or was revoked. Pair the device again."),
+                status: 401
+            )
+        }
+    }
+
+    /// One request with one session. No retry logic in here.
+    private func send(path: String, method: String, json: Any?, query: [URLQueryItem],
+                      session: DSHRemoteSession) async throws -> (Data, URLResponse) {
         var request = URLRequest(url: endpoint(path, query: query))
         request.httpMethod = method
         request.timeoutInterval = 30
@@ -271,20 +375,26 @@ final class DSHRemoteClient: @unchecked Sendable {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = try JSONSerialization.data(withJSONObject: json)
         }
-        let (data, response) = try await urlSession.data(for: request)
-        do {
-            try DSHRemoteClient.check(response: response, data: data)
-            return data
-        } catch let error as DSHRemoteError where error.needsRepair && retry {
-            _ = try await refreshed(session)
-            return try await authorizedData(path: path, method: method, json: json, query: query, retry: false)
-        }
+        return try await urlSession.data(for: request)
     }
 
-    private func refreshed(_ stale: DSHRemoteSession) async throws -> DSHRemoteSession {
-        let next = try await DSHRemoteClient.refresh(session: stale, urlSession: urlSession)
-        store(next)
-        return next
+    /// Short, stable name for the auth log lines.
+    static func pathTag(_ path: String) -> String {
+        if path.hasPrefix("/dsh/sessions") { return "sessions" }
+        if path.hasPrefix("/dsh/messages") { return "messages" }
+        if path.hasPrefix("/dsh/submissions") { return "submit" }
+        if path.hasPrefix("/dsh/cancel") { return "cancel" }
+        if path.hasPrefix("/dsh/events") { return "events" }
+        if path.hasPrefix("/conversations") { return "conversations" }
+        if path.hasPrefix("/submissions") { return "submit" }
+        return path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    }
+
+    /// Called by the SSE loop when `/dsh/events` itself answers 401. Best effort:
+    /// the stream is already dead, and the store's reconnect is what benefits.
+    func refreshAfterStream401() async {
+        NSLog("[DSH] auth 401 path=events action=refresh")
+        _ = try? await refreshShared(path: "events")
     }
 
     func conversations() async throws -> [DSHRemoteConversation] {
@@ -558,6 +668,11 @@ final class DSHRemoteStream: @unchecked Sendable {
             if let http, !(200..<300).contains(http.statusCode) {
                 let error = await DSHRemoteClient.streamError(status: http.statusCode, bytes: bytes)
                 NSLog("[DSH] sse rejected status=\(http.statusCode) code=\(error.code) msg=\(error.message)")
+                if http.statusCode == 401 {
+                    // Same rule as every other endpoint: rotate the token once, then
+                    // let the store's reconnect (this finish is retryable) succeed.
+                    await client.refreshAfterStream401()
+                }
                 deliver { self.onFinish(error.message, error.isRetryable) }
                 return
             }
