@@ -181,6 +181,12 @@ final class DSHRemoteStore: ObservableObject {
             apply(list)
             status = .connected
             errorText = nil
+            // Team tools are gated on a value `makeAgentTools()` reads
+            // SYNCHRONOUSLY every turn, so it cannot await there. A successful
+            // connect is the one authoritative moment to refresh it: after the
+            // list is on screen, never throwing, never blocking it.
+            await DSHRemoteTeamTools.refreshAvailability()
+            NSLog("[DSH] team availability=\(DSHRemoteTeamTools.availability.tag) members=\(DSHRemoteTeamTools.lastMemberCount)")
         } catch let error as DSHRemoteError {
             NSLog("[DSH] connect failed (remote): \(error.message)")
             if error.needsRepair {
@@ -597,6 +603,49 @@ final class DSHRemoteStore: ObservableObject {
         }
         try await client.cancel(sessionId: sessionId)
         NSLog("[DSH] cancel ok sid=\(sessionId.prefix(12))")
+    }
+
+    // MARK: Harness team (tools run here, not in the UI)
+
+    /// Whether this device can reach a client at all. The team tools gate on it.
+    var isPaired: Bool { client != nil && host != nil }
+
+    func listTeamMembers() async throws -> DSHRemoteTeamRoster {
+        guard let client else {
+            throw DSHRemoteError(code: "dsh/unavailable", message: "This device is not paired.", status: nil)
+        }
+        let roster = try await client.listTeamMembers()
+        NSLog("[DSH] team members=\(roster.members.count) lead=\(roster.lead?.sessionId?.prefix(12) ?? "nil")")
+        return roster
+    }
+
+    func spawnTeammate(name: String, description: String?, task: String,
+                       context: String? = nil) async throws -> DSHRemoteTeamMember {
+        guard let client else {
+            throw DSHRemoteError(code: "dsh/unavailable", message: "This device is not paired.", status: nil)
+        }
+        let member = try await client.spawnTeammate(name: name, description: description,
+                                                   task: task, context: context)
+        NSLog("[DSH] team spawn name=\(member.name) sid=\(member.sessionId?.prefix(12) ?? "nil")")
+        return member
+    }
+
+    func sendTeamMessage(target: String, text: String) async throws -> DSHRemoteTeamDelivery {
+        guard let client else {
+            throw DSHRemoteError(code: "dsh/unavailable", message: "This device is not paired.", status: nil)
+        }
+        let delivery = try await client.sendTeamMessage(target: target, text: text)
+        NSLog("[DSH] team message target=\(target) delivered=\(delivery.delivered.map(String.init) ?? "nil")")
+        return delivery
+    }
+
+    func interruptTeammate(target: String) async throws -> DSHRemoteTeamInterrupt {
+        guard let client else {
+            throw DSHRemoteError(code: "dsh/unavailable", message: "This device is not paired.", status: nil)
+        }
+        let result = try await client.interruptTeammate(target: target)
+        NSLog("[DSH] team interrupt target=\(target) ok=\(result.interrupted.map(String.init) ?? "nil")")
+        return result
     }
 
     // MARK: Send (bot conversations)

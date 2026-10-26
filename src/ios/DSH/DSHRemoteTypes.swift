@@ -234,6 +234,63 @@ struct DSHRemoteStreamEnvelope: Decodable, Sendable {
 }
 
 
+// MARK: - Harness team (protocol §1, `verify/DSH-REMOTE-TEAM-CONTRACT.md`)
+
+/// One teammate the HOST is running. Unlike a sub-agent this is a durable agent
+/// with its own Session: it can be messaged repeatedly and interrupted.
+struct DSHRemoteTeamMember: Decodable, Sendable, Equatable {
+    var id: String?
+    var name: String
+    var role: String?
+    /// `running` / `inactive` / `provisioning` / `failed` — kept as a string so a
+    /// new host state is displayable instead of failing the decode.
+    var status: String?
+    /// The teammate's own harness Session: `GET /dsh/events?sessionId=` on this id
+    /// shows its live output.
+    var sessionId: String?
+    var lastMessageAt: Double?
+
+    var displayStatus: String { status ?? "unknown" }
+}
+
+/// `GET /dsh/team/members`
+struct DSHRemoteTeamRoster: Decodable, Sendable {
+    struct Lead: Decodable, Sendable, Equatable {
+        var sessionId: String?
+        var title: String?
+    }
+
+    var lead: Lead?
+    var members: [DSHRemoteTeamMember]
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        lead = container.lenient(Lead.self, .lead)
+        // Lossy: one malformed member must not blank the whole roster.
+        members = container.lenientLossyArray(DSHRemoteTeamMember.self, .members)?.values ?? []
+    }
+
+    private enum CodingKeys: String, CodingKey { case lead, members }
+}
+
+/// `POST /dsh/team/spawn`
+struct DSHRemoteTeamSpawn: Decodable, Sendable {
+    var member: DSHRemoteTeamMember
+    var opened: Bool?
+}
+
+/// `POST /dsh/team/message`
+struct DSHRemoteTeamDelivery: Decodable, Sendable {
+    var delivered: Bool?
+    /// The member's status right after the delivery, when the host reports one.
+    var status: String?
+}
+
+/// `POST /dsh/team/interrupt`
+struct DSHRemoteTeamInterrupt: Decodable, Sendable {
+    var interrupted: Bool?
+}
+
 // MARK: - Merge (same rules as mergeMessages/applyConversationEvent in the SDK)
 
 enum DSHRemoteMerge {

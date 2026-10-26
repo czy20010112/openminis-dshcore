@@ -6,6 +6,10 @@ import UIKit
 /// mobile bridge, then switch the sidebar to that host's conversations.
 struct DSHRemoteSettingsView: View {
     @ObservedObject private var store = DSHRemoteStore.shared
+    /// Teammate dispatch lives in its own small model: it is a property of this
+    /// DEVICE (one pairing, one roster), not of the DSH connection, and the local
+    /// agent reads the same object to decide whether it may dispatch on its own.
+    @ObservedObject private var team = DSHRemoteTeamSettings.shared
 
     @State private var url = ""
     @State private var code = ""
@@ -20,6 +24,7 @@ struct DSHRemoteSettingsView: View {
                 pairingSection
             } else {
                 conversationModeSection
+                teammateSection
                 disconnectSection
             }
             if let error = store.errorText, !error.isEmpty {
@@ -134,6 +139,28 @@ struct DSHRemoteSettingsView: View {
             Text("When on, the conversation list shows this computer's conversations instead of local Minis chats. Messages you send from here run on the computer and stream back live; the model never runs on this device.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
+        }
+    }
+
+    /// Contract §3's switch, in the same section style as the sidebar toggle.
+    /// The footnote is deliberately three sentences: what "on" lets the agent do
+    /// on its own, that follow-ups stay with the SAME teammate (that is what
+    /// makes it a teammate and not a one-shot sub-agent), and that "off" is about
+    /// doing it unprompted rather than about the capability disappearing.
+    private var teammateSection: some View {
+        Section("Teammates") {
+            Toggle("Dispatch tasks to this computer", isOn: $team.autoDispatch)
+            Text("When on, the Minis agent on this phone may hand a task to this computer by itself — full desktop toolchains, large builds, that machine's own files — and keeps talking to the same teammate for follow-ups. When off it only dispatches when you ask: the tools stay available, the standing instruction disappears.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            // The availability answer comes from the same place the tool
+            // registration reads (`DSHRemoteTeamTools.availability`), so this
+            // note and the tool descriptions can never disagree.
+            if DSHRemoteTeamTools.availability == .unavailable {
+                Text("This computer does not have the teammate feature, so dispatching will fail until DS Bot on it is updated.")
+                    .font(.footnote)
+                    .foregroundStyle(.orange)
+            }
         }
     }
 

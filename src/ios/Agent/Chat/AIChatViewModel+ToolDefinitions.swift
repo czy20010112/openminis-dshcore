@@ -322,10 +322,141 @@ extension AIChatViewModel {
         // so the catalog does not change when a goal appears.
         tools.append(contentsOf: DSHGoalTools.definitions)
 
+        // [T-remote-team-dispatch] Teammates on the PAIRED computer
+        // (`verify/DSH-REMOTE-TEAM-CONTRACT.md` §2). Registered only when a
+        // computer is paired — the tools mean nothing without one, and a catalog
+        // that promises a dispatch the device cannot perform is worse than no
+        // tool at all. The auto-dispatch SWITCH does not gate registration: off
+        // means "do not do this unprompted" (the prompt paragraph disappears),
+        // not "this cannot be done" (contract §3, acceptance 9).
+        if remoteTeamToolsEnabled {
+            tools.append(contentsOf: remoteTeamToolDefinitions())
+        }
+
         return tools
     }
 
+    // MARK: - Remote team (paired computer)
+
+    /// Whether the paired computer can serve teammates at all.
+    ///
+    /// `DSHRemoteTeamTools.availability` is the ONE owner of that answer (it
+    /// probes `/dsh/team/members` and caches a throttled result); this property
+    /// only renames it for the two readers here — the registration above and
+    /// `remoteTeamPromptFragment` — so the tools and the policy can never
+    /// disagree about whether the feature exists on this device.
+    var remoteTeamAvailability: DSHRemoteTeamTools.Availability {
+        DSHRemoteTeamTools.availability
+    }
+
+    /// Register the four tools ONLY when the paired host can actually serve them
+    /// (`availability == .available`).
+    ///
+    /// `.notPaired` — nothing to dispatch to. `.unavailable` — the host has no
+    /// agent-team service, and a dead tool that fails every call is worse than no
+    /// tool: the model would burn turns discovering it. In that state the system
+    /// prompt carries one sentence saying so instead (`remoteTeamPromptFragment`).
+    var remoteTeamToolsEnabled: Bool {
+        remoteTeamAvailability == .available
+    }
+
+
+    /// The dispatch policy (`verify/DSH-REMOTE-TEAM-CONTRACT.md` §3), appended to
+    /// the local agent's system prompt.
+    ///
+    /// Empty string when there is nothing to say, so the call site is one line:
+    /// * no paired computer → the tools do not exist, so a policy about them
+    ///   would be a constant invitation to a missing capability;
+    /// * `remoteTeamAutoDispatch` off → the tools stay, the policy goes (the user
+    ///   asked for no unprompted dispatch, not for no dispatch);
+    /// * host confirmed unavailable → one sentence instead of the policy, so the
+    ///   model does the work here and tells the user why instead of calling a
+    ///   tool it knows will fail.
+    var remoteTeamPromptFragment: String {
+        switch remoteTeamAvailability {
+        case .notPaired:
+            return ""
+        case .unavailable:
+            // Tools are NOT registered in this state, so the prompt says why one
+            // is missing rather than describing a tool that will fail.
+            return "\n\nRemote teammates: the computer this phone is paired with does not have the teammate feature enabled, so no `remote_team_*` tools are available. Do the work on this phone instead; if the task truly needs that machine, tell the user to update DS Bot on it."
+        case .available:
+            guard DSHRemoteTeamSettings.shared.autoDispatch else { return "" }
+            return "\n\n" + Self.remoteTeamDispatchPolicy
+        }
+    }
+
+    /// Contract §3, translated 1:1 (the contract states it in Chinese; this
+    /// prompt is English like the rest of `baseSystemPrompt`). Conditions are
+    /// ORs — any one of them is enough — and the last two sentences exist because
+    /// the failure mode of "dispatch" is spawning a second teammate for the same
+    /// job or forgetting to tell the user who is doing it.
+    private static let remoteTeamDispatchPolicy: String = """
+    Remote teammates: you have a computer paired with this phone (the `remote_team_*` tools). When a task meets ANY of the following, dispatch it to that computer instead of forcing it here:
+    1. It needs a full desktop environment — Xcode / xcodebuild, Windows toolchains, Docker, large compiles, system-level dependencies, or devices on that computer's local network.
+    2. The user explicitly points at that machine — "that computer", "my computer", "my mac", "on my computer", a `D:\\…` path, "ssh m2".
+    3. It needs data this phone does not have — that workspace's large repositories, logs, or session records.
+    4. You expect it to take more than 3 minutes to build or test here.
+    Plain conversation, analysis, reading files on this phone, and small scripts stay here.
+    When dispatching, write the COMPLETE initial task in `remote_team_spawn` — the teammate cannot see this phone, this conversation, or its files — and tell the user in your reply who you dispatched it to.
+    For follow-ups on the same goal use `remote_team_message` to that same teammate (it keeps its context); do not spawn again.
+    """
+
+    /// The four tools of contract §2. Names and parameter keys are the registry
+    /// `DSHRemoteTeamTools.run(name:arguments:)` parses, character for
+    /// character — the schema and the handler cannot drift without this file
+    /// changing too. Descriptions are the contract's own wording: the model reads
+    /// "runs on the real desktop, self-contained task, follow up with message"
+    /// and that is the whole behaviour spec it needs.
+    private func remoteTeamToolDefinitions() -> [AgentToolDefinition] {
+        let title = AgentToolParam(type: .string, description: "A concise 5-10 word summary of what this tool call does, shown to the user (e.g. 'Run the build on my Mac', 'Ask ui-verify for the log'). Use the same language as the user.")
+        return [
+            AgentToolDefinition(
+                name: "remote_team_spawn",
+                description: "Dispatch a task to a teammate on the paired computer, which has the full desktop environment (Xcode, Windows tooling, real workspace). The teammate cannot see this device's context, so `task` must be self-contained. Returns the teammate name and host session id; follow up with remote_team_message.",
+                parameters: [
+                    "tool_title": title,
+                    "task": AgentToolParam(type: .string, description: "The complete initial task. The teammate is a fresh agent on that computer: it cannot see this conversation, this phone, or its files, so include every path, command, constraint and the output you expect back."),
+                    "name": AgentToolParam(type: .string, description: "Optional kebab-case teammate name. Omit it and one is generated from the task; a duplicate is retried automatically with -2/-3."),
+                    "description": AgentToolParam(type: .string, description: "Optional one-line description of what this teammate is for, shown in the roster on that computer."),
+                ],
+                required: ["tool_title", "task"],
+                propertyOrdering: ["tool_title", "task", "name", "description"]
+            ),
+            AgentToolDefinition(
+                name: "remote_team_message",
+                description: "Send another message to a teammate previously dispatched with remote_team_spawn. Same teammate, same session — it keeps its context.",
+                parameters: [
+                    "tool_title": title,
+                    "target": AgentToolParam(type: .string, description: "The teammate's name, as returned by remote_team_spawn or listed by remote_team_list."),
+                    "text": AgentToolParam(type: .string, description: "What to tell the teammate. It cannot see this conversation, so restate the question or the new requirement in full."),
+                ],
+                required: ["tool_title", "target", "text"],
+                propertyOrdering: ["tool_title", "target", "text"]
+            ),
+            AgentToolDefinition(
+                name: "remote_team_list",
+                description: "List teammates on the paired computer with their role, status and session id.",
+                parameters: [
+                    "tool_title": title,
+                ],
+                required: ["tool_title"],
+                propertyOrdering: ["tool_title"]
+            ),
+            AgentToolDefinition(
+                name: "remote_team_interrupt",
+                description: "Stop a teammate's current turn on the paired computer.",
+                parameters: [
+                    "tool_title": title,
+                    "target": AgentToolParam(type: .string, description: "The teammate to interrupt, by name."),
+                ],
+                required: ["tool_title", "target"],
+                propertyOrdering: ["tool_title", "target"]
+            ),
+        ]
+    }
 }
+
 
 // MARK: - Sub agent roster  [T-sub-agents-v1]
 

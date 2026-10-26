@@ -6318,6 +6318,15 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
         // Authoritative memory-status footer (overrides any earlier
         // baseSystemPrompt mentions when memory is disabled).
         userSystemPrompt += memoryStatusFragment
+        // [T-remote-team-dispatch] Dispatch policy for the paired computer
+        // (contract `verify/DSH-REMOTE-TEAM-CONTRACT.md` §3). Empty string when
+        // there is nothing truthful to say — no paired computer, the feature is
+        // switched off, or the host already answered `team/unavailable` — so the
+        // gate lives in ONE computed property, next to the tool registration it
+        // has to agree with (`AIChatViewModel+ToolDefinitions.swift`). Also
+        // appended at the provider-fallback rebuild below, for the same reason
+        // the memory footer is.
+        userSystemPrompt += remoteTeamPromptFragment
 
         let promptBuildMs = (CFAbsoluteTimeGetCurrent() - loopSetupStart) * 1000
         logger.info("⏱️ [runAgentLoop] prompt build elapsed=\(String(format: "%.1f", promptBuildMs))ms history=\(self.agentHistory.count)")
@@ -7041,6 +7050,15 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
                 // fallback that switched providers must not re-add them here — it
                 // would both duplicate them and re-freeze the prompt head.
                 userSystemPrompt += memoryStatusFragment
+        // [T-remote-team-dispatch] Dispatch policy for the paired computer
+        // (contract `verify/DSH-REMOTE-TEAM-CONTRACT.md` §3). Empty string when
+        // there is nothing truthful to say — no paired computer, the feature is
+        // switched off, or the host already answered `team/unavailable` — so the
+        // gate lives in ONE computed property, next to the tool registration it
+        // has to agree with (`AIChatViewModel+ToolDefinitions.swift`). Also
+        // appended at the provider-fallback rebuild below, for the same reason
+        // the memory footer is.
+        userSystemPrompt += remoteTeamPromptFragment
                 fallbackTrigger += 1
                 if !fallbackReasons.isEmpty {
                     // Resync the assistant message index by its stable id before
