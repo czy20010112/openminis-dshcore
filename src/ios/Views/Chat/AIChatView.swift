@@ -2877,6 +2877,11 @@ struct AIChatView: View {
                     case .mediaRef(let ref):
                         partsJson.append(["type": "media", "mime": ref.mimeType,
                                           "file": ref.originalFileName ?? ref.relativePath])
+                    case .reasoning(let text):
+                        // Kept in the dump as its own type: this is the debugging
+                        // export of a stored row, and dropping the thinking would
+                        // hide exactly the ordering defect it is used to diagnose.
+                        partsJson.append(["type": "reasoning", "text": text])
                     }
                 }
                 var entry: [String: Any] = [

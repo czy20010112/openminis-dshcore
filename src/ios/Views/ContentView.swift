@@ -1276,6 +1276,24 @@ struct ContentView: View {
     }
 
     @State private var sessions: [ChatSession] = []
+    /// DSH remote mode: the sidebar lists the paired computer's conversations
+    /// instead of local Minis chats. Persisted so a rebuild/language switch keeps it.
+    // Single source of truth: DSHRemoteStore.mode. The old
+// `@AppStorage("minis.dshRemote.sidebar")` flag was a second, independent copy —
+// flipping the toolbar switch left it out of sync with the store, so the
+// connection page could read OFF while the list showed remote sessions (and a
+// launch-argument-driven store could never turn the sidebar on).
+private var dshSidebarActive: Bool { dshRemoteStore.mode == .dsh }
+    /// The sidebar's title.
+    ///
+    /// [remote-brand] In `.dsh` the list is the paired computer's Sessions, so the
+    /// heading names the data source — `DSH` — instead of the assistant the SOUL is
+    /// configured for. `.minis` reads `soulName` exactly as before, so switching
+    /// back restores the configured name with no other change: `soulName` keeps
+    /// being refreshed from SOUL.md (see the `.soulMdChanged` receiver on the
+    /// sidebar body) and nothing writes to it here.
+    private var sidebarTitle: String { dshSidebarActive ? "DSH" : soulName }
+    @ObservedObject private var dshRemoteStore = DSHRemoteStore.shared
     @State private var folders: [ChatFolder] = []
     /// Collapsed folder sections. Pure UI view-state: persisted locally, never
     /// synced (like SessionBadgeStore's .unread — cross-device expand state is
@@ -2019,7 +2037,14 @@ struct ContentView: View {
         .task {
             // [T-p1-delegate-task] Hidden child sessions never reach the
             // sidebar; they are entered from their parent's helper block.
-            sessions = await ChatStore.shared.listSessions().filter { !$0.isChild }
+            if dshSidebarActive {
+                sessions = dshRemoteStore.rows.map { $0.asSidebarSession() }
+                #if DEBUG
+                debugAutoSelectDSHConversation()
+                #endif
+            } else {
+                sessions = await ChatStore.shared.listSessions().filter { !$0.isChild }
+            }
             // [T-ios-moveto-seed] Hand the sidebar's freshly-loaded list to the
             // Move-to sheet's seed, so opening the picker paints populated
             // instead of waiting on the ChatStore actor.
@@ -2030,7 +2055,7 @@ struct ContentView: View {
             // but no folders shows a flat list and the folder cards only
             // "appear after a while" (whenever refreshSessionList next ran —
             // the exact symptom reported from the Mac build).
-            folders = await ChatStore.shared.listFolders()
+            folders = dshSidebarActive ? dshRemoteStore.derivedFolders() : await ChatStore.shared.listFolders()
             let shareAlreadyHandled = shareCoordinator.bufferVersion > 0
             // A Home Screen Quick Action that fired during launch will
             // open the right session itself via `quickActionRouter.newChatTrigger`.
@@ -2166,6 +2191,8 @@ struct ContentView: View {
         .onChange(of: sessions) { _ in
             rebuildSessionsByIdCache()
         }
+        .onReceive(dshRemoteStore.$mode) { _ in refreshSessionList() }
+        .onReceive(dshRemoteStore.$rows) { _ in if dshSidebarActive { refreshSessionList() } }
         .onChange(of: selectedSessionId) { newValue in
             // [T-ios-session-switch-attributegraph-race] Hosting-view race
             // mitigation: when the user switches between two sessions while
@@ -2493,7 +2520,10 @@ struct ContentView: View {
                     // replacing the top element in place (menu "New Chat" swaps
                     // [current] → [draft]) would otherwise reuse the old view's
                     // @StateObject vm and nothing visibly changes.
-                    if id.hasPrefix("remote:") {
+                    if DSHRemoteSidebar.isRemote(id) {
+                        DSHRemoteChatView(conversationId: DSHRemoteSidebar.conversationId(from: id))
+                            .id(id)
+                    } else if id.hasPrefix("remote:") {
                         let parts = id.split(separator: ":", maxSplits: 2)
                         if parts.count == 3 {
                             AIChatView(sessionId: String(parts[2]), remoteDeviceId: String(parts[1]))
@@ -2541,6 +2571,10 @@ struct ContentView: View {
             // on first send. The .id() ensures each draft gets its own View lifecycle.
             let isDraft = Self.isNewSessionId(id)
             let effectiveId: String? = isDraft ? nil : id
+            if DSHRemoteSidebar.isRemote(id) {
+                DSHRemoteChatView(conversationId: DSHRemoteSidebar.conversationId(from: id))
+                    .id(id)
+            } else {
             AIChatView(sessionId: effectiveId, draftId: isDraft ? id : nil, initialGroupId: Self.extractGroupId(from: id))
                 .id(id)
                 .onAppear {
@@ -2549,6 +2583,7 @@ struct ContentView: View {
                 .onDisappear {
                     draftLog.info("🔑DRAFT detailView DISAPPEAR id=\(id)")
                 }
+            }
         } else {
             VStack(spacing: 12) {
                 Image(systemName: "bubble.left.and.bubble.right")
@@ -3372,7 +3407,7 @@ struct ContentView: View {
         .modifier(ScrollPhaseProbe())
         #endif
         .opacity(didInitialLoad ? 1 : 0)
-        .overlay { if didInitialLoad, filteredSessions.isEmpty, !isSearching { emptyState } }
+        .overlay { if didInitialLoad, filteredSessions.isEmpty, !isSearching { if dshSidebarActive { dshEmptyState } else { emptyState } } }
         .overlay(alignment: .top) { folderMiniBarOverlay(scrollProxy) }
         .safeAreaInset(edge: .bottom) { if isSelecting { selectionToolbar } else { fabRow } }
         // [T-home-fab-keyboard-inset] Mirror of the voice panel's structural
@@ -3561,7 +3596,7 @@ struct ContentView: View {
         // of sessionList) is unaffected and does not get it.
         .modifier(MacOS27OpaqueNavigationBar(background: Material.bar))
         .opacity(didInitialLoad ? 1 : 0)
-        .overlay { if didInitialLoad, displaySessions.isEmpty, !isSearching { emptyState } }
+        .overlay { if didInitialLoad, displaySessions.isEmpty, !isSearching { if dshSidebarActive { dshEmptyState } else { emptyState } } }
         .overlay(alignment: .top) { folderMiniBarOverlay(scrollProxy) }
         .safeAreaInset(edge: .bottom) { if isSelecting { selectionToolbar } else { fabRow } }
         // [T-home-fab-keyboard-inset] Same structural immunity as the compact
@@ -3616,6 +3651,15 @@ struct ContentView: View {
     }
 
     private func refreshMigrationSubtitle() {
+        // [remote-brand] One choke point for the subtitle in `.dsh`: the capsule
+        // reports this device's iCloud sync progress, which says nothing about the
+        // remote Session list on screen — and its wording is about Minis. Clear it
+        // and stop, before any of the work below. The loop keeps polling, so
+        // switching back to `.minis` restores the capsule on its next tick.
+        guard !dshSidebarActive else {
+            if migrationSubtitle != nil { migrationSubtitle = nil }
+            return
+        }
         guard #available(iOS 17.0, *), SyncV2Bootstrap.isEnabled else {
             if migrationSubtitle != nil { migrationSubtitle = nil }
             return
@@ -3806,6 +3850,14 @@ struct ContentView: View {
                     .frame(maxWidth: .infinity, alignment: .center)
             } else {
                 let canOpenSync: Bool = {
+                    // [remote-brand] The sync indicator/capsule under the title
+                    // describes THIS device's iCloud queue. In `.dsh` the list is
+                    // another computer's Sessions, so the capsule would be a
+                    // caption about something the page is not showing — and its
+                    // "Minis is up to date" wording is exactly the brand bleed
+                    // this change removes. Off, not merely hidden: the tap target
+                    // that opens the sync sheet must go with it.
+                    if dshSidebarActive { return false }
                     if #available(iOS 17.0, *) { return SyncV2Bootstrap.isEnabled }
                     return false
                 }()
@@ -3827,7 +3879,9 @@ struct ContentView: View {
                 // attached here gets torn down and re-created constantly and can
                 // drop a .soulMdChanged notification that arrives during the gap.
                 // This Text now only READS `soulName`.
-                let titleLabel = Text(soulName)
+                // Text(soulName) became Text(sidebarTitle): identical in `.minis`,
+                // `DSH` in `.dsh` (see `sidebarTitle`).
+                let titleLabel = Text(sidebarTitle)
                     .font(AppFont.sw(18.5, weight: .semibold, category: .body))
                     .foregroundStyle(.primary)
                     // A custom SOUL name can be long, and the width claim below
@@ -3933,6 +3987,13 @@ struct ContentView: View {
         ToolbarItem(placement: .topBarTrailing) {
             if !isSelecting {
                 Menu {
+                    Button {
+                        dshRemoteStore.setMode(dshSidebarActive ? .minis : .dsh)
+                        refreshSessionList()
+                    } label: {
+                        Label(dshSidebarActive ? "Show Minis Chats" : "Show DSH Chats",
+                              systemImage: "arrow.left.arrow.right.circle")
+                    }
                     Button {
                         showTerminal = true
                     } label: {
@@ -4518,6 +4579,32 @@ struct ContentView: View {
     @State private var showSelectModels = false
     @State private var showRestoreBackup = false
 
+    /// Sidebar empty state while the DSH data source is active: the Minis
+    /// onboarding steps are meaningless when the list is a remote computer's.
+    private var dshEmptyState: some View {
+        VStack(spacing: 14) {
+            Image(systemName: dshRemoteStore.host == nil ? "link.badge.plus" : "bubble.left.and.bubble.right")
+                .font(.system(size: 44))
+                .foregroundStyle(.secondary)
+            Text(dshRemoteStore.host == nil ? "No DSH computer paired" : "No conversations")
+                .font(AppFont.sw(18, weight: .bold, category: .title))
+            Text(dshRemoteStore.host == nil
+                 ? "Open Settings → DSH Remote to pair this device with your computer."
+                 : "This computer has no conversations yet.")
+                .font(AppFont.sw(14, weight: .regular, category: .body))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            Button {
+                Task { await dshRemoteStore.connect() }
+            } label: {
+                Text("Refresh").font(.system(size: 15, weight: .medium))
+            }
+            .buttonStyle(.bordered)
+        }
+        .padding(28)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
     private var emptyState: some View {
         let hasProviders = !providerStore.instances.isEmpty
         let hasGroups = !providerStore.modelGroups.isEmpty
@@ -4756,6 +4843,54 @@ struct ContentView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6, execute: work)
     }
 
+    #if DEBUG
+    /// Fires once per launch. This hook rides on the session refresh, which runs
+    /// repeatedly; a second push would stack the same Session twice onto the
+    /// iPhone's NavigationStack.
+    @State private var didDebugAutoSelectDSH = false
+
+    /// Simulator-only. The simulator cannot be driven through the UI, so the
+    /// split view would sit on "no conversation selected" and the phone would sit
+    /// on the list, with nothing to inspect. Opens a remote Session when the
+    /// launch environment asks for it. Lives in a method of its own because
+    /// inlining the condition into the `.task` body blows the type checker's
+    /// budget.
+    ///
+    /// Value: `1` — or an empty value, which is what a bare
+    /// `-MINIS_DSH_AUTOSELECT` turns into — opens the FIRST remote Session.
+    /// Anything else is taken as that Session's id, with or without the `dsh:`
+    /// transport prefix.
+    @MainActor
+    private func debugAutoSelectDSHConversation() {
+        guard !didDebugAutoSelectDSH else { return }
+        // Environment variables do not survive `simctl launch --console`, so the
+        // launch argument channel (`-MINIS_DSH_AUTOSELECT 1` → NSArgumentDomain)
+        // is the one that actually arrives.
+        let flag = ProcessInfo.processInfo.environment["MINIS_DSH_AUTOSELECT"]
+            ?? UserDefaults.standard.string(forKey: "MINIS_DSH_AUTOSELECT")
+        guard let raw = flag?.trimmingCharacters(in: .whitespacesAndNewlines) else { return }
+        let wanted: String
+        if raw.isEmpty || raw == "1" {
+            guard let first = sessions.first(where: { DSHRemoteSidebar.isRemote($0.id) }) else { return }
+            wanted = first.id
+        } else {
+            // The sidebar's rows are keyed `dsh:<conversationId>`, while the id a
+            // caller holds is the bare harness Session id. Normalize instead of
+            // making the caller know the prefix.
+            wanted = DSHRemoteSidebar.sessionId(for: DSHRemoteSidebar.conversationId(from: raw))
+        }
+        // The list may not have arrived yet (this rides on the refresh that
+        // populates it) — staying armed lets the next refresh retry.
+        guard sessions.contains(where: { $0.id == wanted }) else { return }
+        didDebugAutoSelectDSH = true
+        // ONE call covers both idioms: `openSession` sets `selectedSessionId` on a
+        // split view and appends to the NavigationStack's path on a phone. Writing
+        // `selectedSessionId` directly — the first version of this hook — is a
+        // no-op on iPhone, because there it is only the split view's selection.
+        openSession(wanted)
+    }
+    #endif
+
     /// [T-ios-listsessions-refresh-coalesce] Single serialized entry point for
     /// refreshing `sessions` from the store. If a refresh is already running,
     /// mark one trailing run pending instead of spawning a concurrent Task —
@@ -4792,12 +4927,19 @@ struct ContentView: View {
         Task(priority: .utility) { @MainActor in
             // [T-p1-delegate-task] Hidden child sessions never reach the
             // sidebar; they are entered from their parent's helper block.
-            sessions = await ChatStore.shared.listSessions().filter { !$0.isChild }
+            if dshSidebarActive {
+                sessions = dshRemoteStore.rows.map { $0.asSidebarSession() }
+                #if DEBUG
+                debugAutoSelectDSHConversation()
+                #endif
+            } else {
+                sessions = await ChatStore.shared.listSessions().filter { !$0.isChild }
+            }
             // [T-ios-moveto-seed] Keep the picker's seed current: this refresh
             // runs on every list-affecting change, so the snapshot tracks the
             // sidebar rather than going stale after the first load.
             ViewModelCache.noteSessionsLoaded(sessions)
-            folders = await ChatStore.shared.listFolders()
+            folders = dshSidebarActive ? dshRemoteStore.derivedFolders() : await ChatStore.shared.listFolders()
             sessionRefreshInFlight = false
             lastRefreshFinishedAt = Date()
             if sessionRefreshPending {
@@ -6142,6 +6284,12 @@ struct ContentView: View {
                     case .mediaRef:
                         cleanParts.append(["type": "media", "note": "image/file attachment"])
                         summary.attachmentCount += 1
+                    // `ContentPart.reasoning` (protocol v2 §2.2): a remote harness
+                    // transcript now carries thinking as its own part. Exports keep
+                    // it, tagged, instead of dropping it — the switch is exhaustive
+                    // and a missing case is a build error, not a silent loss.
+                    case .reasoning(let text):
+                        cleanParts.append(["type": "reasoning", "text": text])
                     }
                 }
 
@@ -6247,6 +6395,10 @@ struct ContentView: View {
                     case .mediaRef:
                         parts.append("[Attachment]")
                         summary.attachmentCount += 1
+                    // See the JSON export above: the reasoning part is real content
+                    // now, so the text export marks it rather than losing it.
+                    case .reasoning(let text):
+                        parts.append("[Thinking] \(text)")
                     }
                 }
                 let body = parts.joined(separator: "\n")
@@ -8293,6 +8445,19 @@ private struct SettingsSheet: View {
                                 .foregroundStyle(.white)
                                 .frame(width: 21, height: 21)
                                 .background(.brown, in: Circle())
+                        }
+                    }
+                    NavigationLink {
+                        DSHRemoteSettingsView()
+                    } label: {
+                        Label {
+                            Text("DSH Remote")
+                        } icon: {
+                            Image(systemName: "link.badge.plus")
+                                .font(.system(size: 9))
+                                .foregroundStyle(.white)
+                                .frame(width: 21, height: 21)
+                                .background(.green, in: Circle())
                         }
                     }
                     NavigationLink {

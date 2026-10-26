@@ -148,6 +148,17 @@ final class ChatMessage: Identifiable, ObservableObject {
     /// streaming into.
     var dshSeq: Int?
     let timestamp = Date()
+    /// The name this message's identity row shows, when it has to differ from the
+    /// user's SOUL name.
+    ///
+    /// nil — the overwhelming case — means "use the SOUL name (`SOUL.md`, falling
+    /// back to `Minis`)", which is exactly what the local conversation path has
+    /// always rendered. `DSHTranscript` stamps `"DSH"` on every message it builds
+    /// from a remote harness Session, so that transcript reads "✦ DSH" while local
+    /// chats are untouched. Set at construction and never mutated: the identity of
+    /// a turn belongs to where the turn came from, not to anything the UI decides
+    /// later.
+    var assistantDisplayName: String?
     /// [T-usage-capsule-time] When this turn FINISHED, for the clock on the
     /// usage capsule.
     ///

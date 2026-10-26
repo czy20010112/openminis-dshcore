@@ -1051,6 +1051,7 @@ enum DebugRPCChat {
 
             // Flatten ContentPart enum cases into a compact JSON shape.
             var content = ""
+            var reasoningText = ""
             var toolCalls: [[String: Any]] = []
             var attachments: [[String: Any]] = []
             for part in raw.parts {
@@ -1080,6 +1081,14 @@ enum DebugRPCChat {
                             "status": result.status ?? (result.success ? "success" : "failed"),
                         ])
                     }
+                case .reasoning(let text):
+                    // Reported separately from `content` when asked for, never
+                    // concatenated into it: this endpoint's `content` is the
+                    // message body, and mixing thinking into it was the exact
+                    // "thinking became the answer" confusion.
+                    if includeReasoning {
+                        reasoningText += text
+                    }
                 }
             }
             var dict: [String: Any] = [
@@ -1094,9 +1103,17 @@ enum DebugRPCChat {
             if includeTools, !toolCalls.isEmpty {
                 dict["toolCalls"] = toolCalls
             }
-            // includeReasoning is currently a no-op: reasoning_content is stored
-            // separately (not in `parts`). Kept in the schema for forward compat.
-            _ = includeReasoning
+            // `reasoning_content` is stored on the row (legacy local shape);
+            // per-part thinking is the newer remote shape. Both are reported
+            // under `reasoning` when the caller asks, and neither is mixed into
+            // `content`.
+            var reasoning = raw.reasoningContent ?? ""
+            if !reasoningText.isEmpty {
+                reasoning = reasoning.isEmpty ? reasoningText : reasoning + "\n\n" + reasoningText
+            }
+            if includeReasoning, !reasoning.isEmpty {
+                dict["reasoning"] = reasoning
+            }
             dicts.append(dict)
         }
         return ["sessionId": id, "count": dicts.count, "messages": dicts]
