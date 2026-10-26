@@ -93,6 +93,17 @@ struct DSHHostSessionRow: Decodable, Identifiable, Equatable, Sendable {
 /// anonymous `/info`, pairing code exchange, Bearer-authenticated reads and a
 /// WebSocket at `/mobile/v1/events`.
 final class DSHRemoteClient: @unchecked Sendable {
+    /// How many records the first page of a Session asks for.
+    ///
+    /// Measured on device (session-e902df26, 100 records / 464 KB): download +
+    /// decode 6.1 s, then `renderAll` → the list laid out 100 markdown cells and
+    /// the page stayed blank for ~45 s in total. 40 records render "on arrival",
+    /// so the cost is per-cell and roughly linear; 30 keeps the first screen
+    /// instant and is still several screens of scrollback. Older history is a
+    /// separate "load earlier" feature (`hasMore` already comes back) — do NOT
+    /// solve it by raising this number.
+    static let snapshotPageSize = 30
+
     private let base: URL
     /// Sessions go through the system proxy on macOS, and on the Simulator that
     /// proxy is whatever the host machine runs — a TLS-terminating proxy makes
@@ -462,7 +473,7 @@ final class DSHRemoteStream: @unchecked Sendable {
     private var receivedFrame = false
     private var lastCursor: Int?
 
-    init(client: DSHRemoteClient, sessionId: String, after: Int?, maxMessages: Int = 100,
+    init(client: DSHRemoteClient, sessionId: String, after: Int?, maxMessages: Int = DSHRemoteClient.snapshotPageSize,
          onFrame: @escaping (DSHRemoteStreamFrame) -> Void,
          onCursor: @escaping (Int) -> Void,
          onFinish: @escaping (String?, Bool) -> Void) {
@@ -552,17 +563,27 @@ final class DSHRemoteStream: @unchecked Sendable {
             }
 
             var payload = ""
-            // Deliver one accumulated frame. Kept in a closure so the three call
-            // sites below (a complete single line, a completed multi-line frame,
-            // the end of the stream) cannot drift.
+            // Deliver one accumulated frame. Kept in a closure so the call sites
+            // below (a complete single line, a completed multi-line frame, the end
+            // of the stream) cannot drift.
             func flushFrame(reason: String) {
                 guard !payload.isEmpty else { return }
                 let frame = payload
-                payload = ""
                 guard handle(frame) else {
-                    payload = frame
+                    // A frame that LOOKS complete but does not decode is poison:
+                    // keeping it would glue it onto the next frame and break every
+                    // later frame on the connection (measured: one 506 KB bad
+                    // snapshot + one heartbeat = `Unexpected character '{' after
+                    // top-level value`, forever). Drop it and stay in sync.
+                    if looksComplete(frame) {
+                        payload = ""
+                        NSLog("[DSH] frame dropped bytes=\(frame.count) why=\(reason) (undecodable, looks complete)")
+                    } else {
+                        payload = frame
+                    }
                     return
                 }
+                payload = ""
                 frameCount += 1
                 NSLog("[DSH] sse frame n=\(frameCount) bytes=\(frame.count) why=\(reason)")
             }
@@ -592,6 +613,10 @@ final class DSHRemoteStream: @unchecked Sendable {
                     if handle(chunk) {
                         frameCount += 1
                         NSLog("[DSH] sse frame n=\(frameCount) bytes=\(chunk.count) why=immediate")
+                    } else if looksComplete(chunk) {
+                        // Complete JSON that still would not decode: dropping it
+                        // now is the only way the NEXT frame can be trusted.
+                        NSLog("[DSH] frame dropped bytes=\(chunk.count) why=immediate (undecodable, looks complete)")
                     } else {
                         payload = chunk
                     }
@@ -623,6 +648,15 @@ final class DSHRemoteStream: @unchecked Sendable {
         // A clean end (the host closed the stream) is still a reconnect: the
         // Session is still there and the page still wants its events.
         deliver { self.onFinish(finishMessage, retryable) }
+    }
+
+    /// Does this text claim to be a whole JSON value? Used to decide whether an
+    /// undecodable payload is poison (drop it) or the first line of a multi-line
+    /// `data:` frame (keep it for the remainder).
+    private func looksComplete(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let last = trimmed.last else { return false }
+        return last == "}" || last == "]" || last == "\""
     }
 
     /// Drop the finished task handle. Kept out of the async body so the lock is
@@ -659,7 +693,12 @@ final class DSHRemoteStream: @unchecked Sendable {
             NSLog("[DSH] frame decode failed bytes=\(data.count) head=\(String(json.prefix(80))) err=\(error)")
             return false
         }
-        NSLog("[DSH] frame type=\(envelope.type) records=\(envelope.records?.count ?? -1) seq=\(envelope.seq.map(String.init) ?? "-")")
+        NSLog("[DSH] frame type=\(envelope.type) records=\(envelope.records?.values.count ?? -1) seq=\(envelope.seq.map(String.init) ?? "-")")
+        if let lossy = envelope.records, !lossy.failures.isEmpty {
+            // Never silent: a record the schema did not cover is a schema gap to
+            // fix, but it costs ONE row, not the whole Session.
+            NSLog("[DSH] snapshot dropped n=\(lossy.failures.count)/\(lossy.total) record(s) first=\"\(lossy.failures[0])\"")
+        }
         apply(envelope)
         return true
     }
@@ -670,7 +709,7 @@ final class DSHRemoteStream: @unchecked Sendable {
         switch envelope.type {
         case "snapshot":
             noteCursor(envelope.cursor)
-            let records = envelope.records ?? []
+            let records = envelope.records?.values ?? []
             let frame = DSHRemoteStreamFrame.snapshot(
                 cursor: envelope.cursor ?? 0, records: records, hasMore: envelope.hasMore ?? false,
                 running: envelope.running ?? false, title: envelope.title,

@@ -176,7 +176,11 @@ struct DSHRemoteStreamEnvelope: Decodable, Sendable {
     // snapshot
     var cursor: Int?
     var hasMore: Bool?
-    var records: [DSHHistoryRecord]?
+    /// Lossily decoded: one malformed record is dropped and counted, the rest of
+    /// the page still renders. A strict `[DSHHistoryRecord]` meant that a single
+    /// unexpected field shape (measured: `event.data.reason` arriving as a bare
+    /// string) turned a 506 KB snapshot into an empty Session.
+    var records: DSHLossyArray<DSHHistoryRecord>?
     var running: Bool?
     var blank: Bool?
     var title: String?
@@ -194,6 +198,39 @@ struct DSHRemoteStreamEnvelope: Decodable, Sendable {
     // error
     var code: String?
     var message: String?
+
+    // Declared explicitly: this type is Decodable-only, so the compiler does not
+    // synthesise `CodingKeys` for it.
+    private enum CodingKeys: String, CodingKey {
+        case type, cursor, hasMore, records, running, blank, title, contextPressure
+        case seq, event, turn, step, attempt, index, channel, text, code, message
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        // Every field is read leniently ON PURPOSE: a frame that carries one
+        // unexpected shape (a string where an object was expected, a number where
+        // a string was) must still deliver the rest of itself. Rejecting the whole
+        // envelope is what turned a 506 KB snapshot into an empty Session.
+        type = container.lenientString(.type) ?? "unknown"
+        cursor = container.lenientInt(.cursor)
+        hasMore = container.lenient(DSHHistoryPageHasMore.self, .hasMore)?.value
+        records = container.lenientLossyArray(DSHHistoryRecord.self, .records)
+        running = container.lenient(DSHHistoryPageHasMore.self, .running)?.value
+        blank = container.lenient(DSHHistoryPageHasMore.self, .blank)?.value
+        title = container.lenientText(.title)
+        contextPressure = container.lenient(DSHContextPressure.self, .contextPressure)
+        seq = container.lenientInt(.seq)
+        event = container.lenient(DSHHistoryEvent.self, .event)
+        turn = container.lenientInt(.turn)
+        step = container.lenientInt(.step)
+        attempt = container.lenientString(.attempt)
+        index = container.lenientInt(.index)
+        channel = container.lenientString(.channel)
+        text = container.lenientText(.text)
+        code = container.lenientString(.code)
+        message = container.lenientText(.message)
+    }
 }
 
 
