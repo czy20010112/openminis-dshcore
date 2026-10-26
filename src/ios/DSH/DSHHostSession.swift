@@ -519,6 +519,7 @@ enum DSHTranscript {
     /// `thinking → text → tool → thinking → text` has to reload that way.
     static func rawMessages(sessionId: String, records: [DSHHistoryRecord]) -> [RawMessage] {
         var projection = DSHTranscriptProjection()
+        projection.beginPage()
         for record in records.sorted(by: { ($0.seq ?? 0) < ($1.seq ?? 0) }) {
             guard let event = record.event else { continue }
             projection.apply(event)
@@ -585,6 +586,10 @@ enum DSHTranscript {
 /// and its height caches are identity based, so re-creating the object per event
 /// would make every delta look like a brand-new message.
 struct DSHTranscriptRow {
+    /// Row key for the "this page starts mid-conversation" marker. One per page,
+    /// so a plain constant is enough.
+    static let pageStartKey = "page:start"
+
     enum Kind: Equatable {
         case user
         case notice
@@ -651,6 +656,12 @@ struct DSHTranscriptProjection {
     private var rowIndexByTurn: [Int: Int] = [:]
     /// row key → index into `rows`.
     private var rowIndexByKey: [String: Int] = [:]
+    /// Set once the page's first record has been classified (see `notePageStart`).
+    private var didNotePageStart = false
+    /// `true` between `beginPage()` and the page's first record. Only PAGED input
+    /// (a snapshot / a messages page) can start mid-conversation; a live stream's
+    /// first delta is a resume, not a missing history.
+    private var awaitingPageStart = false
     private var turns: [Int: TurnState] = [:]
     /// callId → settled result. Kept OUTSIDE the segments: a result can arrive
     /// before a later step of the same turn, and every rebuild of the row's parts
@@ -664,8 +675,63 @@ struct DSHTranscriptProjection {
 
     // MARK: Events
 
+    // MARK: - Page start
+
+    /// A paged snapshot can begin in the MIDDLE of a turn.
+    ///
+    /// `maxMessages` on the wire counts RECORDS, not turns (measured: the last 30
+    /// records of `session-e902df26` cover turn 14's steps 2…7 only), so the first
+    /// record of a page is often an `assistant/message` / `tool/*` whose
+    /// `turn/start` and user prompt sit outside the window. The transcript then
+    /// legitimately starts with an assistant row that answers nothing visible.
+    ///
+    /// Rather than dropping those records (the old behaviour risked an empty page)
+    /// or inventing content, say so ONCE with a notice row — the same
+    /// `systemInfo` primitive the other status lines use. `false` when the page
+    /// starts at a boundary, so an ordinary load shows nothing extra.
+    /// Arm the mid-conversation check for the records that follow. Call this
+    /// before replaying a page (snapshot / `/dsh/messages`), never for a live
+    /// stream.
+    mutating func beginPage() {
+        awaitingPageStart = true
+        didNotePageStart = false
+    }
+
+    private mutating func notePageStart(_ event: DSHHistoryEvent) {
+        guard awaitingPageStart, !didNotePageStart else { return }
+        // Idempotent by key, not just by flag: replaying the same snapshot twice
+        // (or re-arming without a reset) must never stack two markers.
+        guard rowIndexByKey[DSHTranscriptRow.pageStartKey] == nil else { return }
+        didNotePageStart = true
+        awaitingPageStart = false
+        switch event.type {
+        case "assistant/message", "tool/call", "tool/result":
+            break
+        default:
+            // `turn/start` / `user/message` / session metadata: the page begins at
+            // a real boundary, nothing is missing.
+            return
+        }
+        guard let turn = event.data?.turn else { return }
+        rows.append(DSHTranscriptRow(
+            key: DSHTranscriptRow.pageStartKey,
+            kind: .notice,
+            time: DSHTranscript.date(from: event.time),
+            parts: [.text(AppLocalized("Earlier messages are not in this window."))],
+            usage: nil,
+            compacted: false,
+            assistantName: nil,
+            noticeIcon: "info.circle"
+        ))
+        rowIndexByKey[DSHTranscriptRow.pageStartKey] = rows.count - 1
+        NSLog("[DSH] page starts mid-turn t=\(turn) → marker row")
+    }
+
+    // MARK: - Events
+
     mutating func apply(_ event: DSHHistoryEvent) {
         if let seq = event.seq, seq > 0 { lastSeq = max(lastSeq, Int(seq)) }
+        notePageStart(event)
         switch event.type {
         case "user/message":
             applyUserMessage(event)
@@ -768,6 +834,8 @@ struct DSHTranscriptProjection {
         rows = []
         rowIndexByTurn = [:]
         rowIndexByKey = [:]
+        didNotePageStart = false
+        awaitingPageStart = false
         turns = [:]
         toolResults = [:]
         turnByCall = [:]

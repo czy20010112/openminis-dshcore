@@ -141,7 +141,11 @@ class SelfSizingCell: UICollectionViewCell {
     }
 
     private static let sizingLogger = AppLogger(category: "CellSizing")
-
+    // [T-ios-sizing-throw-counter] How many hosting measures have thrown since
+    // launch. Instrumentation only — nothing reads it but the log line in the
+    // `super.preferredLayoutAttributesFitting` catch below, where it turns "how
+    // many cells fell back" into a single number per pull instead of a grep count.
+    private static var measureThrowCount: Int = 0
     // [ScrollStall] 1Hz-aggregated cache-hit counters.
     private static var dedupHits: Int = 0
     private static var dedupLastFlush: CFTimeInterval = 0
@@ -347,7 +351,17 @@ class SelfSizingCell: UICollectionViewCell {
             // super's hosting measure threw an ObjC exception mid-race. Fall
             // back to the best height we have (cached, else the proposed one)
             // rather than crashing.
-            Self.sizingLogger.info("[CellSizing] ⚠️ super.preferredLayoutAttributesFitting threw — using fallback height")
+            //
+            // [T-ios-sizing-throw-counter] Instrumentation only: a running count
+            // so "how many cells fell back this session" is one number in the
+            // pulled device log instead of a line count. `fallback` says WHICH
+            // height was used, which is the half that decides whether the cell
+            // overlaps: `cached` is a real measure (safe), `proposed` is the
+            // layout's seed — for a text block that seed is only as good as
+            // `block.cachedAttributedString` was when the snapshot was applied.
+            Self.measureThrowCount += 1
+            let fallbackKind = lastComputedHeight == nil ? "proposed" : "cached"
+            Self.sizingLogger.info("[CellSizing] throws=\(Self.measureThrowCount) fallback=\(fallbackKind) — super.preferredLayoutAttributesFitting threw")
             if let cached = lastComputedHeight {
                 let copy = layoutAttributes.copy() as! UICollectionViewLayoutAttributes
                 copy.size.height = cached
@@ -541,12 +555,11 @@ class SelfSizingCell: UICollectionViewCell {
         // [T-ios-laid-out-short-evidence] Release-visible evidence for the
         // OTHER half of the missing-gap report: the layout reserving a cell
         // SHORTER than it renders. `contentView.clipsToBounds` is the authority
-        // on spacing (see the note on it in `SelfSizingCell.init`), so a
-        // too-short cell does not bleed into its neighbour — it gets cropped,
-        // and the crop lands in the gap the layout did reserve. On screen that
-        // reads exactly as "the tool block is glued to the text below it": the
-        // 8pt band is still there, it just contains the previous cell's clipped
-        // last line.
+        // on spacing (see the note on it below), so a too-short cell does not
+        // bleed into its neighbour — it gets cropped, and the crop lands in the
+        // gap the layout did reserve. On screen that reads exactly as "the tool
+        // block is glued to the text below it": the 8pt band is still there, it
+        // just contains the previous cell's clipped last line.
         //
         // Kept OUT of `#if DEBUG` (unlike the neighbouring probes) because the
         // build under investigation is a Release one, where the existing
@@ -1077,19 +1090,6 @@ final class MessageListViewController: UIViewController {
         collectionView.keyboardDismissMode = .onDrag
         collectionView.alwaysBounceVertical = true
         collectionView.contentInsetAdjustmentBehavior = .automatic
-        // [T-chat-statusbar-scrolltotop-mistap] `scrollsToTop` is left at its
-        // default (true) ON PURPOSE — tapping the iOS status bar must still
-        // scroll this list to the top, which is standard platform behaviour
-        // users expect.
-        //
-        // An earlier revision of this fix turned it off here to stop a mis-tap
-        // of the trailing "..." menu (which sits just below the status bar)
-        // from throwing the conversation to its oldest message. That was too
-        // blunt: it removed the deliberate gesture along with the accidental
-        // one. The mis-tap is addressed at its source instead — see
-        // `HitPaddedButton`, which pads the "..." touch target out to the
-        // 44x44pt HIG minimum so a normal tap lands on the button rather than
-        // slipping onto the status bar above it.
         view.addSubview(collectionView)
     }
 

@@ -1,6 +1,23 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Earlier messages are not in this window." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Earlier messages are not in this window."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "更早的消息不在这一页"
+          }
+        }
+      }
+    },
     "%lld turns" : {
       "comment" : "Sidebar subtitle of a remote DSH Session that has no message preview yet: the number of completed turns.",
       "extractionState" : "manual",

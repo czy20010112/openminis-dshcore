@@ -53,6 +53,9 @@ final class DSHRemoteChatAdapter: ObservableObject {
     private var sessionsSubscription: AnyCancellable?
     private var runningSubscription: AnyCancellable?
     private var storeErrorSubscription: AnyCancellable?
+    /// Text blocks whose `cachedAttributedString` is current, valued by the
+    /// content length that string was built from. See `refreshHeightMetadata`.
+    private var renderedTextLengths: [UUID: Int] = [:]
 
     init() {
         let model = AIChatViewModel()
@@ -68,7 +71,17 @@ final class DSHRemoteChatAdapter: ObservableObject {
             }
         runningSubscription = writer.$isRunning
             .sink { [weak self] value in
-                Task { @MainActor in self?.isRunning = value }
+                Task { @MainActor in
+                    guard let self else { return }
+                    let wasRunning = self.isRunning
+                    self.isRunning = value
+                    // true → false is the seal (a `turn/end`, a STOP, or the
+                    // writer's own seal when the host goes quiet). The blocks that
+                    // were growing are final from here on, so this is the moment
+                    // their true height can be cached — and the moment the cells
+                    // that were laid out on an estimate need to be told.
+                    if wasRunning, !value { self.refreshHeightMetadata(nudge: true) }
+                }
             }
         storeErrorSubscription = DSHRemoteStore.shared.$errorText
             .sink { [weak self] value in
@@ -116,6 +129,9 @@ final class DSHRemoteChatAdapter: ObservableObject {
         errorText = nil
         sendErrorText = nil
         writer.reset(sessionId: sessionId)
+        // A new Session's blocks are new objects; the old ids would only keep
+        // memory alive and could match a recycled id by accident.
+        renderedTextLengths.removeAll(keepingCapacity: true)
         // Resolve now as well as through the subscription: the list is usually
         // already here (the user tapped a row it painted).
         apply(rows: DSHRemoteStore.shared.rows)
@@ -142,6 +158,7 @@ final class DSHRemoteChatAdapter: ObservableObject {
     func close() {
         closeStream()
         loadedSessionId = nil
+        renderedTextLengths.removeAll(keepingCapacity: true)
     }
 
     /// Opens the Session's live stream. The store owns the socket, the cursor and
@@ -182,6 +199,76 @@ final class DSHRemoteChatAdapter: ObservableObject {
         // The writer is the only place blocks are created, so this is the single
         // entry point for all four frame kinds.
         writer.apply(frame)
+        // …and this is the single place the cells' height can be made right: the
+        // list has not applied a snapshot yet at this point (SwiftUI updates after
+        // this call returns), so caching here is what makes `applySnapshot` seed a
+        // TextKit-accurate `precalcHeight` instead of a coarse estimate.
+        refreshHeightMetadata(nudge: false)
+    }
+
+    // MARK: - Height metadata
+
+    /// Give every settled text block the TextKit metadata the list seeds cell
+    /// heights from, and — when asked — tell the list to re-lay those cells out.
+    ///
+    /// [T-dsh-overlap-estimate-fallback] The list seeds a cell's height from
+    /// `block.cachedAttributedString` (a TextKit measure, accurate) and falls back
+    /// to a character-count estimate when it is nil. On iOS 15 the self-sizing
+    /// measure itself can throw —
+    ///
+    ///     NSInternalInconsistencyException — Content view returned an invalid size
+    ///     {1.7976931348623157e+308, 28} from -systemLayoutSizeFittingSize:…
+    ///
+    /// — and `SelfSizingCell` then keeps whatever the layout seeded ("using
+    /// fallback height"). For a long paragraph that seed was a ONE-LINE estimate
+    /// while the block renders many lines, and since `contentView` does not clip,
+    /// the text painted over the block below it: the "blocks overlap" report. The
+    /// local chat path never shows this because `loadSession` caches an attributed
+    /// string for every text block before its first snapshot, so even the fallback
+    /// height is the true one; the remote writer only caches at final-flush
+    /// boundaries, so a page rebuilt from a snapshot started on estimates.
+    ///
+    /// Cost control: the length gate means each block is rendered once per content
+    /// version, and the growing tail of a running turn is skipped outright (it is
+    /// still changing; the writer caches it itself when it commits). `nudge` is
+    /// only used on the seal, where the item list does not change and the layout
+    /// would otherwise keep the height it already reserved.
+    private func refreshHeightMetadata(nudge: Bool) {
+        let messages = vm.messages
+        guard !messages.isEmpty else { return }
+        let running = isRunning
+        var nudged: [(messageId: UUID, blockId: UUID)] = []
+        var cached = 0
+        for (index, message) in messages.enumerated() where message.role == .assistant {
+            // The last message of a running turn is the block that is being
+            // appended to right now: rendering it here would re-parse its markdown
+            // on every token for a height nobody can trust until it settles.
+            if running, index == messages.count - 1 { continue }
+            for block in message.blocks where block.kind == .text {
+                let length = block.content.count
+                guard length > 0, renderedTextLengths[block.id] != length else { continue }
+                vm.cacheAttributedString(for: block)
+                renderedTextLengths[block.id] = length
+                cached += 1
+                if nudge { nudged.append((messageId: message.id, blockId: block.id)) }
+            }
+        }
+        // [T-ios-sizing-throw-counter] One line per pass that actually did work,
+        // so the device log proves the pass is bounded: `nudge` is the number of
+        // list reconfigures this pass costs.
+        if cached > 0 {
+            NSLog("[DSH] heightMeta cached=\(cached) nudge=\(nudged.count) running=\(running) msgs=\(messages.count)")
+        }
+        guard nudge, !nudged.isEmpty else { return }
+        // One runloop later: the list drops a signal for an item it does not have
+        // in its snapshot yet ("fill signal MISSED"), and the item list is only
+        // rebuilt after this frame's `vm.messages` change has been rendered.
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            for pair in nudged {
+                self.vm.blockContentFilledSignal.send(pair)
+            }
+        }
     }
 
     // MARK: - Send / stop
