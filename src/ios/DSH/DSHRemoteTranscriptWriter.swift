@@ -69,6 +69,14 @@ final class DSHRemoteTranscriptWriter: ObservableObject {
     /// Optimistic user rows that the host has not echoed yet, oldest first.
     private var pendingOptimistic: [OptimisticUser] = []
 
+    /// `turn|step|attempt|index` keys whose block has already been announced by
+    /// `writer delta-open`. Trace only — it drives no behaviour.
+    private var deltaOpened: Set<String> = []
+    /// `turn|step` → the attempt id its last delta belonged to. Trace only: the
+    /// durable `assistant/message` has no attempt field, so this is the only real
+    /// source for the `a=` in `writer apply`.
+    private var attemptByStep: [String: String] = [:]
+
     private static let mediaResolver: (MediaRef) -> URL = { _ in URL(fileURLWithPath: "/dev/null") }
 
     // MARK: - Init / reset
@@ -89,6 +97,8 @@ final class DSHRemoteTranscriptWriter: ObservableObject {
         rowState = [:]
         renderedOrder = []
         pendingOptimistic = []
+        deltaOpened = []
+        attemptByStep = [:]
         cursor = 0
         // Only publish when something actually changes: `@Published` fires on
         // every assignment, and each one makes the list run a full diffable
@@ -129,6 +139,10 @@ final class DSHRemoteTranscriptWriter: ObservableObject {
         rowChat = [:]
         rowState = [:]
         renderedOrder = []
+        // A rebuild re-announces every block: the trace must describe the page as
+        // it is after the rebuild, not as it was before.
+        deltaOpened = []
+        attemptByStep = [:]
         // This is a REBUILD, so the rows that are about to be dropped must go
         // too: an empty Session reopened after a non-empty one would otherwise
         // keep the previous transcript (the order `[] == []` check below cannot
@@ -178,12 +192,27 @@ final class DSHRemoteTranscriptWriter: ObservableObject {
         // example when a reconnect resumed past it. The composer must show STOP
         // for that turn, not a send key.
         if projection.anyRunning, !isRunning { setRunning(true, turn: projection.runningTurn) }
+        // [T-dsh-writer-trace] Machine-checkable proof that the step's blocks
+        // were REPLACED, not appended: after a reload the same step must produce
+        // the same `blocks=`/`kinds=` line it produced live.
+        if event.type == "assistant/message", let turn = event.data?.turn {
+            logDurableStep(turn: turn, step: event.data?.step)
+        }
     }
 
     /// A live token delta.
     func applyDelta(turn: Int, step: Int, attempt: String, index: Int,
                     channel: DSHStreamChannel, text: String) {
         guard !text.isEmpty else { return }
+        // [T-dsh-writer-trace] Once per (turn, step, attempt, index): the moment a
+        // block is BORN. A streamed turn must open exactly as many blocks as its
+        // durable message ends up with, and this line is what makes that provable
+        // from a device log instead of from a screenshot.
+        let deltaKey = "\(turn)|\(step)|\(attempt)|\(index)"
+        attemptByStep["\(turn)|\(step)"] = attempt
+        if deltaOpened.insert(deltaKey).inserted {
+            NSLog("[DSH] writer delta-open t=\(turn) s=\(step) a=\(attempt) i=\(index) channel=\(channel.rawValue)")
+        }
         setRunning(true, turn: turn)
         projection.applyDelta(turn: turn, step: step, attempt: attempt,
                               index: index, channel: channel, text: text)
@@ -213,6 +242,7 @@ final class DSHRemoteTranscriptWriter: ObservableObject {
     }
 
     private func sealActiveTurnInternal(publish: Bool) {
+        let sealingTurn = streamingTurn
         flushThinkingTails()
         commitTexts(finalFlush: true)
         // A tool block still `.running`/`.streaming` would render as a tool that
@@ -229,6 +259,37 @@ final class DSHRemoteTranscriptWriter: ObservableObject {
         }
         setRunning(false, turn: nil)
         if publish { vm.publishUnlessTransitioning() }
+        // [T-dsh-writer-trace] The sealed turn's final shape, as it stands on
+        // screen — the number a reload of the same Session has to reproduce.
+        let assistant = vm.messages.last(where: { $0.role == .assistant })
+        NSLog("[DSH] writer seal t=\(sealingTurn.map(String.init) ?? "nil") msgs=\(vm.messages.count) blocks=\(assistant?.blocks.count ?? -1)")
+    }
+
+    /// [T-dsh-writer-trace] One line per durable `assistant/message`: the block
+    /// shape of the row it rewrote. `kinds` uses single letters in ARRAY order so
+    /// a streamed turn and a reloaded turn can be diffed mechanically:
+    /// `t` text, `r` reasoning, `x` tool call, `T` tool result / info.
+    private func logDurableStep(turn: Int, step: Int?) {
+        guard let row = projection.rows.first(where: { row in
+            if case .assistant(let rowTurn) = row.kind { return rowTurn == turn }
+            return false
+        }), let chat = rowChat[row.key] else { return }
+        // The durable event carries no attempt id; the deltas that preceded it on
+        // the same step are the only real source for one.
+        let attempt = step.flatMap { attemptByStep["\(turn)|\($0)"] } ?? "nil"
+        var letters = ""
+        var chars = 0
+        for block in chat.blocks {
+            chars += block.content.count
+            switch block.kind {
+            case .text: letters += "t"
+            case .thinking: letters += "r"
+            case .info: letters += "T"
+            default: letters += "x"
+            }
+        }
+        let shown = letters.count > 24 ? String(letters.prefix(24)) + "…" : letters
+        NSLog("[DSH] writer apply t=\(turn) s=\(step.map(String.init) ?? "nil") a=\(attempt) blocks=\(chat.blocks.count) kinds=\(shown) chars=\(chars)")
     }
 
     // MARK: - Optimistic user rows
@@ -290,11 +351,19 @@ final class DSHRemoteTranscriptWriter: ObservableObject {
 
     /// Render every row. Cheap: a row whose parts did not change is a no-op.
     private func renderAll() {
+        // [T-dsh-writer-trace] Wall-clock for the whole render pass. This is the
+        // half of "opening a Session" that the client's own timings cannot see:
+        // decode happens in DSHRemoteStream, then `renderAll` builds the blocks
+        // and publishes, and the LIST lays out N markdown cells afterwards. With
+        // this number the three costs can be told apart from a device log.
+        let started = CFAbsoluteTimeGetCurrent()
         syncMessageOrder()
         for row in projection.rows {
             render(row)
         }
         vm.publishUnlessTransitioning()
+        let elapsed = (CFAbsoluteTimeGetCurrent() - started) * 1000
+        NSLog("[DSH] renderAll records=\(projection.rows.count) msgs=\(vm.messages.count) ms=\(Int(elapsed))")
     }
 
     /// Keep `vm.messages` in the projection's order, reusing existing objects.

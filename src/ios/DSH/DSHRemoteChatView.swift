@@ -401,6 +401,10 @@ struct DSHRemoteChatView: View {
         let outgoing = draft
         guard !outgoing.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         draft = ""
+        // Same order as the local composer (`AIChatView.performSend`): ask the
+        // list to follow the bottom BEFORE the new row lands, so the optimistic
+        // bubble is what the user sees rather than being left below the fold.
+        adapter.vm.forceScrollToBottom.send()
         Task {
             let accepted = await adapter.send(outgoing)
             if !accepted, draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {

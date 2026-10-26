@@ -65,6 +65,24 @@ struct DSHContextPressure: Codable, Equatable, Sendable {
 struct DSHHistoryRecord: Codable, Sendable {
     var seq: Double?
     var event: DSHHistoryEvent?
+
+    init(seq: Double?, event: DSHHistoryEvent?) {
+        self.seq = seq
+        self.event = event
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        seq = container.lenientDouble(.seq)
+        // An ABSENT `event` is legitimate (marker records); an `event` that is
+        // present but undecodable is a schema gap, so it throws and the lossy
+        // array counts it instead of silently keeping an empty row.
+        if container.contains(.event) {
+            event = try container.decodeIfPresent(DSHHistoryEvent.self, forKey: .event)
+        } else {
+            event = nil
+        }
+    }
 }
 
 struct DSHHistoryEvent: Codable, Sendable {
@@ -76,6 +94,25 @@ struct DSHHistoryEvent: Codable, Sendable {
     /// shadows) everything before it, which is what the dimming means.
     var surfaceOp: String?
     var data: DSHHistoryData?
+
+    init(type: String, seq: Double?, time: Double?, surfaceOp: String? = nil, data: DSHHistoryData?) {
+        self.type = type
+        self.seq = seq
+        self.time = time
+        self.surfaceOp = surfaceOp
+        self.data = data
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        // `type` is the one field every event has; default it rather than losing
+        // the whole record over a missing key.
+        type = container.lenientString(.type) ?? "unknown"
+        seq = container.lenientDouble(.seq)
+        time = container.lenientDouble(.time)
+        surfaceOp = container.lenientString(.surfaceOp)
+        data = container.lenient(DSHHistoryData.self, .data)
+    }
 }
 
 struct DSHHistoryData: Codable, Sendable {
@@ -94,12 +131,51 @@ struct DSHHistoryData: Codable, Sendable {
     var arguments: String?
     var toolCallId: String?
     var reason: DSHHistoryTurnReason?
+    /// `tool/result` failure (object) or `compaction/end` failure (JSON string).
+    var error: DSHHistoryFailure?
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        role = container.lenientString(.role)
+        id = container.lenientString(.id)
+        turn = container.lenientInt(.turn)
+        step = container.lenientInt(.step)
+        content = container.lenientArray(DSHHistoryContent.self, .content)
+        source = container.lenient(DSHHistorySource.self, .source)
+        message = container.lenient(DSHHistoryMessage.self, .message)
+        usage = container.lenient(DSHHistoryUsage.self, .usage)
+        callId = container.lenientString(.callId)
+        name = container.lenientString(.name)
+        // A tool's arguments are a JSON *string* in every log seen so far, but an
+        // object here must not cost the record: it re-serialises to valid JSON,
+        // which is exactly what the tool parser expects.
+        arguments = container.lenientText(.arguments)
+        toolCallId = container.lenientString(.toolCallId)
+        reason = container.lenient(DSHHistoryTurnReason.self, .reason)
+        error = container.lenient(DSHHistoryFailure.self, .error)
+    }
 }
 
 /// `turn/end` reason. `.cancelled` matters: the row must not be shown as
 /// running after the user hit Stop.
+///
+/// Two shapes exist: `{"kind":"cancelled"}` and — measured in
+/// `session-e902df26` — a bare `"cancelled"`. The bare form used to fail the
+/// decode of the whole snapshot (506 KB → empty page), so both are accepted.
 struct DSHHistoryTurnReason: Codable, Sendable {
     var kind: String?
+
+    init(kind: String? = nil) { self.kind = kind }
+
+    init(from decoder: Decoder) throws {
+        if let single = try? decoder.singleValueContainer(),
+           let plain = try? single.decode(String.self) {
+            kind = plain
+            return
+        }
+        let container = try? decoder.container(keyedBy: CodingKeys.self)
+        kind = container?.lenientString(.kind)
+    }
 }
 
 struct DSHHistoryMessage: Codable, Sendable {
@@ -108,6 +184,15 @@ struct DSHHistoryMessage: Codable, Sendable {
     var content: [DSHHistoryContent]?
     var source: DSHHistorySource?
     var toolCallId: String?
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        role = container.lenientString(.role)
+        id = container.lenientString(.id)
+        content = container.lenientArray(DSHHistoryContent.self, .content)
+        source = container.lenient(DSHHistorySource.self, .source)
+        toolCallId = container.lenientString(.toolCallId)
+    }
 }
 
 /// One content block of an assistant message — or of a tool result, where the
@@ -123,6 +208,30 @@ struct DSHHistoryContent: Codable, Sendable {
     /// `tool/result` therefore carries its text one level down, and reading only
     /// the outer array came back empty for every single tool result.
     var content: [DSHHistoryContent]?
+
+    init(type: String, text: String?, id: String? = nil, name: String? = nil,
+         arguments: String? = nil, toolCallId: String? = nil, content: [DSHHistoryContent]? = nil) {
+        self.type = type
+        self.text = text
+        self.id = id
+        self.name = name
+        self.arguments = arguments
+        self.toolCallId = toolCallId
+        self.content = content
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        type = container.lenientString(.type) ?? "unknown"
+        text = container.lenientText(.text)
+        id = container.lenientString(.id)
+        name = container.lenientString(.name)
+        arguments = container.lenientText(.arguments)
+        toolCallId = container.lenientString(.toolCallId)
+        // Nested output blocks are decoded lossily: one unreadable block must not
+        // take the tool call (and with it the whole record) down.
+        content = container.lenientArray(DSHHistoryContent.self, .content)
+    }
 }
 
 struct DSHHistorySource: Codable, Sendable {
@@ -137,12 +246,78 @@ struct DSHHistorySource: Codable, Sendable {
     var rpcId: String?
     var compactionId: String?
     var sourceCommandId: String?
+
+    init(from decoder: Decoder) throws {
+        // Two shapes, both live in the same log (survey: object ×2845 /
+        // string ×302). `approval/policy` and `sandbox/mode` write a bare
+        // `"delegation"`; `user/message` and friends write the object. A strict
+        // object-only decode silently cost 302 records per full sweep.
+        if let single = try? decoder.singleValueContainer(),
+           let plain = try? single.decode(String.self) {
+            kind = plain
+            callId = nil
+            rpcId = nil
+            compactionId = nil
+            sourceCommandId = nil
+            form = nil
+            summary = nil
+            return
+        }
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        kind = container.lenientString(.kind)
+        form = container.lenientString(.form)
+        summary = container.lenientText(.summary)
+        callId = container.lenientString(.callId)
+        rpcId = container.lenientString(.rpcId)
+        compactionId = container.lenientString(.compactionId)
+        sourceCommandId = container.lenientString(.sourceCommandId)
+    }
+}
+
+/// An `error` field: an object on `tool/result` (×369), a whole JSON string on
+/// `compaction/end` (×263, e.g. `400: {"message":"Invalid option: …"}`).
+///
+/// Not rendered on its own, but it is the ONLY place a failed tool explains
+/// itself, so it must survive decoding instead of being dropped.
+struct DSHHistoryFailure: Codable, Sendable {
+    /// The one-line (or whole) diagnostic, whatever shape it arrived in.
+    var text: String?
+
+    init(text: String?) { self.text = text }
+
+    init(from decoder: Decoder) throws {
+        if let single = try? decoder.singleValueContainer(),
+           let plain = try? single.decode(String.self) {
+            let trimmed = plain.trimmingCharacters(in: .whitespacesAndNewlines)
+            text = trimmed.isEmpty ? nil : trimmed
+            return
+        }
+        guard let wrapper = (try? decoder.singleValueContainer()) else { text = nil; return }
+        guard let raw = try? wrapper.decode(DSHJSONValue.self) else { text = nil; return }
+        var found = raw.summaryText
+        if case .object(let dictionary) = raw {
+            for key in ["message", "detail", "error", "code", "reason", "kind"] {
+                if let value = dictionary[key], case .string(let inner) = value, !inner.isEmpty {
+                    found = inner
+                    break
+                }
+            }
+        }
+        text = found.isEmpty ? nil : found
+    }
 }
 
 struct DSHHistoryUsage: Codable, Sendable {
     var inputTokens: Double?
     var outputTokens: Double?
     var totalTokens: Double?
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        inputTokens = container.lenientDouble(.inputTokens)
+        outputTokens = container.lenientDouble(.outputTokens)
+        totalTokens = container.lenientDouble(.totalTokens)
+    }
 }
 
 struct DSHMessagesPage: Codable, Sendable {
@@ -153,6 +328,80 @@ struct DSHMessagesPage: Codable, Sendable {
     var asOfSeq: Double?
     var hasMore: Bool?
     var records: [DSHHistoryRecord]?
+    /// How many records the page carried but could not be decoded (`records` is
+    /// already the survivors). Logged, never fatal.
+    var droppedRecords: Int = 0
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        sessionId = container.lenientString(.sessionId)
+        cursor = container.lenientDouble(.cursor)
+        asOfSeq = container.lenientDouble(.asOfSeq)
+        hasMore = container.lenient(DSHHistoryPageHasMore.self, .hasMore)?.value
+        let lossy = container.lenient(DSHLossyArray<DSHHistoryRecord>.self, .records)
+        records = lossy?.values
+        droppedRecords = lossy?.failures.count ?? 0
+    }
+}
+
+/// `hasMore` is a Bool in the follow frame and `0`/`1` in some pages.
+struct DSHHistoryPageHasMore: Decodable {
+    var value: Bool
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if let flag = try? container.decode(Bool.self) { value = flag; return }
+        if let number = try? container.decode(Double.self) { value = number != 0; return }
+        value = false
+    }
+}
+
+// MARK: - Lenient field readers
+
+extension KeyedDecodingContainer {
+    /// Absent/garbled → nil, never a throw.
+    func lenient<T: Decodable>(_ type: T.Type, _ key: Key) -> T? {
+        (try? decodeIfPresent(type, forKey: key)) ?? nil
+    }
+
+    func lenientString(_ key: Key) -> String? {
+        guard let wrapper = (try? decodeIfPresent(DSHFlexibleString.self, forKey: key)) ?? nil else {
+            return nil
+        }
+        return wrapper.value
+    }
+
+    func lenientText(_ key: Key) -> String? {
+        guard let wrapper = (try? decodeIfPresent(DSHFlexibleText.self, forKey: key)) ?? nil else {
+            return nil
+        }
+        return wrapper.text.isEmpty ? nil : wrapper.text
+    }
+
+    func lenientDouble(_ key: Key) -> Double? {
+        if let value = (try? decodeIfPresent(Double.self, forKey: key)) ?? nil { return value }
+        guard let text = lenientString(key) else { return nil }
+        return Double(text)
+    }
+
+    func lenientInt(_ key: Key) -> Int? {
+        if let value = (try? decodeIfPresent(Int.self, forKey: key)) ?? nil { return value }
+        guard let number = lenientDouble(key), number.isFinite else { return nil }
+        return Int(number)
+    }
+
+    /// A lossy array flattened to its survivors. `nil` only when the key is
+    /// absent or not an array at all.
+    func lenientArray<T: Decodable>(_ type: T.Type, _ key: Key) -> [T]? {
+        guard let lossy = (try? decodeIfPresent(DSHLossyArray<T>.self, forKey: key)) ?? nil else {
+            return nil
+        }
+        return lossy.values
+    }
+
+    /// Same as `lenientArray`, but keeps the failure descriptions for logging.
+    func lenientLossyArray<T: Decodable>(_ type: T.Type, _ key: Key) -> DSHLossyArray<T>? {
+        (try? decodeIfPresent(DSHLossyArray<T>.self, forKey: key)) ?? nil
+    }
 }
 
 // MARK: - Event classification (issue 1)
@@ -632,14 +881,24 @@ struct DSHTranscriptProjection {
         guard let message = event.data?.message else { return }
         let callId = message.toolCallId ?? message.source?.callId ?? event.data?.toolCallId
         guard let callId, !callId.isEmpty else { return }
+        // A failed tool explains itself in `data.error` (object on tool/result) and
+        // often has an EMPTY content array — reading only `content` showed a
+        // successful tool with no output.
+        let failure = event.data?.error?.text
+        var output = DSHTranscript.text(of: message.content)
+        var success = DSHTranscript.toolSucceeded(message.content)
+        if let failure, !failure.isEmpty {
+            success = false
+            if output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { output = failure }
+        }
         let result = ToolResult(
             toolUseId: callId,
-            output: DSHTranscript.text(of: message.content),
-            success: DSHTranscript.toolSucceeded(message.content),
+            output: output,
+            success: success,
             mediaRef: nil,
             snapshot: nil,
             pageURL: nil,
-            status: DSHTranscript.toolSucceeded(message.content) ? "success" : "failed"
+            status: success ? "success" : "failed"
         )
 
         // The call already belongs to a turn: remember the result and rebuild

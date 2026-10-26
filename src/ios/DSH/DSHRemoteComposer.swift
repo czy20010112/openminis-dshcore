@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import GameController
 
 /// The writable composer for a remote harness Session (`POST /mobile/v1/dsh/submissions`).
 ///
@@ -297,6 +298,30 @@ struct DSHRemoteComposer: View {
         // itself to a draft that has already been sent.
         if speech.state == .recording { speech.stopRecording() }
         recognizedLength = 0
+        // [T-dsh-send-collapse] Keyboard FIRST, row insert second — the exact
+        // order `AIChatView.performSend` uses, and it is load-bearing.
+        //
+        // Sending appends a row to the transcript while the software keyboard is
+        // still up. The list is a self-sizing UICollectionView: the insert runs a
+        // measurement pass whose cell width comes from the collection view's
+        // current bounds, and the bounds are mid-animation (the keyboard's
+        // safe-area change plus the composer's own height change land in the same
+        // frame). The degenerate width measured there is then baked into
+        // `MessageListLayout`'s per-item attributes and `SelfSizingCell`'s height
+        // cache, and nothing invalidates it afterwards because none of the list's
+        // inputs change again — observed on the simulator as the whole transcript
+        // collapsing to one character per line and then staying byte-identical
+        // for the next 13 seconds while 102 deltas streamed in.
+        //
+        // With no hardware keyboard this is also what the user expects: the reply
+        // scrolls in instead of being covered by the keyboard. The hardware-keyboard
+        // exception is the local composer's, for the same reason — dropping focus
+        // there forces a tap on the field before the next message.
+        if GCKeyboard.coalesced == nil {
+            focused = false
+            UIApplication.shared.sendAction(
+                #selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        }
         onSend()
     }
 
