@@ -412,6 +412,19 @@ extension KeyedDecodingContainer {
         return Int(number)
     }
 
+    /// A flag a host may send as `true`, `1` or `"true"`.
+    ///
+    /// `nil` (absent) is meaningful here — the caller decides what an old host
+    /// means — so this must never guess a default.
+    func lenientBool(_ key: Key) -> Bool? {
+        if let value = (try? decodeIfPresent(Bool.self, forKey: key)) ?? nil { return value }
+        if let number = (try? decodeIfPresent(Int.self, forKey: key)) ?? nil { return number != 0 }
+        guard let text = lenientString(key)?.lowercased() else { return nil }
+        if text == "true" || text == "1" || text == "yes" { return true }
+        if text == "false" || text == "0" || text == "no" { return false }
+        return nil
+    }
+
     /// A lossy array flattened to its survivors. `nil` only when the key is
     /// absent or not an array at all.
     func lenientArray<T: Decodable>(_ type: T.Type, _ key: Key) -> [T]? {

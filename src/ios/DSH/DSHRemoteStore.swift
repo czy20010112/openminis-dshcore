@@ -353,7 +353,11 @@ final class DSHRemoteStore: ObservableObject {
         stream?.close()
         stream = nil
         closeAllLiveStreams()
+        cancelCacheSaves()
         if let host { DSHRemoteKeychain.delete(account: host.serverId) }
+        // Unpairing means the cache describes a host we no longer trust.
+        DSHRemoteTranscriptCache.removeAll()
+        recordMirror = [:]
         UserDefaults.standard.removeObject(forKey: Keys.host)
         host = nil
         client = nil
@@ -525,8 +529,30 @@ final class DSHRemoteStore: ObservableObject {
             }
             return slot.id
         }
+        // 1) Cache FIRST: paint what we already have, before any network. This is
+        //    the whole point — the page is readable while the socket opens.
+        primeFromCache(slot)
+        // 2) Then the socket, resuming from the cached cursor when we have one.
         start(slot)
         return slot.id
+    }
+
+    /// Show the cached page (if any) and seed the cursor the stream will ask from.
+    ///
+    /// The cached records are delivered as a SNAPSHOT frame on purpose: that runs
+    /// the same rebuild path a live page uses, so the on-disk data and a network
+    /// page cannot render differently.
+    private func primeFromCache(_ slot: DSHRemoteStreamSlot) {
+        guard let serverId = host?.serverId,
+              let cached = DSHRemoteTranscriptCache.load(serverId: serverId, sessionId: slot.sessionId) else {
+            return
+        }
+        let age = Int(Date().timeIntervalSince(cached.savedAt))
+        NSLog("[DSH] cache hit sid=\(slot.sessionId.prefix(12)) records=\(cached.records.count) age=\(age)s cursor=\(cached.cursor)")
+        streamCursors[slot.sessionId] = max(streamCursors[slot.sessionId] ?? 0, cached.cursor)
+        recordMirror[slot.sessionId] = cached.records
+        slot.onFrame(.snapshot(cursor: cached.cursor, records: cached.records, hasMore: false,
+                               running: false, title: nil, contextPressure: nil, tokenUsage: nil))
     }
 
     private var isFailureStatus: Bool {
@@ -652,23 +678,17 @@ final class DSHRemoteStore: ObservableObject {
             return
         }
         slot.lastActivityAt = Date()
-        // NO `after` on purpose, even on a reconnect.
-        //
-        // The host trims `snapshot.records` to everything after `after`, and the
-        // writer treats a snapshot as a REBUILD (that is what makes a reloaded
-        // turn identical to the streamed one). Handing it a trimmed page would
-        // therefore truncate the transcript to the last few events. Without
-        // `after` the snapshot is the newest page, which is exactly what a fresh
-        // open gets — so a reconnect reproduces the page instead of continuing it.
-        //
-        // The cursor is still tracked: it is the diagnostic that tells us whether
-        // a reconnect resumed or restarted.
-        let knownCursor = streamCursors[slot.sessionId]
-        NSLog("[DSH] stream open sid=\(slot.sessionId.prefix(12)) knownCursor=\(knownCursor.map(String.init) ?? "nil") attempt=\(slot.attempt)")
+        // Resume from the newest seq this device has applied: the cached cursor on
+        // a cached open, and the last live seq on a reconnect. The host answers
+        // `resumed` (append) or `reset` (full page), so a wrong cursor is
+        // recoverable now — that is what makes `after` safe where it used to
+        // truncate the transcript.
+        let after = streamCursors[slot.sessionId].flatMap { $0 > 0 ? $0 : nil }
+        NSLog("[DSH] stream open sid=\(slot.sessionId.prefix(12)) after=\(after.map(String.init) ?? "nil") attempt=\(slot.attempt)")
         let token = slot.id
         slot.stream = client.stream(
             sessionId: slot.sessionId,
-            after: nil,
+            after: after,
             onFrame: { [weak self] frame in
                 // Called from DSHRemoteStream on the main queue; hop through a
                 // task so this closure stays free of main-actor calls.
@@ -708,6 +728,9 @@ final class DSHRemoteStore: ObservableObject {
             }
             errorText = nil
         }
+        // Keep the on-disk copy in step with what the writer has been given: a
+        // snapshot REPLACES the mirror, every event APPENDS to it.
+        mirrorFrame(frame, sessionId: slot.sessionId)
         slot.onFrame(frame)
     }
 
@@ -820,6 +843,65 @@ final class DSHRemoteStore: ObservableObject {
         var row = rows[index]
         row.session.contextPressure = pressure
         rows[index] = row
+    }
+
+    // MARK: - Transcript cache (open fast, then catch up)
+
+    /// In-memory mirror of the cached records per Session: what the disk copy will
+    /// hold once the throttle fires. Kept as records, not as rendered rows, so a
+    /// save never depends on the writer.
+    private var recordMirror: [String: [DSHHistoryRecord]] = [:]
+    /// Session → pending save task (2 s throttle, one per Session).
+    private var cacheSaveTasks: [String: Task<Void, Never>] = [:]
+    /// Records are cheap to hold but pointless to write on every frame.
+    private static let cacheSaveDelay: TimeInterval = 2
+
+    private func mirrorFrame(_ frame: DSHRemoteStreamFrame, sessionId: String) {
+        switch frame {
+        case .snapshot(_, let records, _, _, _, _, _):
+            // A snapshot is a REPLACE: the mirror must not keep a single record the
+            // page no longer shows, or the next open resurrects them.
+            recordMirror[sessionId] = records
+            scheduleCacheSave(sessionId: sessionId)
+        case .event(let seq, let event):
+            var mirror = recordMirror[sessionId] ?? []
+            // Dedupe by seq: a resumed stream and a live event can carry the same
+            // record, and a duplicated record would be applied twice on the next
+            // open.
+            if !mirror.contains(where: { $0.seq == Double(seq) }) {
+                mirror.append(DSHHistoryRecord(seq: Double(seq), event: event))
+                recordMirror[sessionId] = mirror
+            }
+            scheduleCacheSave(sessionId: sessionId)
+        case .delta, .deltaEnd:
+            break
+        }
+    }
+
+    /// Throttled write. One pending task per Session; the newest mirror wins.
+    private func scheduleCacheSave(sessionId: String) {
+        guard let serverId = host?.serverId else { return }
+        cacheSaveTasks[sessionId]?.cancel()
+        cacheSaveTasks[sessionId] = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(DSHRemoteStore.cacheSaveDelay * 1_000_000_000))
+            guard !Task.isCancelled, let self else { return }
+            self.cacheSaveTasks[sessionId] = nil
+            guard let records = self.recordMirror[sessionId] else { return }
+            // Only the CONTIGUOUS tail is safe to cache: `after=cursor` promises
+            // "everything after this point", so a page with a hole in the middle
+            // would come back as a transcript with a piece missing for ever.
+            let tail = DSHRemoteTranscriptCache.contiguousTail(records)
+            guard let last = tail.last?.seq.map(Int.init) ?? self.streamCursors[sessionId], last > 0 else { return }
+            let written = DSHRemoteTranscriptCache.save(serverId: serverId, sessionId: sessionId,
+                                                        cursor: last, records: tail)
+            NSLog("[DSH] cache save sid=\(sessionId.prefix(12)) records=\(written)/\(records.count) cursor=\(last) bytes=\(DSHRemoteTranscriptCache.totalBytes())")
+        }
+    }
+
+
+    private func cancelCacheSaves() {
+        for task in cacheSaveTasks.values { task.cancel() }
+        cacheSaveTasks = [:]
     }
 
     // MARK: - Harness write path (protocol §1.1 / §1.2)

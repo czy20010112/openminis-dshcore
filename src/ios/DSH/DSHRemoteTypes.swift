@@ -189,6 +189,12 @@ struct DSHRemoteStreamEnvelope: Decodable, Sendable {
     /// Live token usage on the snapshot frame (newer hosts). Feeds the context
     /// panel without a second request.
     var tokenUsage: DSHRemoteSessionSummary.TokenUsage?
+    /// `GET /dsh/events?after=<cursor>` answered by CONTINUING the log: `records`
+    /// only holds what came after the cursor, so they must be APPENDED.
+    var resumed: Bool?
+    /// The host could not continue from that cursor and re-sent a whole page:
+    /// every cached record must be thrown away.
+    var reset: Bool?
     // event
     var seq: Int?
     var event: DSHHistoryEvent?
@@ -207,6 +213,7 @@ struct DSHRemoteStreamEnvelope: Decodable, Sendable {
     // synthesise `CodingKeys` for it.
     private enum CodingKeys: String, CodingKey {
         case type, cursor, hasMore, records, running, blank, title, contextPressure
+        case tokenUsage, resumed, reset
         case seq, event, turn, step, attempt, index, channel, text, code, message
     }
 
@@ -224,6 +231,11 @@ struct DSHRemoteStreamEnvelope: Decodable, Sendable {
         blank = container.lenient(DSHHistoryPageHasMore.self, .blank)?.value
         title = container.lenientText(.title)
         contextPressure = container.lenient(DSHContextPressure.self, .contextPressure)
+        tokenUsage = container.lenient(DSHRemoteSessionSummary.TokenUsage.self, .tokenUsage)
+        // nil when the host is old — the reader decides what "unknown" means, and
+        // for `reset` that means "assume a full page".
+        resumed = container.lenientBool(.resumed)
+        reset = container.lenientBool(.reset)
         seq = container.lenientInt(.seq)
         event = container.lenient(DSHHistoryEvent.self, .event)
         turn = container.lenientInt(.turn)
