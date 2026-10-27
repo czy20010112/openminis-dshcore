@@ -136,8 +136,13 @@ struct DSHRemoteError: Error, LocalizedError, Sendable {
     /// Worth retrying with backoff: a transport failure, a busy agent, or a
     /// freshly restarted host. A 4xx that is not auth-related (`SESSION_NOT_FOUND`)
     /// is NOT retryable — retrying it just spins.
+    ///
+    /// A dead PAIRING is not retryable either. `needsRepair` used to imply
+    /// retryable, so a revoked token made the stream reconnect every ~5 s for ever:
+    /// every attempt 401s again, the permanent branch in the store never ran, and
+    /// the UI stayed on "reconnecting" instead of asking the user to pair again.
     var isRetryable: Bool {
-        if needsRepair { return true }
+        if needsRepair { return false }
         guard let status else { return true }
         if status == 409 || status == 429 { return true }
         if status >= 500 { return true }

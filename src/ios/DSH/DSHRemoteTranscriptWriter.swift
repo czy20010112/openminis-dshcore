@@ -102,6 +102,7 @@ final class DSHRemoteTranscriptWriter: ObservableObject {
         pendingOptimistic = []
         deltaOpened = []
         attemptByStep = [:]
+        liveDeltas = []
         cursor = 0
         lastAppliedSeq = nil
         // Only publish when something actually changes: `@Published` fires on
@@ -203,6 +204,24 @@ final class DSHRemoteTranscriptWriter: ObservableObject {
         // already on screen.
         lastAppliedSeq = records.compactMap { $0.seq }.max() ?? lastAppliedSeq
         renderAll()
+        // What the snapshot cannot contain: the in-flight step's streamed text.
+        // Re-applied here, after the rebuild, so a reconnect continues the answer
+        // instead of deleting the half that had already arrived.
+        let durableSteps = Set(records.compactMap { record -> String? in
+            guard let event = record.event, event.type == "assistant/message",
+                  let turn = event.data?.turn, let step = event.data?.step else { return nil }
+            return "\(turn)|\(step)"
+        })
+        let survivors = DSHRemoteTranscriptWriter.liveDeltasToReplay(liveDeltas, durableSteps: durableSteps)
+        if !survivors.isEmpty {
+            NSLog("[DSH] snapshot replay live deltas=\(survivors.count) (in-flight text kept) durableSteps=\(durableSteps.count)")
+            for delta in survivors {
+                attemptByStep[delta.stepKey] = delta.attempt
+                projection.applyDelta(turn: delta.turn, step: delta.step, attempt: delta.attempt,
+                                      index: delta.index, channel: delta.channel, text: delta.text)
+            }
+            renderAll()
+        }
         // `running` comes from the harness' own Session row and is authoritative:
         // a turn that died without a `turn/end` (host killed mid-turn) leaves the
         // log "running" forever, and a STOP key that never goes away is worse than
@@ -222,6 +241,7 @@ final class DSHRemoteTranscriptWriter: ObservableObject {
             // the durable message replaces the step (boundary 3).
             flushThinkingTails()
             commitTexts(finalFlush: true)
+            if let turn = event.data?.turn { dropLiveDeltas(upTo: turn) }
             setRunning(projection.anyRunning, turn: projection.runningTurn)
         case "user/message":
             promoteOptimisticUser(echo: event)
@@ -255,10 +275,70 @@ final class DSHRemoteTranscriptWriter: ObservableObject {
         if deltaOpened.insert(deltaKey).inserted {
             NSLog("[DSH] writer delta-open t=\(turn) s=\(step) a=\(attempt) i=\(index) channel=\(channel.rawValue)")
         }
+        // Recorded BEFORE the projection: this is the only copy of the text until
+        // the step's durable `assistant/message` lands, and a snapshot that arrives
+        // in between must not be able to erase it.
+        rememberLiveDelta(turn: turn, step: step, attempt: attempt,
+                          index: index, channel: channel, text: text)
         setRunning(true, turn: turn)
         projection.applyDelta(turn: turn, step: step, attempt: attempt,
                               index: index, channel: channel, text: text)
         renderAll()
+    }
+
+    // MARK: - In-flight text that a snapshot must not erase
+
+    /// One streamed block, accumulated from its deltas, kept until a durable
+    /// `assistant/message` for the same (turn, step) replaces it.
+    struct LiveDelta: Equatable {
+        var turn: Int
+        var step: Int
+        var attempt: String
+        var index: Int
+        var channel: DSHStreamChannel
+        var text: String
+
+        var stepKey: String { "\(turn)|\(step)" }
+    }
+
+    /// Deltas of the turn that is streaming right now, merged per block.
+    private(set) var liveDeltas: [LiveDelta] = []
+    /// Bound: a runaway stream must not grow this without limit.
+    private static let maxLiveDeltas = 400
+
+    private func rememberLiveDelta(turn: Int, step: Int, attempt: String, index: Int,
+                                   channel: DSHStreamChannel, text: String) {
+        // Only the newest turn can still be live; anything older is durable by
+        // definition and keeping it would only make the rebuild slower.
+        liveDeltas.removeAll { $0.turn < turn }
+        if let existing = liveDeltas.firstIndex(where: {
+            $0.turn == turn && $0.step == step && $0.attempt == attempt
+                && $0.index == index && $0.channel == channel
+        }) {
+            liveDeltas[existing].text += text
+            return
+        }
+        guard liveDeltas.count < Self.maxLiveDeltas else { return }
+        liveDeltas.append(LiveDelta(turn: turn, step: step, attempt: attempt,
+                                    index: index, channel: channel, text: text))
+    }
+
+    /// Which buffered deltas a rebuild has to re-apply.
+    ///
+    /// A snapshot only contains DURABLE messages, so every step it does not have an
+    /// `assistant/message` for is still in flight: its streamed text exists nowhere
+    /// else. Re-applying those is what stops a reconnect (the 30 s watchdog, a
+    /// background/foreground cycle, a proxy dropping the socket) from making half an
+    /// answer vanish and then restart mid-sentence.
+    ///
+    /// Pure, so the policy can be asserted without a view model.
+    static func liveDeltasToReplay(_ deltas: [LiveDelta], durableSteps: Set<String>) -> [LiveDelta] {
+        deltas.filter { !durableSteps.contains($0.stepKey) }
+    }
+
+    /// Forgets the buffered text of a turn that just became durable.
+    private func dropLiveDeltas(upTo turn: Int) {
+        liveDeltas.removeAll { $0.turn <= turn }
     }
 
     /// The attempt finished. Not a turn end — the durable message for the step
@@ -711,8 +791,7 @@ final class DSHRemoteTranscriptWriter: ObservableObject {
     /// Force every open thinking block's buffered tail into its `content`.
     private func flushThinkingTails() {
         for key in Array(rowState.keys) {
-            guard let chat = rowChat[key] else { continue }
-            let state = rowState[key]!
+            guard let chat = rowChat[key], let state = rowState[key] else { continue }
             guard state.thinkingBlock >= 0, state.thinkingBlock < chat.blocks.count else { continue }
             var updated = state
             updated.lastThinkingFlush = .distantPast

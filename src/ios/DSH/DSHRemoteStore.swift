@@ -654,6 +654,11 @@ final class DSHRemoteStore: ObservableObject {
         slot.reconnectTask = nil
         slot.stream?.close()
         slot.stream = nil
+        // Nothing is showing this Session any more: its mirror is the only thing
+        // keeping hundreds of KB of decoded records alive.
+        if !streamSlots.values.contains(where: { $0.sessionId == slot.sessionId && !$0.closed }) {
+            dropMirror(sessionId: slot.sessionId)
+        }
         if streamSlots.isEmpty {
             watchdog?.cancel()
             watchdog = nil
@@ -729,7 +734,12 @@ final class DSHRemoteStore: ObservableObject {
                 mergeLiveContext(sessionId: slot.sessionId, pressure: pressure, usage: usage)
             }
             if cursor > 0 {
-                streamCursors[slot.sessionId] = max(streamCursors[slot.sessionId] ?? 0, cursor)
+                // A snapshot is the Session's CURRENT state, so its cursor REPLACES
+                // the stored one. Taking `max` made a host that renumbered after a
+                // reset unrecoverable: the client kept asking `after=<old, larger
+                // seq>`, the host could never satisfy it, and every reconnect
+                // re-sent the whole page.
+                streamCursors[slot.sessionId] = cursor
             }
             errorText = nil
         }
@@ -855,7 +865,17 @@ final class DSHRemoteStore: ObservableObject {
     /// In-memory mirror of the cached records per Session: what the disk copy will
     /// hold once the throttle fires. Kept as records, not as rendered rows, so a
     /// save never depends on the writer.
+    ///
+    /// Dropped when the Session's last slot closes — this used to survive until
+    /// unpair, so every Session opened in a run stayed in memory for the rest of it
+    /// (a 400-record page is hundreds of KB of decoded events, per Session).
     private var recordMirror: [String: [DSHHistoryRecord]] = [:]
+    /// Sequence numbers already in `recordMirror[sessionId]`.
+    ///
+    /// Dedupe was a linear scan of the whole mirror per event, so a long Session
+    /// cost O(n²) on the MAIN ACTOR — the input field stutters exactly when the
+    /// transcript is longest. A set makes it O(1).
+    private var recordMirrorSeqs: [String: Set<Double>] = [:]
     /// Session → pending save task (2 s throttle, one per Session).
     private var cacheSaveTasks: [String: Task<Void, Never>] = [:]
     /// Records are cheap to hold but pointless to write on every frame.
@@ -867,16 +887,17 @@ final class DSHRemoteStore: ObservableObject {
             // A snapshot is a REPLACE: the mirror must not keep a single record the
             // page no longer shows, or the next open resurrects them.
             recordMirror[sessionId] = records
+            recordMirrorSeqs[sessionId] = Set(records.compactMap { $0.seq })
             scheduleCacheSave(sessionId: sessionId)
         case .event(let seq, let event):
-            var mirror = recordMirror[sessionId] ?? []
             // Dedupe by seq: a resumed stream and a live event can carry the same
             // record, and a duplicated record would be applied twice on the next
             // open.
-            if !mirror.contains(where: { $0.seq == Double(seq) }) {
-                mirror.append(DSHHistoryRecord(seq: Double(seq), event: event))
-                recordMirror[sessionId] = mirror
-            }
+            var seqs = recordMirrorSeqs[sessionId] ?? []
+            guard !seqs.contains(Double(seq)) else { return }
+            seqs.insert(Double(seq))
+            recordMirrorSeqs[sessionId] = seqs
+            recordMirror[sessionId, default: []].append(DSHHistoryRecord(seq: Double(seq), event: event))
             scheduleCacheSave(sessionId: sessionId)
         case .delta, .deltaEnd:
             break
@@ -884,6 +905,10 @@ final class DSHRemoteStore: ObservableObject {
     }
 
     /// Throttled write. One pending task per Session; the newest mirror wins.
+    ///
+    /// The encoding and the atomic write happen OFF the main actor: a 400-record
+    /// page is hundreds of KB, and doing the JSON encode + fsync there stalled the
+    /// UI right when a stream finished.
     private func scheduleCacheSave(sessionId: String) {
         guard let serverId = host?.serverId else { return }
         cacheSaveTasks[sessionId]?.cancel()
@@ -897,10 +922,23 @@ final class DSHRemoteStore: ObservableObject {
             // would come back as a transcript with a piece missing for ever.
             let tail = DSHRemoteTranscriptCache.contiguousTail(records)
             guard let last = tail.last?.seq.map(Int.init) ?? self.streamCursors[sessionId], last > 0 else { return }
-            let written = DSHRemoteTranscriptCache.save(serverId: serverId, sessionId: sessionId,
-                                                        cursor: last, records: tail)
-            NSLog("[DSH] cache save sid=\(sessionId.prefix(12)) records=\(written)/\(records.count) cursor=\(last) bytes=\(DSHRemoteTranscriptCache.totalBytes())")
+            // `records`/`tail` are values, so handing them to a detached task is
+            // safe; nothing but the return value comes back.
+            let total = records.count
+            Task.detached(priority: .utility) {
+                let written = DSHRemoteTranscriptCache.save(serverId: serverId, sessionId: sessionId,
+                                                            cursor: last, records: tail)
+                NSLog("[DSH] cache save sid=\(sessionId.prefix(12)) records=\(written)/\(total) cursor=\(last)")
+            }
         }
+    }
+
+    /// Forget a Session's mirror when nothing is looking at it any more.
+    private func dropMirror(sessionId: String) {
+        recordMirror[sessionId] = nil
+        recordMirrorSeqs[sessionId] = nil
+        cacheSaveTasks[sessionId]?.cancel()
+        cacheSaveTasks[sessionId] = nil
     }
 
 

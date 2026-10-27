@@ -54,6 +54,34 @@ struct DSHGroupOutcome {
     let concluded: Bool
 }
 
+/// How many calls of a group actually STARTED.
+///
+/// This used to be a `var started` captured by the per-call tasks, which is a data
+/// race: in `.parallel` mode 2–4 tasks bump it from the global pool with no lock,
+/// so increments were lost. `consumed` decides where the next group resumes, so a
+/// lost increment means an already-executed call is dispatched AGAIN — the user
+/// sees a shell command or a file write happen twice, and the transcript looks fine
+/// because results are de-duplicated by call id.
+///
+/// A lock, not `@MainActor`: serialising the tool calls onto the main actor would
+/// turn a parallel batch into a queue.
+final class DSHStartCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    func noteStarted() {
+        lock.lock()
+        count += 1
+        lock.unlock()
+    }
+
+    var value: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return count
+    }
+}
+
 /// Outcome of scheduling one assistant step's tool calls.
 public struct DSHScheduleOutcome {
     /// Committed results in model order, including synthetic results for calls
@@ -169,7 +197,8 @@ public enum DSHToolScheduler {
         let store = DSHSlotStore(count: group.count)
         var concluded = false
         var committed = 0
-        var started = 0
+        // Lock-backed: `runCall` mutates it from several tasks at once.
+        let started = DSHStartCounter()
         var nextToStart = 0
         var aborted = signal.isCancelled
 
@@ -193,7 +222,7 @@ public enum DSHToolScheduler {
         // dispatches it as a detached task.
         func runCall(_ index: Int) async {
             let call = group[index]
-            started += 1
+            started.noteStarted()
 
             if let parseError = call.parseError {
                 settle(index, with: DSHToolExecutionResult(
@@ -297,6 +326,18 @@ public enum DSHToolScheduler {
                 }
 
                 while inFlight.count < maxParallel && nextToStart < group.count {
+                    // A non-parallel call must not be swept into this fill pass.
+                    // The check above only looks at the first undispatched index,
+                    // so before this line existed a batch like
+                    // [a, b, exclusive, d] with maxParallel 4 dispatched the
+                    // exclusive call TOGETHER with a and b — an `.exclusive` tool
+                    // that shares the world (a checkout, a config file, a shell
+                    // session) silently ran concurrently with the calls it was
+                    // declared to exclude.
+                    if nextToStart > 0,
+                       registry.executionMode(name: group[nextToStart].block.name) != .parallel {
+                        break
+                    }
                     let index = nextToStart
                     nextToStart += 1
                     inFlight[index] = Task { await runCall(index) }
@@ -324,11 +365,19 @@ public enum DSHToolScheduler {
             }
         }
 
+        // `nextToStart` is the authoritative count of calls this group DISPATCHED:
+        // it is only ever touched on this task, so it cannot lose an increment.
+        // `started` is kept as an independent cross-check — if the two ever differ,
+        // the counter is racy again, and the log says so instead of the caller
+        // silently re-running a call.
+        if started.value != nextToStart {
+            NSLog("[DSH] scheduler counter mismatch started=\(started.value) dispatched=\(nextToStart) — a call may have been double-counted")
+        }
         if aborted {
-            return DSHGroupOutcome(consumed: started, aborted: true, concluded: concluded)
+            return DSHGroupOutcome(consumed: nextToStart, aborted: true, concluded: concluded)
         }
 
-        return DSHGroupOutcome(consumed: started, aborted: false, concluded: concluded)
+        return DSHGroupOutcome(consumed: nextToStart, aborted: false, concluded: concluded)
     }
 
     /// Suspend until at least one of `tasks` has finished.

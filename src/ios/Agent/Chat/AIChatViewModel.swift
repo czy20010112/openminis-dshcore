@@ -2119,6 +2119,16 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
     /// history of whichever chat was open first leaked into every other one.
     var dshSessionOwner: String?
 
+    /// The driver of the DSH turn that is currently running.
+    ///
+    /// It used to be a local `let driver` inside the run function, which made it
+    /// unreachable from `cancel()`: the driver's own `cancel()` never ran, the
+    /// cancellation token handed to the tool scheduler was never cancelled, and
+    /// STOP therefore did nothing until the whole tool batch had finished — shell
+    /// commands and file writes included. Holding it here is what connects the
+    /// button to the batch.
+    var dshActiveDriver: DSHTurnDriver?
+
     /// A compaction the driver reported that still has to reach the store.
     ///
     /// Captured synchronously in `didCompact` (the shadowed rows' database ids
@@ -4155,6 +4165,11 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
             SessionConcurrencyManager.shared.cancelWait(sessionId: sid)
         }
         stopCurrentCommand()
+        // A tool batch that is already executing does not observe `currentTask`
+        // cancellation (the scheduler's per-call tasks are unstructured), so the
+        // driver has to be told directly — otherwise STOP only lands after every
+        // queued call has run.
+        dshActiveDriver?.cancel()
         // If the loop is suspended waiting for foreground, resume it so
         // Task cancellation can propagate through the continuation.
         backgroundSuspended = false

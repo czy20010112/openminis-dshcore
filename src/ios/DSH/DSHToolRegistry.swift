@@ -152,14 +152,36 @@ public final class DSHToolRegistry: @unchecked Sendable {
 
     public init() {}
 
-    /// Register a tool. A duplicate name throws.
+    /// Register a tool.
+    ///
+    /// A duplicate name is REFUSED, not fatal. This used to be a `precondition`,
+    /// which trapped the whole app in release builds: registering a second tool
+    /// with the same name (an MCP tool that shadows a built-in, a re-registration
+    /// after a reload) killed the process instead of telling anyone. The caller now
+    /// gets the error back and can surface it; the existing tool keeps working.
+    ///
+    /// - Returns: `nil` on success, or the conflict to report.
     @discardableResult
-    public func register(_ tool: DSHTool) -> () -> Void {
+    public func register(_ tool: DSHTool) -> DSHFailure? {
         lock.lock()
-        precondition(tools[tool.name] == nil, "tool \"\(tool.name)\" is already registered")
+        if tools[tool.name] != nil {
+            lock.unlock()
+            NSLog("[DSH] tool registry refused duplicate name \"\(tool.name)\"")
+            return DSHFailure(message: "tool \"\(tool.name)\" is already registered", code: "DUPLICATE_TOOL")
+        }
         tools[tool.name] = tool
         order.append(tool.name)
         lock.unlock()
+        return nil
+    }
+
+    /// Register, and hand back the unregister closure on success.
+    ///
+    /// Kept as a separate name so the many call sites that ignore the outcome stay
+    /// source-compatible and a re-registration is a no-op instead of a crash.
+    @discardableResult
+    public func registerReturningHandle(_ tool: DSHTool) -> (() -> Void)? {
+        guard register(tool) == nil else { return nil }
         return { [weak self] in
             guard let self else { return }
             self.lock.lock()
