@@ -15,7 +15,7 @@
 //  The pair is two faces, not one, because no single font can serve both scripts
 //  here: the Latin faces have no CJK glyphs at all, and a Song face's own Latin
 //  is a full-width design that nobody wants for English. That is exactly what
-//  the reference stack does — `D:\AI\_fontcheck\warm-parchment.fonts.css`
+//  the reference stack does — its stylesheet (not part of this repository)
 //  declares `'Warm Serif', 'Warm Song SC', …` and `'Warm Sans', 'Warm Sans SC',
 //  …`, a Latin face in front of a Chinese face. The two are combined into one
 //  `UIFont` with a `cascadeList`, so a mixed paragraph needs no run splitting.

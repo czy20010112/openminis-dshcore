@@ -509,8 +509,8 @@ public final class DSHTurnDriver {
         // `calibratedRetainBudget` refuses to convert (its guard below: one
         // currency or nothing). So the ONE compaction that fires at `step=1` kept
         // the policy's 40,632-token tail in ESTIMATOR units while every later
-        // compaction of the same content kept 40,632/ratio. Device
-        // 2026-10-19 09:17:18: `retain=(est)40632 == retainProvider=40632` for
+        // compaction of the same content kept 40,632/ratio. Measured on a device:
+        // `retain=(est)40632 == retainProvider=40632` for
         // that turn's first compaction, against `16,561`/`40,632` (= ratio 2.45)
         // for the two later ones, and a post-compaction prompt of 115,258 where
         // the same content cost 55,869…60,139 elsewhere — ~57k tokens of tail
@@ -656,8 +656,8 @@ public final class DSHTurnDriver {
                         // NSURLErrorCancelled (-999) and a cancelled Task throws
                         // `CancellationError`; the old code mapped both to
                         // `PROVIDER_ERROR` and reported a broken backend for a
-                        // deliberate stop (device 2026-10-19 21:22:36:
-                        // "failure code=PROVIDER_ERROR Code=-999 已取消", and that
+                        // deliberate stop (the device reported
+                        // "failure code=PROVIDER_ERROR Code=-999 cancelled", and that
                         // turn recorded no turn end at all). The retry-backoff
                         // exit below already answers a cancellation this way —
                         // settle the visible prefix, end the turn as cancelled —
@@ -1710,10 +1710,10 @@ public final class DSHTurnDriver {
     /// (file reads, tool JSON, CJK), and the device log brackets it from two
     /// independent directions:
     ///
-    ///   * the summary requests themselves: 2026-10-19 09:28:47 was charged
-    ///     140,371 provider tokens for the excerpt this app counted as
+    ///   * the summary requests themselves: one was charged 140,371 provider
+    ///     tokens for the excerpt this app counted as
     ///     `beforeEst − afterEst = 79,899 − 19,177 = 60,722` (ratio 2.31);
-    ///     09:33:11 the same way: 131,936 against `74,458 − 18,594 = 55,864`
+    ///     another the same way: 131,936 against `74,458 − 18,594 = 55,864`
     ///     (ratio 2.36);
     ///   * whole envelopes against their estimates: `189,581 / 77,655` = 2.44,
     ///     and five pairs on 2026-10-18 in 2.47…2.51.
@@ -1722,9 +1722,9 @@ public final class DSHTurnDriver {
     /// request 2.3–2.5x under what the engine charges. The floor is set above
     /// that band so ~20% of the window is still unspent after the conversion —
     /// which is the difference between a request the engine accepts and the
-    /// 1,783,917-byte one it rejected at 2026-10-19 09:17:19
+    /// 1,783,917-byte one it rejected
     /// (`context_length_exceeded` against a 262,144-token window; the same shape
-    /// again at 2026-10-18 21:20:43, body 1,783,914 B).
+    /// appeared a second time, body 1,783,914 B).
     static let summarizeMeterRatioFloor = 3.0
 
     /// How many requests one compaction's summary may be split across.
@@ -2159,11 +2159,11 @@ public final class DSHTurnDriver {
     /// [P0] Two things this call must not do, and both were observed on the
     /// device:
     ///
-    ///   * send more excerpt than the window holds. 2026-10-19 09:17:19: a
-    ///     1,783,917-byte summary request (~410k provider tokens) against a
-    ///     262,144-token window, rejected by the engine with
-    ///     `context_length_exceeded`; 2026-10-18 21:20:43 the same shape
-    ///     (1,783,914 B). Springing from it: the engine never ran the request, so
+    ///   * send more excerpt than the window holds: a 1,783,917-byte summary
+    ///     request (~410k provider tokens) against a 262,144-token window,
+    ///     rejected by the engine with `context_length_exceeded`; a second run
+    ///     the same shape (1,783,914 B). Springing from it: the engine never ran
+    ///     the request, so
     ///     it produced no text, and `compact()` has exactly one gate before it
     ///     commits — `summaryTokens < range.shadowedTokenCount` — which the fixed
     ///     `<context-summary>` boilerplate always passes (~120 estimator tokens

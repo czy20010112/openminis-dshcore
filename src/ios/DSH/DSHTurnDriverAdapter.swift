@@ -369,7 +369,7 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
         // 560k-window session that had just dropped to tens of thousands kept
         // glowing red — and re-entering the conversation changed nothing, because a
         // cached view model publishes no usage on its own. The device showed exactly
-        // that (2026-10-20 00:26:46 "compacted 60 entries, 59886 -> 20845"): the glow
+        // that ("compacted 60 entries, 59886 -> 20845"): the glow
         // cleared only when the operator stopped the turn.
         //
         // Measured, not reported-forward: `publishMeasuredContextUsage` prices what
@@ -454,8 +454,7 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
         // in the recorded session — so "immediately above the live row" is
         // thousands of points above a viewport pinned to the bottom, and the
         // greying loop exempts that row wholesale. The user watches the reply
-        // continue and sees neither the bar nor any dim: 「压缩的时候没有任何显示
-        // 了，就像正常对话一样直接继续」.
+        // continue and sees neither the bar nor any dim.
         //
         // The boundary is knowable exactly, without a seq on the UI row: the
         // shadowed session entries record their tool-call ids, and the live row's
@@ -676,8 +675,7 @@ extension AIChatViewModel: DSHTurnDriverDelegate {
             //
             // [T-max-tokens-neutral-wording] The words changed, the semantics did
             // not. The old copy was "Response truncated (max tokens reached). Tap
-            // Resume to continue." and the operator's report on it was 「对话的 agent
-            // 总说什么被截断…感觉有点影响使用」 — a warning banner that reads as
+            // Resume to continue." and the reported reaction to it was that the agent keeps saying it was truncated, which makes the app feel unreliable — a warning banner that reads as
             // damage, on a turn whose text is complete-to-the-point-it-stopped and
             // is already in the session (`session.append` above runs before the end
             // reason is chosen, so the half answer is durable and the next request

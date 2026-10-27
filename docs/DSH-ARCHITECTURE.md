@@ -386,7 +386,7 @@ DSH surface: 66 entries, ~2566 tokens (compact at 2000)
 修完之后同一行变成：
 
 ```
-seed: sess=FCC5341C marker v2 anchor=4CAEAF2A anchorResolves=true history=11(withDbId=11) effective=11
+seed: sess=1A2B3C4D marker v2 anchor=5D6E7F80 anchorResolves=true history=11(withDbId=11) effective=11
 ```
 
 `anchorResolves=true`、surface 11 条（不再翻倍）、压缩在重启后**确实被应用**。

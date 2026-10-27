@@ -68,8 +68,8 @@ final class ChatMessage: Identifiable, ObservableObject {
     /// (`dshDividerPosition` clamps to the live row), which put it — and the whole
     /// greyed region — thousands of points above a viewport that is pinned to the
     /// bottom, and left the compacted blocks inside the bubble undimmed. That is
-    /// the operator's report: 「压缩的时候没有任何显示了…看不到压缩的横条啊上面
-    /// 变灰啊」.
+    /// the reported symptom: compaction happens with nothing on screen changing —
+    /// no divider, and no dimming above it.
     ///
     /// With an anchor the list emits this divider's row immediately AFTER that
     /// block's cell instead of at the divider's own array position, so the bar sits

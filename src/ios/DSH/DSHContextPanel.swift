@@ -1052,6 +1052,23 @@ struct DSHContextRingButton: View {
 // MARK: - Panel
 
 /// The context breakdown sheet, presented from the composer's ring.
+/// The rows of the context panel, named so a caller can override one without
+/// depending on row order or on a string label.
+enum DSHContextPanelRow: Hashable {
+    case systemPrompt
+    case toolDefinitions
+    case conversation
+    case total
+}
+
+/// Section + total wording for a caller that already knows whether its figures
+/// were measured. The local path derives these from `DSHContextBreakdown`
+/// (`isMeasured`); a remote document knows them from `context.source`.
+struct DSHContextPanelLabels {
+    var section: String
+    var total: String
+}
+
 struct DSHContextPanel: View {
 
     /// The height this panel's content needs, for the iOS 26 line's sheet to be
@@ -1098,6 +1115,34 @@ struct DSHContextPanel: View {
     /// re-evaluates this on every change it observes, so a running turn updates
     /// it.
     var reading: DSHContextReading?
+
+    // MARK: Injected inputs (one view for BOTH lines)
+    //
+    // [T-ctx-panel-one-view] The remote Session page renders THIS view, not a
+    // second one: the operator asked for the two popups to be identical, and two
+    // copies of a layout only stay identical until the next edit to either. So
+    // every input the local path used to read from a singleton is now an optional
+    // parameter — `nil` means "read the local store", which is what the local chat
+    // passes and therefore cannot change behaviour.
+
+    /// The breakdown to draw. `nil` = the local store's newest one.
+    var breakdown: DSHContextBreakdown?
+    /// Measured/estimated wording, when the caller already knows it. A remote
+    /// document carries its own `source`, and the local store's `isMeasured`
+    /// cannot answer for another computer's request.
+    var labels: DSHContextPanelLabels?
+    /// Cache-hit receipt. `nil` = the local store's newest one.
+    var cacheHit: DSHUsageReading?
+    /// Per-row value overrides, keyed by row. A host that cannot split system
+    /// prompt from tool definitions says so in that row's value rather than
+    /// printing `~0` (which would read as "this request has no prompt").
+    var rowValueOverrides: [DSHContextPanelRow: String] = [:]
+    /// Per-row detail overrides. An EMPTY string means "no detail line" — the
+    /// remote Conversation row has a value but sometimes no entry count.
+    var rowDetailOverrides: [DSHContextPanelRow: String] = [:]
+    /// Extra sentence under the header subtitle (remote: "last compacted …"),
+    /// shown only when the caller has something to say.
+    var subtitleExtra: String?
     /// Whether a turn is running. The rows below then describe the request being
     /// assembled and sent; once it has finished they describe the newest request
     /// this session completed. Snapshot at presentation for the same reason
@@ -1197,10 +1242,28 @@ struct DSHContextPanel: View {
     /// and `LocalizedStringKey` does not convert to `String` on the iOS 15 line,
     /// so a composed key could not be handed to `AppLocalized` there.
     private var headerSubtitle: String {
-        guard let reading, reading.hasWindow else { return "" }
-        let percent = String(format: AppLocalized("%lld%% of the window"), reading.percent)
-        guard reading.isEstimate else { return percent }
-        return percent + " · " + AppLocalized("estimated request envelope")
+        var sentence = ""
+        if let reading, reading.hasWindow {
+            let percent = String(format: AppLocalized("%lld%% of the window"), reading.percent)
+            sentence = reading.isEstimate
+                ? percent + " · " + AppLocalized("estimated request envelope")
+                : percent
+        }
+        // The remote page's "last compacted …": a SECOND sentence under the same
+        // subtitle, never a row of its own (the local panel has no such row, and
+        // the two popups must keep the same row list).
+        if let subtitleExtra, !subtitleExtra.isEmpty {
+            sentence = sentence.isEmpty ? subtitleExtra : sentence + " · " + subtitleExtra
+        }
+        return sentence
+    }
+
+    /// The breakdown this panel draws: the caller's, else the local store's.
+    private var shownBreakdown: DSHContextBreakdown? { breakdown ?? breakdowns.latest }
+
+    /// Whether the shown breakdown came from an earlier process (local only).
+    private var shownBreakdownRestored: Bool {
+        breakdown == nil ? breakdowns.latestIsRestoredFromDisk : false
     }
 
     // MARK: Rows
@@ -1224,8 +1287,9 @@ struct DSHContextPanel: View {
     /// guessed from `capturedAt`: a clock can say "old", only the writer can say
     /// "not this process's".
     private var sectionHeading: String {
-        guard let breakdown = breakdowns.latest else { return "This request, estimated" }
-        let isThisRequest = requestInFlight && !breakdowns.latestIsRestoredFromDisk
+        if let labels { return labels.section }
+        guard let breakdown = shownBreakdown else { return "This request, estimated" }
+        let isThisRequest = requestInFlight && !shownBreakdownRestored
         return isThisRequest ? breakdown.sectionTitle : breakdown.lastSectionTitle
     }
 
@@ -1240,29 +1304,30 @@ struct DSHContextPanel: View {
                 .font(Font(AppFont.ui(11, weight: .semibold, category: .ui)))
                 .foregroundStyle(.secondary)
 
-            if let b = breakdowns.latest {
+            if let b = shownBreakdown {
                 ContextRow(
                     label: "System prompt",
-                    value: DSHContextFormat.approx(b.systemPromptTokens),
-                    detail: "\(count(b.systemPromptChars, .char)) · \(count(b.sectionNames.count, .section))"
+                    value: rowValueOverrides[.systemPrompt] ?? DSHContextFormat.approx(b.systemPromptTokens),
+                    detail: rowDetailOverrides[.systemPrompt]
+                        ?? "\(count(b.systemPromptChars, .char)) · \(count(b.sectionNames.count, .section))"
                 )
                 ContextRow(
                     label: "Tool definitions",
-                    value: DSHContextFormat.approx(b.toolTokens),
-                    detail: count(b.toolCount, .tool)
+                    value: rowValueOverrides[.toolDefinitions] ?? DSHContextFormat.approx(b.toolTokens),
+                    detail: rowDetailOverrides[.toolDefinitions] ?? count(b.toolCount, .tool)
                 )
                 ContextRow(
                     label: "Conversation",
-                    value: DSHContextFormat.approx(b.surfaceTokens),
-                    detail: count(b.surfaceMessageCount, .entry)
+                    value: rowValueOverrides[.conversation] ?? DSHContextFormat.approx(b.surfaceTokens),
+                    detail: rowDetailOverrideOrNil(.conversation) ?? count(b.surfaceMessageCount, .entry)
                 )
                 Divider()
                 // Measured or estimated — the row says which, from the store's own
                 // record of what it measured (`DSHContextBreakdown.isMeasured`),
                 // never from a rule of thumb about the two numbers being close.
                 ContextRow(
-                    label: LocalizedStringKey(b.totalLabel),
-                    value: DSHContextFormat.approx(b.estimatedTotal),
+                    label: LocalizedStringKey(labels?.total ?? b.totalLabel),
+                    value: rowValueOverrides[.total] ?? DSHContextFormat.approx(b.estimatedTotal),
                     detail: nil,
                     emphasised: true
                 )
@@ -1282,7 +1347,7 @@ struct DSHContextPanel: View {
                 // would put a measured rate right under the "no request has been
                 // assembled yet in this session" sentence. Moving these two lines
                 // out of the branch is all it takes to show it there too.
-                if let hit = DSHCacheHitFormat.percent(breakdowns.latestUsage) {
+                if let hit = DSHCacheHitFormat.percent(cacheHit ?? breakdowns.latestUsage) {
                     Divider()
                     ContextRow(label: "Cache Hit Rate", value: hit + "%")
                 }
@@ -1306,6 +1371,13 @@ struct DSHContextPanel: View {
     /// "1 char" · "812 chars" — through `AppLocalized`, because a key built from
     /// a variable cannot go through `Text`'s `LocalizedStringKey` initialiser and
     /// would render English on every device.
+    /// An override of "" means "draw no detail line", which is different from
+    /// "no override" (nil → the store-derived detail).
+    private func rowDetailOverrideOrNil(_ row: DSHContextPanelRow) -> String? {
+        guard let value = rowDetailOverrides[row] else { return nil }
+        return value.isEmpty ? nil : value
+    }
+
     private func count(_ n: Int, _ noun: CountUnit) -> String {
         String(format: AppLocalized(noun.key(for: n)), n)
     }
