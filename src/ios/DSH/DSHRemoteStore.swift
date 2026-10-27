@@ -138,6 +138,14 @@ final class DSHRemoteStore: ObservableObject {
         if host != nil, mode == .dsh {
             Task { await connect() }
         }
+        // The dispatch tools (`remote_team_*`) live in the LOCAL agent's catalog,
+        // and `makeAgentTools()` reads `availability` synchronously — so a phone
+        // that launches straight into Minis mode would spend its first message
+        // without the tools while the throttled probe caught up. Probing here costs
+        // one GET and makes the tools exist on the user's first message.
+        if client != nil, mode != .dsh {
+            Task { await DSHRemoteTeamTools.refreshAvailability() }
+        }
     }
 
     // MARK: Mode
