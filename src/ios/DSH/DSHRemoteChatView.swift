@@ -376,16 +376,22 @@ final class DSHRemoteChatAdapter: ObservableObject {
 struct DSHRemoteChatView: View {
     let conversationId: String
     @StateObject private var adapter = DSHRemoteChatAdapter()
+    /// The connection itself, not the page's own adapter: the banner's whole job
+    /// is to describe the transport when the adapter has nothing to say.
+    @ObservedObject private var store = DSHRemoteStore.shared
     @State private var draft = ""
     /// Measured composer height, handed to the list as its bottom inset. The list
     /// is the only view that knows how much of the bottom it must keep clear.
     @State private var composerHeight: CGFloat = 0
+    /// The usage panel, opened by tapping the composer's context ring.
+    @State private var showContextPanel = false
     /// Mirrors the editor's focus so the list keeps its "keyboard raised → scroll
     /// to bottom" behaviour.
     @State private var composerFocused = false
 
     var body: some View {
         VStack(spacing: 0) {
+            connectionBanner
             transcript
             if let sendError = adapter.sendErrorText {
                 statusLine(sendError, retryTitle: AppLocalized("Retry")) {
@@ -406,8 +412,12 @@ struct DSHRemoteChatView: View {
                 onSend: { send() },
                 onStop: { Task { await adapter.stop() } },
                 onHeightChange: { composerHeight = $0 },
-                onFocusChange: { composerFocused = $0 }
+                onFocusChange: { composerFocused = $0 },
+                onContextTap: { showContextPanel = true }
             )
+        }
+        .sheet(isPresented: $showContextPanel) {
+            DSHRemoteContextSheet(reading: adapter.contextReading, running: adapter.isRunning)
         }
         .navigationTitle(adapter.title)
         .navigationBarTitleDisplayMode(.inline)
@@ -462,6 +472,63 @@ struct DSHRemoteChatView: View {
     /// One red line, one action. The brief rules out stacked dialogs: a connection
     /// failure or a rejected send says what happened, in the page, and offers the
     /// single step that retries it.
+    // MARK: - Connection banner
+
+    /// One hairline row above the transcript: no dialog, no alert, and it is
+    /// GONE the moment the transport is healthy again (`EmptyView`), because a
+    /// permanent "reconnecting" strip trains people to ignore it.
+    ///
+    /// Two states, because they mean different things to the user:
+    /// * the session had a stream and the transport dropped → "连接已断开，正在重连…";
+    /// * paired but never reachable → "已配对但无法到达那台电脑".
+    /// The retry button is on both: the reconnect loop is the store's, but a
+    /// user watching a dead screen needs a way to force it.
+    @ViewBuilder
+    private var connectionBanner: some View {
+        if let banner = connectionBannerText {
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.orange)
+                Text(banner)
+                    .font(AppFont.sw(11, weight: .regular, category: .ui))
+                    .foregroundStyle(ChatColors.secondaryText)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                Button {
+                    Task {
+                        await DSHRemoteStore.shared.connect()
+                        await adapter.load(sessionId: conversationId, force: true)
+                    }
+                } label: {
+                    Text(AppLocalized("Retry"))
+                        .font(AppFont.sw(11, weight: .medium, category: .ui))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(ChatColors.primaryText)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(ChatColors.inputIconBg.opacity(0.6))
+            .accessibilityIdentifier("dshConnectionBanner")
+        }
+    }
+
+    private var connectionBannerText: String? {
+        guard store.host != nil else { return nil }
+        switch store.status {
+        case .connected:
+            return nil
+        case .connecting:
+            return AppLocalized("Connection lost. Reconnecting…")
+        case .failed:
+            return AppLocalized("Connection lost. Reconnecting…")
+        case .disconnected:
+            return AppLocalized("Paired, but this computer can't be reached.")
+        }
+    }
+
     private func statusLine(_ text: String, retryTitle: String, retry: @escaping () -> Void) -> some View {
         HStack(spacing: 8) {
             Image(systemName: "exclamationmark.circle.fill")
@@ -497,6 +564,102 @@ struct DSHRemoteChatView: View {
             if !accepted, draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 draft = outgoing
             }
+        }
+    }
+}
+
+// MARK: - Context panel (remote)
+
+/// The usage sheet behind the remote composer's context ring.
+///
+/// The LOCAL panel (`DSHContextPanel`) can show a per-component breakdown because
+/// this app assembled the request. A remote turn is assembled on the computer, so
+/// this sheet shows exactly what the paired host reports — used / window /
+/// remaining / share — and says "the computer did not report this" for the rows it
+/// cannot know, instead of drawing zeros. That distinction is the whole point of
+/// the panel: a 0% would read as "nothing used" when the truth is "nothing known".
+struct DSHRemoteContextSheet: View {
+    var reading: DSHContextReading?
+    var running: Bool
+    @Environment(\.dismiss) private var dismiss
+
+    private var used: Int { reading?.usedTokens ?? 0 }
+    private var window: Int { reading?.windowTokens ?? 0 }
+    private var hasWindow: Bool { window > 0 }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Context")
+                        .font(AppFont.sw(17, weight: .semibold, category: .ui))
+                    Text(running
+                         ? AppLocalized("This session is running on the computer; these are its own figures.")
+                         : AppLocalized("What the paired computer reports for this session."))
+                        .font(AppFont.sw(11, weight: .regular, category: .ui))
+                        .foregroundStyle(ChatColors.secondaryText)
+                }
+                Spacer(minLength: 8)
+                Button { dismiss() } label: {
+                    Text("Done").font(AppFont.sw(15, weight: .medium, category: .ui))
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 14)
+            .padding(.bottom, 10)
+
+            Divider()
+
+            if reading == nil {
+                Text("This computer did not report context usage for this session.")
+                    .font(AppFont.sw(13, weight: .regular, category: .ui))
+                    .foregroundStyle(ChatColors.secondaryText)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(16)
+                Spacer(minLength: 0)
+            } else {
+                VStack(spacing: 10) {
+                    row("Used", hasWindow ? DSHContextFormat.approx(used) : DSHContextFormat.magnitude(used))
+                    row("Window", hasWindow ? DSHContextFormat.magnitude(window)
+                                            : AppLocalized("Not reported"))
+                    row("Remaining", hasWindow
+                        ? DSHContextFormat.magnitude(max(window - used, 0))
+                        : AppLocalized("Not reported"))
+                    row("Share", hasWindow ? "\(reading?.percent ?? 0)%" : AppLocalized("Not reported"))
+                    row("Last compaction", AppLocalized("Not reported"))
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+                Spacer(minLength: 0)
+            }
+        }
+        .presentationDetentsIfAvailable()
+    }
+
+    private func row(_ title: String, _ value: String) -> some View {
+        HStack {
+            Text(title)
+                .font(AppFont.sw(13, weight: .regular, category: .ui))
+                .foregroundStyle(ChatColors.primaryText)
+            Spacer(minLength: 12)
+            Text(value)
+                .font(AppFont.sw(13, weight: .medium, category: .ui))
+                .foregroundStyle(ChatColors.secondaryText)
+                .monospacedDigit()
+        }
+    }
+}
+
+private extension View {
+    /// `.fraction` detents exist from iOS 16; below that the sheet keeps the
+    /// system default rather than failing to build on the iOS 15 line.
+    @ViewBuilder
+    func presentationDetentsIfAvailable() -> some View {
+        if #available(iOS 16.0, *) {
+            self.presentationDetents([.height(300)])
+        } else {
+            self
         }
     }
 }
