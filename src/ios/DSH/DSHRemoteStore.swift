@@ -695,8 +695,14 @@ final class DSHRemoteStore: ObservableObject {
         lastFrameAt = now
         if connectionState != .connected { connectionState = .connected }
         NSLog("[DSH] route \(DSHRemoteStore.frameTag(frame)) slots=\(streamSlots.count)")
-        if case .snapshot(let cursor, _, _, _, _, let pressure) = frame {
+        if case .snapshot(let cursor, _, _, _, _, let pressure, let usage) = frame {
+            // Live context data goes straight into the panel's published slot: the
+            // ring must not need a second request, and a summary fetched earlier
+            // keeps its goal/todos while these two are refreshed.
             if let pressure { cachePressure(pressure, sessionId: slot.sessionId) }
+            if pressure != nil || usage != nil {
+                mergeLiveContext(sessionId: slot.sessionId, pressure: pressure, usage: usage)
+            }
             if cursor > 0 {
                 streamCursors[slot.sessionId] = max(streamCursors[slot.sessionId] ?? 0, cursor)
             }
@@ -709,7 +715,7 @@ final class DSHRemoteStore: ObservableObject {
     /// print all 40 records — tens of kilobytes into the device log.
     static func frameTag(_ frame: DSHRemoteStreamFrame) -> String {
         switch frame {
-        case .snapshot(let cursor, let records, _, let running, _, _):
+        case .snapshot(let cursor, let records, _, let running, _, _, _):
             return "snapshot cursor=\(cursor) records=\(records.count) running=\(running)"
         case .event(let seq, let event):
             return "event seq=\(seq) type=\(event.type)"
@@ -772,6 +778,41 @@ final class DSHRemoteStore: ObservableObject {
     static func backoffDelay(attempt: Int) -> TimeInterval {
         let base = 0.5 * pow(2, Double(max(0, attempt)))
         return min(base, 5)
+    }
+
+    // MARK: - Session summary (context panel)
+
+    /// Context / goal / todos / usage per Session, for the context panel.
+    ///
+    /// Populated by BOTH paths: `refreshSessionSummary` (the full GET) and every
+    /// snapshot frame (live context + usage), so the ring is current without a
+    /// second request. The panel decides when to refresh; the store never polls.
+    @Published private(set) var summaries: [String: DSHRemoteSessionSummary] = [:]
+
+    /// Fetch the whole summary and publish it.
+    func sessionSummary(sessionId: String) async throws -> DSHRemoteSessionSummary {
+        guard let client else {
+            throw DSHRemoteError(code: "dsh/unavailable", message: "This device is not paired.", status: nil)
+        }
+        let summary = try await client.sessionSummary(sessionId: sessionId)
+        var merged = summaries[sessionId] ?? DSHRemoteSessionSummary.empty(sessionId: sessionId)
+        merged.sessionId = summary.sessionId ?? sessionId
+        merged.asOfSeq = summary.asOfSeq
+        // A block the host did not send keeps what the panel already had: a partial
+        // answer must not erase the goal the user is reading.
+        if let context = summary.context { merged.context = context }
+        if let goal = summary.goal { merged.goal = goal }
+        if let todos = summary.todos { merged.todos = todos }
+        if let usage = summary.tokenUsage { merged.tokenUsage = usage }
+        summaries[sessionId] = merged
+        return merged
+    }
+
+    /// Fold a snapshot frame's live context/usage into the panel's slot.
+    private func mergeLiveContext(sessionId: String, pressure: DSHContextPressure?,
+                                  usage: DSHRemoteSessionSummary.TokenUsage?) {
+        let current = summaries[sessionId] ?? DSHRemoteSessionSummary.empty(sessionId: sessionId)
+        summaries[sessionId] = current.withLiveContext(pressure, usage: usage)
     }
 
     private func cachePressure(_ pressure: DSHContextPressure, sessionId: String) {

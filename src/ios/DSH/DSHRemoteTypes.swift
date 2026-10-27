@@ -163,7 +163,8 @@ enum DSHStreamChannel: String, Codable, Sendable {
 /// only needs these four.
 enum DSHRemoteStreamFrame: Sendable {
     case snapshot(cursor: Int, records: [DSHHistoryRecord], hasMore: Bool, running: Bool,
-                  title: String?, contextPressure: DSHContextPressure?)
+                  title: String?, contextPressure: DSHContextPressure?,
+                  tokenUsage: DSHRemoteSessionSummary.TokenUsage?)
     case event(seq: Int, event: DSHHistoryEvent)
     case delta(turn: Int, step: Int, attempt: String, index: Int, channel: DSHStreamChannel, text: String)
     case deltaEnd(turn: Int, step: Int, attempt: String)
@@ -185,6 +186,9 @@ struct DSHRemoteStreamEnvelope: Decodable, Sendable {
     var blank: Bool?
     var title: String?
     var contextPressure: DSHContextPressure?
+    /// Live token usage on the snapshot frame (newer hosts). Feeds the context
+    /// panel without a second request.
+    var tokenUsage: DSHRemoteSessionSummary.TokenUsage?
     // event
     var seq: Int?
     var event: DSHHistoryEvent?
@@ -307,6 +311,154 @@ struct DSHRemoteTeamAnswer: Sendable, Equatable {
     var isEmpty: Bool { text.isEmpty }
 
     static let none = DSHRemoteTeamAnswer(text: "", turn: nil, records: 0, fingerprint: "-")
+}
+
+// MARK: - Session summary (GET /dsh/summary)
+
+/// Everything the context panel needs, in ONE GET.
+///
+/// The snapshot frame already carries `contextPressure` + `tokenUsage` (live), so
+/// this endpoint is for the parts a frame cannot show: the goal, the todo list and
+/// the last compaction. Every block can be `null` and any block can fail to decode
+/// without taking the others down — a panel is not allowed to blank the page.
+struct DSHRemoteSessionSummary: Decodable, Sendable, Equatable {
+    var sessionId: String?
+    var asOfSeq: Double?
+    var context: Context?
+    var goal: Goal?
+    var todos: [Todo]?
+    var tokenUsage: TokenUsage?
+
+    struct LastCompaction: Decodable, Sendable, Equatable {
+        var at: Double?
+        var before: Double?
+        /// HOST FACT: always `null` — the projection does not record the size after
+        /// the compaction. Show `before` and the time; never print "after N".
+        var after: Double?
+        var compactionId: String?
+        var error: String?
+    }
+
+    struct Context: Decodable, Sendable, Equatable {
+        /// Tokens in the window, and where that number came from.
+        var used: Double?
+        var window: Double?
+        var remaining: Double?
+        var ratio: Double?
+        var projectedTokens: Double?
+        /// `pressure` (measured) / `projected` (estimated). Absent on older hosts.
+        var source: String?
+        var lastCompaction: LastCompaction?
+
+        var usageSource: DSHRemoteContextUsageSource {
+            if let source, let parsed = DSHRemoteContextUsageSource(rawValue: source) { return parsed }
+            return .projected
+        }
+
+        /// The same shape the live snapshot uses, so the panel renders both paths
+        /// identically.
+        var asPressure: DSHContextPressure {
+            DSHContextPressure(
+                pressureTokens: usageSource == .pressure ? used : nil,
+                projectedTokens: projectedTokens ?? (usageSource == .projected ? used : nil),
+                surfaceTokens: nil,
+                sampledSurfaceTokens: nil,
+                contextWindow: window,
+                source: usageSource.rawValue
+            )
+        }
+    }
+
+    struct Goal: Decodable, Sendable, Equatable {
+        var id: String?
+        var revision: Double?
+        var title: String?
+        /// `active` / `done` / `blocked`
+        var status: String?
+        var phase: String?
+        var rounds: Rounds?
+        var blockedReason: String?
+        /// HOST FACT: always `[]`. The harness' goal projection has no per-step
+        /// list (only `rounds`), so a UI must NOT render "0 steps" from this.
+        var steps: [String]?
+        var updatedAt: Double?
+
+        struct Rounds: Decodable, Sendable, Equatable {
+            var started: Double?
+            var max: Double?
+        }
+    }
+
+    struct Todo: Decodable, Sendable, Equatable {
+        var content: String?
+        var status: String?
+    }
+
+    struct TokenUsage: Decodable, Sendable, Equatable {
+        var uncachedInputTokens: Double?
+        var outputTokens: Double?
+        var cacheReadTokens: Double?
+        var cacheWriteTokens: Double?
+        var totalTokens: Double?
+    }
+
+    /// Explicit because `init(from:)` removes the synthesised member-wise one.
+    init(sessionId: String?, asOfSeq: Double?, context: Context?, goal: Goal?,
+         todos: [Todo]?, tokenUsage: TokenUsage?) {
+        self.sessionId = sessionId
+        self.asOfSeq = asOfSeq
+        self.context = context
+        self.goal = goal
+        self.todos = todos
+        self.tokenUsage = tokenUsage
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        sessionId = container.lenientString(.sessionId)
+        asOfSeq = container.lenientDouble(.asOfSeq)
+        context = container.lenient(Context.self, .context)
+        goal = container.lenient(Goal.self, .goal)
+        // Lossy: one malformed todo must not hide the rest of the list.
+        todos = container.lenientLossyArray(Todo.self, .todos)?.values
+        tokenUsage = container.lenient(TokenUsage.self, .tokenUsage)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case sessionId, asOfSeq, context, goal, todos, tokenUsage
+    }
+
+    static func empty(sessionId: String) -> DSHRemoteSessionSummary {
+        DSHRemoteSessionSummary(
+            sessionId: sessionId, asOfSeq: nil, context: nil, goal: nil, todos: nil, tokenUsage: nil
+        )
+    }
+
+    /// A summary carrying only what a live snapshot knows, for merging into the
+    /// panel's published slot without clearing its goal/todos.
+    func withLiveContext(_ pressure: DSHContextPressure?, usage: TokenUsage?) -> DSHRemoteSessionSummary {
+        var copy = self
+        if let pressure { copy.context = Context(from: pressure) }
+        if let usage { copy.tokenUsage = usage }
+        return copy
+    }
+}
+
+extension DSHRemoteSessionSummary.Context {
+    /// Live snapshot → panel shape. `usedTokens` keeps the host's precedence, and
+    /// the source travels with it so "≈" stays honest.
+    init(from pressure: DSHContextPressure) {
+        self.used = pressure.usedTokens
+        self.window = pressure.contextWindow
+        self.remaining = {
+            guard let used = pressure.usedTokens, let window = pressure.contextWindow else { return nil }
+            return max(window - used, 0)
+        }()
+        self.ratio = pressure.fraction
+        self.projectedTokens = pressure.projectedTokens
+        self.source = pressure.usedSource.rawValue
+        self.lastCompaction = nil
+    }
 }
 
 // MARK: - Merge (same rules as mergeMessages/applyConversationEvent in the SDK)

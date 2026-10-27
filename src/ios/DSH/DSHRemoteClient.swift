@@ -456,6 +456,20 @@ final class DSHRemoteClient: @unchecked Sendable {
         }
     }
 
+    /// `GET /mobile/v1/dsh/summary` — context / goal / todos / token usage in one
+    /// call, for the context panel.
+    ///
+    /// Every block is optional and decoded leniently: the panel must survive a host
+    /// that reports only some of them (or none) instead of blanking the page.
+    func sessionSummary(sessionId: String) async throws -> DSHRemoteSessionSummary {
+        let data = try await authorizedData(
+            path: "/dsh/summary", query: [URLQueryItem(name: "sessionId", value: sessionId)]
+        )
+        let summary = try JSONDecoder().decode(DSHRemoteSessionSummary.self, from: data)
+        NSLog("[DSH] summary sid=\(sessionId.prefix(12)) context=\(summary.context != nil) goal=\(summary.goal?.status ?? "nil") todos=\(summary.todos?.count ?? -1)")
+        return summary
+    }
+
     /// What a teammate has actually SAID, read from its own Session.
     ///
     /// The team endpoints return the roster and receipts; the answer lives in that
@@ -920,7 +934,8 @@ final class DSHRemoteStream: @unchecked Sendable {
             let frame = DSHRemoteStreamFrame.snapshot(
                 cursor: envelope.cursor ?? 0, records: records, hasMore: envelope.hasMore ?? false,
                 running: envelope.running ?? false, title: envelope.title,
-                contextPressure: envelope.contextPressure
+                contextPressure: envelope.contextPressure,
+                tokenUsage: envelope.tokenUsage
             )
             deliver { self.onFrame(frame) }
 
