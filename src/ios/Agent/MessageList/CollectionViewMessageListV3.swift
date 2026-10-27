@@ -6186,3 +6186,130 @@ private struct SheetOverlayView: View {
             }
     }
 }
+
+// MARK: - I2/I3 rest-state ticker
+//
+// [T-rest-probe] WHY A TICKER: symptom 3 happens with the phone at rest, when
+// nothing calls `applySnapshot` or the toggle sink — a probe attached only to
+// those two paths is blind exactly when the bug appears.
+//
+// COST WHEN OFF: `tickRestProbes()` starts with `guard Self.layoutProbeEnabled
+// else { return }` and no timer is installed at all (see `startRestProbeIfNeeded`),
+// so a normal build pays one boolean check per apply.
+extension CollectionViewMessageListV3.Coordinator {
+
+    /// Remote switch: `defaults write … minis.layoutProbe -bool true`, or the
+    /// `MINIS_LAYOUT_PROBE=1` environment variable for a simulator run. Default
+    /// false — the I3 sample re-enters the hosting graph and must never be on by
+    /// accident.
+    /// Read on EVERY use — deliberately not a `static let`.
+    ///
+    /// `UserDefaults` caches inside the process, and the value test-engineer writes
+    /// (`_tools/layout-probe-switch.ps1`) lands in the app CONTAINER's plist, not the
+    /// shared domain: a cached constant would keep the old answer until a cold
+    /// start, and an experiment would silently run with the probe off. A dictionary
+    /// lookup at 1 Hz costs nothing, so the semantics are "flip the plist, the next
+    /// tick sees it".
+    static var layoutProbeEnabled: Bool {
+        if ProcessInfo.processInfo.environment["MINIS_LAYOUT_PROBE"] == "1" { return true }
+        return UserDefaults.standard.bool(forKey: "minis.layoutProbe")
+    }
+
+    private static var restProbeTimer: Timer?
+    private static var restProbeCursor = 0
+    private static var restProbeTick = 0
+    private static var restProbeClipStreak: [Int: Int] = [:]
+    private static var restProbeLastContentSample = Date.distantPast
+
+    func startRestProbeIfNeeded() {
+        guard Self.layoutProbeEnabled, Self.restProbeTimer == nil else { return }
+        let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.tickRestProbes() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        Self.restProbeTimer = timer
+    }
+
+    private func stopRestProbe() {
+        Self.restProbeTimer?.invalidate()
+        Self.restProbeTimer = nil
+        Self.restProbeClipStreak.removeAll()
+    }
+
+    /// One cell per tick, round-robin: sampling all of them at once is what makes a
+    /// diagnostic run unreadable (and turns a 1 Hz probe into a burst).
+    func tickRestProbes() {
+        guard Self.layoutProbeEnabled else { return }          // ← zero cost when off
+        guard let cv = viewController?.collectionView,
+              let layout = cv.collectionViewLayout as? MessageListLayout else {
+            stopRestProbe()
+            return
+        }
+        // The page went away: no view in a window means no ticks to pay for.
+        guard cv.window != nil else { stopRestProbe(); return }
+
+        let cells = cv.indexPathsForVisibleItems
+            .filter { isContentItem(dataSource?.itemIdentifier(for: $0)) }
+            .sorted { $0.item < $1.item }
+        guard !cells.isEmpty else {
+            AppLogger(category: "RestProbe").info("[RestProbe] sampling tick=\(Self.restProbeTick) idx=- visible=0 cell=- clip=- content=-")
+            return
+        }
+        let ip = cells[min(Self.restProbeCursor % max(cells.count, 1), cells.count - 1)]
+        Self.restProbeCursor &+= 1
+        Self.restProbeTick &+= 1
+        guard let cell = cv.cellForItem(at: ip) as? SelfSizingCell else {
+            AppLogger(category: "RestProbe").info("[RestProbe] sampling idx=\(ip.item) visible=\(cells.count) cell=- clip=- content=-")
+            return
+        }
+        let item = dataSource?.itemIdentifier(for: ip)
+        let kindText: String
+        if case .assistantBlock = item { kindText = "Block" } else { kindText = "WholeMessage" }
+        let source = layout.heightSource(at: ip.item)
+
+        // I2 — clip: two consecutive ticks before it is worth a line.
+        var clipText = "ok"
+        if let clip = cell.clipProbe() {
+            let streak = (Self.restProbeClipStreak[ip.item] ?? 0) + (clip.clipped ? 1 : 0)
+            Self.restProbeClipStreak[ip.item] = clip.clipped ? streak : 0
+            if clip.clipped {
+                clipText = "clip"
+                if streak >= 2 {
+                    AppLogger(category: "ClipProbe").info(
+                        "[ClipProbe] idx=\(ip.item) want=\(String(format: "%.1f", clip.want)) "
+                        + "have=\(String(format: "%.1f", clip.have)) kind=\(kindText)"
+                    )
+                }
+            }
+        }
+
+        // I3 — content size, at most once per 500ms, guarded against throws.
+        var contentText = "skipped"
+        let now = Date()
+        if now.timeIntervalSince(Self.restProbeLastContentSample) >= 0.5 {
+            Self.restProbeLastContentSample = now
+            let reading = cell.contentMismatchProbe(width: cell.bounds.width)
+            if reading.ok, cell.bounds.width > 0 {
+                let frame = cell.frame.height
+                if abs(reading.want - frame) > 4 {
+                    contentText = "mismatch"
+                    AppLogger(category: "ContentMismatch").info(
+                        "[ContentMismatch] idx=\(ip.item) want=\(String(format: "%.1f", reading.want)) "
+                        + "frame=\(String(format: "%.1f", frame)) source=\(source.rawValue) "
+                        + "kind=\(kindText) caller=restTick"
+                    )
+                } else {
+                    contentText = "ok"
+                }
+            }
+        }
+
+        // Self-attesting line: printed EVERY tick, `0` and `-` included, so "no
+        // line" can never be read as "clean" — the mistake three earlier probes
+        // made.
+        AppLogger(category: "RestProbe").info(
+            "[RestProbe] sampling tick=\(Self.restProbeTick) idx=\(ip.item) visible=\(cells.count) cell=\(kindText) "
+            + "clip=\(clipText) content=\(contentText)"
+        )
+    }
+}
