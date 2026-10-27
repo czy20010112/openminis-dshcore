@@ -21,7 +21,7 @@ on:
   push:
     branches:
       - main
-      - ios26
+      - ios15
     tags:
       - 'v*'
   workflow_dispatch:
