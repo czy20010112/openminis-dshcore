@@ -528,7 +528,7 @@ struct DSHRemoteChatView: View {
                 subtitleExtra: lastCompactionSubtitle,
                 requestInFlight: adapter.isRunning
             )
-            .compatDetents([.medium, .large])
+            .dshSheetDetents([.medium, .large])
         }
         .navigationTitle(adapter.title)
         .navigationBarTitleDisplayMode(.inline)
@@ -870,4 +870,41 @@ struct DSHRemoteChatView: View {
             }
         }
     }
+}
+
+// MARK: - Sheet detents shared by both lines
+
+/// `.presentationDetents` is iOS 16+, and the iOS 15 line's shim for it
+/// (`compatDetents` in `Shared/iOS15Compat.swift`) does not exist on the iOS 26
+/// line — which is why the sheet asked for a member that line never had, and the
+/// iOS 26 build failed while the iOS 15 one passed.
+///
+/// This tree cannot call either version directly without breaking the other line,
+/// and the file has to stay byte-identical across both, so it carries the rule
+/// itself: native detents where the API exists, nothing below it (on iOS 15 a sheet
+/// then opens at its natural height, exactly as `compatDetents` did).
+extension View {
+    @ViewBuilder
+    func dshSheetDetents(_ detents: [DSHSheetDetent]) -> some View {
+        if #available(iOS 16.0, *) {
+            let native: Set<PresentationDetent> = Set(detents.map { detent in
+                switch detent {
+                case .medium: return PresentationDetent.medium
+                case .large: return PresentationDetent.large
+                case .height(let value): return PresentationDetent.height(value)
+                }
+            })
+            self.presentationDetents(native)
+        } else {
+            self
+        }
+    }
+}
+
+/// The subset of detents this tree asks for, so the call site reads the same on both
+/// lines without either importing the other's compat layer.
+enum DSHSheetDetent {
+    case medium
+    case large
+    case height(CGFloat)
 }
