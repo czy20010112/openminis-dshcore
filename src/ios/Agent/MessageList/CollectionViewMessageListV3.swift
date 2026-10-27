@@ -902,7 +902,8 @@ extension CollectionViewMessageListV3 {
              if let cv = self.viewController?.collectionView,
                 let layout = cv.collectionViewLayout as? MessageListLayout {
                  cv.layoutIfNeeded()
-                 self.reportFrameMismatch(cv: cv, layout: layout, caller: "attachmentSizeChanged")
+                  self.reportFrameMismatch(cv: cv, layout: layout, caller: "attachmentSizeChanged")
+                  self.reportSeedSources(cv: cv, layout: layout, caller: "attachmentSizeChanged")
              }
             let visibleIPs = cv.indexPathsForVisibleItems.sorted()
             var cleared = 0
@@ -2492,6 +2493,54 @@ extension CollectionViewMessageListV3 {
         }
     }
 
+    // MARK: - [SeedSource] where the reserved heights come from
+
+    /// One line per sampled window, ALWAYS — `n=0` included. [T-seed-source]
+    ///
+    /// WHY THIS AND NOT `frame vs attributes`: the cell's frame IS what
+    /// `preferredLayoutAttributesFitting` returns, and on this content that call
+    /// throws and returns the layout's own attribute — so a stale seed shows
+    /// `frame == attrs`, delta 0. The mechanism is invisible to a magnitude test
+    /// and plain to this one: WHERE the number came from.
+    ///
+    /// "No line" must never mean "clean" (that misreading cost three rounds), so
+    /// the line prints on every call, 1 Hz aggregated. `defaults > 0` — the 200pt
+    /// fallback doing the work for a VISIBLE CONTENT cell — is a definite geometry
+    /// bug and prints immediately, without waiting for the window.
+    private static var seedSourceLastFlush = Date.distantPast
+    private static var seedSourceCounts: [String: Int] = [:]
+    private static var seedSourceDefaults = 0
+    private static var seedSourceKinds: Set<String> = []
+
+    private func reportSeedSources(cv: UICollectionView, layout: MessageListLayout, caller: String) {
+        var visible = 0
+        for indexPath in cv.indexPathsForVisibleItems {
+            guard let item = self.dataSource?.itemIdentifier(for: indexPath),
+                  isContentItem(item) else { continue }
+            visible += 1
+            let source = layout.heightSource(at: indexPath.item)
+            Self.seedSourceCounts[source.rawValue, default: 0] += 1
+            if source == .fallback { Self.seedSourceDefaults += 1 }
+            if case .assistantBlock = item { Self.seedSourceKinds.insert("Block") }
+            else { Self.seedSourceKinds.insert("WholeMessage") }
+        }
+        guard visible > 0 else { return }
+        let now = Date()
+        let isBug = Self.seedSourceDefaults > 0
+        guard isBug || now.timeIntervalSince(Self.seedSourceLastFlush) >= 1 else { return }
+        Self.seedSourceLastFlush = now
+        let sources = Self.seedSourceCounts.sorted { $0.key < $1.key }
+            .map { "\($0.key):\($0.value)" }.joined(separator: ",")
+        AppLogger(category: "SeedSource").info(
+            "[SeedSource] n=\(visible) visible=\(visible) "
+            + "sources=\(sources.isEmpty ? "none" : sources) defaults=\(Self.seedSourceDefaults) "
+            + "kinds=\(Self.seedSourceKinds.sorted().joined(separator: ",")) caller=\(caller)"
+        )
+        Self.seedSourceCounts.removeAll(keepingCapacity: true)
+        Self.seedSourceDefaults = 0
+        Self.seedSourceKinds.removeAll(keepingCapacity: true)
+    }
+
     private func reportFrameMismatch(cv: UICollectionView, layout: MessageListLayout, caller: String = "?") {
         // Unconditional on entry: a clean run must leave a trace, otherwise "no line" reads
         // as "clean" when it may mean "never called". Counts only — no text, no identifiers.
@@ -2623,7 +2672,8 @@ extension CollectionViewMessageListV3 {
                                  if let cv = self.viewController?.collectionView,
                                     let layout = cv.collectionViewLayout as? MessageListLayout {
                                      cv.layoutIfNeeded()
-                                     self.reportFrameMismatch(cv: cv, layout: layout, caller: "thinkingToggled")
+                                      self.reportFrameMismatch(cv: cv, layout: layout, caller: "thinkingToggled")
+                                      self.reportSeedSources(cv: cv, layout: layout, caller: "thinkingToggled")
                                  }
                         alog.info("[AttachMount] msg=\(msgId.uuidString.prefix(8)) idx=\(idx) invalidated + reconfigured")
                     }
@@ -3515,7 +3565,8 @@ extension CollectionViewMessageListV3 {
         if let cv = self.viewController?.collectionView,
            let layout = cv.collectionViewLayout as? MessageListLayout {
             cv.layoutIfNeeded()
-            self.reportFrameMismatch(cv: cv, layout: layout, caller: "applySnapshot")
+             self.reportFrameMismatch(cv: cv, layout: layout, caller: "applySnapshot")
+             self.reportSeedSources(cv: cv, layout: layout, caller: "applySnapshot")
         }
         }
 
