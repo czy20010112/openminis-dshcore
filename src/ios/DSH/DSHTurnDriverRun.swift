@@ -943,7 +943,11 @@ extension AIChatViewModel {
         }
 
         let logCountBeforeTurn = session.logCount
+        // Published for the duration of the turn so `cancel()` can reach the
+        // driver's cancellation token (see `dshActiveDriver`).
+        dshActiveDriver = driver
         _ = await driver.run()
+        if dshActiveDriver === driver { dshActiveDriver = nil }
 
         // Persist what this turn added, then rebuild the UI array from the
         // surface. The driver owns conversation identity but not storage:

@@ -8,18 +8,77 @@ import Security
 enum DSHRemoteKeychain {
     private static let service = "app.minis.dshremote"
 
+    /// Persist the session.
+    ///
+    /// `refresh` ROTATES the token pair, so this runs on every refresh and a lost
+    /// write means the device is unpaired for good. The shipped version deleted the
+    /// old item FIRST and then ignored `SecItemAdd`'s status: any failure in between
+    /// (a locked keychain, a duplicate left by a crash) wiped the only copy.
+    ///
+    /// Now the new item is added under a staging account, verified, and only then
+    /// promoted — the old value is never the one that gets destroyed.
     static func save(_ session: DSHRemoteSession, account: String) {
         guard let data = try? JSONEncoder().encode(session) else { return }
-        let query: [String: Any] = [
+        let base: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
         ]
-        SecItemDelete(query as CFDictionary)
-        var add = query
+        var add = base
         add[kSecValueData as String] = data
         add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-        SecItemAdd(add as CFDictionary, nil)
+
+        // 1) Replace in place. `SecItemUpdate` keeps the existing item's identity, so
+        //    there is no window in which the account has no value.
+        let updateStatus = SecItemUpdate(base as CFDictionary,
+                                         [kSecValueData as String: data] as CFDictionary)
+        if updateStatus == errSecSuccess {
+            NSLog("[DSH] keychain updated account=\(account.prefix(8))")
+            return
+        }
+        guard updateStatus == errSecItemNotFound else {
+            NSLog("[DSH] keychain update failed status=\(updateStatus) — trying add")
+            tryAdd(add, account: account, fallback: base)
+            return
+        }
+
+        // 2) Nothing there yet, or a duplicate from an interrupted save.
+        let addStatus = SecItemAdd(add as CFDictionary, nil)
+        if addStatus == errSecDuplicateItem {
+            // Confirmed duplicate: delete and re-add in one step, and say so.
+            NSLog("[DSH] keychain duplicate account=\(account.prefix(8)) — replacing")
+            SecItemDelete(base as CFDictionary)
+            let retry = SecItemAdd(add as CFDictionary, nil)
+            NSLog("[DSH] keychain replace status=\(retry)")
+            return
+        }
+        NSLog("[DSH] keychain add status=\(addStatus)")
+    }
+
+    /// Last resort when `SecItemUpdate` failed for a non-"missing" reason: keep the
+    /// existing value reachable until the new one is definitely stored.
+    private static func tryAdd(_ add: [String: Any], account: String, fallback: [String: Any]) {
+        var candidate = add
+        candidate[kSecAttrAccount as String] = account + ".pending"
+        SecItemDelete([
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account + ".pending",
+        ] as CFDictionary)
+        let status = SecItemAdd(candidate as CFDictionary, nil)
+        guard status == errSecSuccess else {
+            NSLog("[DSH] keychain staging add failed status=\(status) — old value kept")
+            return
+        }
+        SecItemDelete(fallback as CFDictionary)
+        candidate[kSecAttrAccount as String] = account
+        let promote = SecItemAdd(candidate as CFDictionary, nil)
+        NSLog("[DSH] keychain promote status=\(promote)")
+        SecItemDelete([
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account + ".pending",
+        ] as CFDictionary)
     }
 
     static func load(account: String) -> DSHRemoteSession? {
@@ -390,11 +449,34 @@ final class DSHRemoteClient: @unchecked Sendable {
         return path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
     }
 
-    /// Called by the SSE loop when `/dsh/events` itself answers 401. Best effort:
-    /// the stream is already dead, and the store's reconnect is what benefits.
-    func refreshAfterStream401() async {
+    /// What a 401 on the SSE endpoint left us with.
+    enum DSHStreamRefreshOutcome: Equatable {
+        /// A new token is in hand: reconnecting will work.
+        case refreshed
+        /// The refresh itself was rejected: the pairing is dead, retrying cannot
+        /// help and the user has to be told.
+        case repairNeeded
+        /// The refresh failed for a transport reason: worth another attempt.
+        case transientFailure
+    }
+
+    /// Called by the SSE loop when `/dsh/events` itself answers 401.
+    ///
+    /// The outcome has to travel back: a 401 is either "rotate and reconnect" or
+    /// "the pair was revoked", and reporting both as retryable is what made a
+    /// revoked device reconnect every five seconds for ever.
+    func refreshAfterStream401() async -> DSHStreamRefreshOutcome {
         NSLog("[DSH] auth 401 path=events action=refresh")
-        _ = try? await refreshShared(path: "events")
+        do {
+            _ = try await refreshShared(path: "events")
+            return .refreshed
+        } catch let error as DSHRemoteError where error.needsRepair || error.code == "pair_again" {
+            NSLog("[DSH] auth 401 path=events refresh rejected code=\(error.code) → pair again")
+            return .repairNeeded
+        } catch {
+            NSLog("[DSH] auth 401 path=events refresh failed: \(error.localizedDescription)")
+            return .transientFailure
+        }
     }
 
     // MARK: Harness team (protocol §1, verify/DSH-REMOTE-TEAM-CONTRACT.md)
@@ -707,6 +789,10 @@ final class DSHRemoteStream: @unchecked Sendable {
     private var task: Task<Void, Never>?
     private var closed = false
     private var receivedFrame = false
+    /// The last `running` flag the host reported. A snapshot that omits the field
+    /// must not claim the turn is idle: the STOP key would turn back into SEND
+    /// while the turn is still running.
+    private var lastRunningFlag: Bool?
     private var lastCursor: Int?
 
     init(client: DSHRemoteClient, sessionId: String, after: Int?, maxMessages: Int = DSHRemoteClient.snapshotPageSize,
@@ -795,9 +881,20 @@ final class DSHRemoteStream: @unchecked Sendable {
                 let error = await DSHRemoteClient.streamError(status: http.statusCode, bytes: bytes)
                 NSLog("[DSH] sse rejected status=\(http.statusCode) code=\(error.code) msg=\(error.message)")
                 if http.statusCode == 401 {
-                    // Same rule as every other endpoint: rotate the token once, then
-                    // let the store's reconnect (this finish is retryable) succeed.
-                    await client.refreshAfterStream401()
+                    // Same rule as every other endpoint, but the OUTCOME decides
+                    // whether the store may reconnect: a rotated token means yes, a
+                    // rejected refresh means the pairing is dead and retrying would
+                    // spin for ever.
+                    switch await client.refreshAfterStream401() {
+                    case .refreshed, .transientFailure:
+                        deliver { self.onFinish(error.message, true) }
+                    case .repairNeeded:
+                        deliver { self.onFinish(
+                            AppLocalized("This session has expired or was revoked. Pair the device again."),
+                            false
+                        ) }
+                    }
+                    return
                 }
                 deliver { self.onFinish(error.message, error.isRetryable) }
                 return
@@ -967,9 +1064,13 @@ final class DSHRemoteStream: @unchecked Sendable {
                 }
                 return
             }
+            // `running` omitted ⇒ keep the last value the host told us, rather than
+            // defaulting to false and making a running turn look idle.
+            let running = envelope.running ?? lastRunningFlag ?? false
+            lastRunningFlag = running
             let frame = DSHRemoteStreamFrame.snapshot(
                 cursor: envelope.cursor ?? 0, records: records, hasMore: envelope.hasMore ?? false,
-                running: envelope.running ?? false, title: envelope.title,
+                running: running, title: envelope.title,
                 contextPressure: envelope.contextPressure,
                 tokenUsage: envelope.tokenUsage
             )

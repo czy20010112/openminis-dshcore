@@ -310,6 +310,15 @@ public final class DSHTurnDriver {
     private var currentTurn = 0
     private var isRunning = false
     private var cancelled = false
+    /// The cancellation signal of the step that is currently running.
+    ///
+    /// `cancel()` used to set a flag and nothing else: the token handed to
+    /// `DSHToolScheduler.execute` was a local, so `signal.isCancelled` was false
+    /// for ever and every checkpoint inside a tool batch was dead code. STOP then
+    /// only took effect AFTER the batch finished — shell commands, file writes and
+    /// HTTP posts all still ran. Holding the token here is what makes the per-batch
+    /// checkpoints real.
+    private var activeSignal: DSHCancellationToken?
 
     /// The last request envelope the provider priced, and the surface it was
     /// priced against.
@@ -456,6 +465,7 @@ public final class DSHTurnDriver {
     /// Cancel the running turn at the next step boundary.
     public func cancel() {
         cancelled = true
+        activeSignal?.cancel()
     }
 
     /// Seed the conversation with a user turn.
@@ -572,6 +582,13 @@ public final class DSHTurnDriver {
             }
 
             step += 1
+            // De-duplicating announcements is a STEP-scoped concern, not a turn-scoped
+            // one: a provider that reuses call ids per step (vLLM/Ollama style
+            // `call_0`, `call_1`) would otherwise suppress the second step's block,
+            // and the adapter — which resolves a result by call id — then wrote that
+            // step's output into the FIRST step's block. The first result vanished
+            // from the transcript while the model still received both.
+            announcedCallIds.removeAll()
             delegate?.driver(self, didStartStep: turn, step: step)
 
             // DSH's `agent/pre-step` pressure trigger. It runs before the request
@@ -742,13 +759,24 @@ public final class DSHTurnDriver {
                             )
 
                         case .usage(let reported):
-                            usage.inputTokens += reported.inputTokens
-                            usage.outputTokens += reported.outputTokens
+                            // Per-chunk usage REPEATS the request total rather than
+                            // adding to it (that is why the delegate is only told
+                            // once, at the end of the step). Summing here therefore
+                            // doubled or tripled the figure — and `promptTokens`
+                            // feeds the pressure trigger, so a 2x overcount made
+                            // compaction fire at half a window.
+                            //
+                            // Keep the maximum per bucket for the step instead: it
+                            // equals the total for a repeating provider, and for one
+                            // that really streams deltas it still ends at the total
+                            // instead of an inflated sum.
+                            usage.inputTokens = max(usage.inputTokens, reported.inputTokens)
+                            usage.outputTokens = max(usage.outputTokens, reported.outputTokens)
                             if let v = reported.cacheCreationInputTokens {
-                                usage.cacheWriteTokens = (usage.cacheWriteTokens ?? 0) + v
+                                usage.cacheWriteTokens = max(usage.cacheWriteTokens ?? 0, v)
                             }
                             if let v = reported.cacheReadInputTokens {
-                                usage.cacheReadTokens = (usage.cacheReadTokens ?? 0) + v
+                                usage.cacheReadTokens = max(usage.cacheReadTokens ?? 0, v)
                             }
                             // Deliberately NOT reported here. The accumulator below
                             // carries this step's running total, and every chunk
@@ -887,7 +915,12 @@ public final class DSHTurnDriver {
             }
 
             // Schedule the calls by their declared concurrency mode.
+            // The token is STORED on the driver before the batch starts: `cancel()`
+            // has to be able to reach it while tools are running, otherwise a STOP
+            // during a batch is only noticed after every queued call has executed.
             let token = DSHCancellationToken()
+            if cancelled { token.cancel() }
+            activeSignal = token
             let outcome = await DSHToolScheduler.execute(
                 registry: registry,
                 turn: turn,
@@ -897,6 +930,8 @@ public final class DSHTurnDriver {
                 maxParallel: config.maxParallelToolCalls,
                 applyOverflow: spillHook
             )
+
+            if activeSignal === token { activeSignal = nil }
 
             if cancelled || outcome.aborted {
                 // Unstarted calls already received a synthetic result, so the

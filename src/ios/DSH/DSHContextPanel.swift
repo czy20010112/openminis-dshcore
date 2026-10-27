@@ -1308,18 +1308,17 @@ struct DSHContextPanel: View {
                 ContextRow(
                     label: "System prompt",
                     value: rowValueOverrides[.systemPrompt] ?? DSHContextFormat.approx(b.systemPromptTokens),
-                    detail: rowDetailOverrides[.systemPrompt]
-                        ?? "\(count(b.systemPromptChars, .char)) · \(count(b.sectionNames.count, .section))"
+                    detail: detail(.systemPrompt, "\(count(b.systemPromptChars, .char)) · \(count(b.sectionNames.count, .section))")
                 )
                 ContextRow(
                     label: "Tool definitions",
                     value: rowValueOverrides[.toolDefinitions] ?? DSHContextFormat.approx(b.toolTokens),
-                    detail: rowDetailOverrides[.toolDefinitions] ?? count(b.toolCount, .tool)
+                    detail: detail(.toolDefinitions, count(b.toolCount, .tool))
                 )
                 ContextRow(
                     label: "Conversation",
                     value: rowValueOverrides[.conversation] ?? DSHContextFormat.approx(b.surfaceTokens),
-                    detail: rowDetailOverrideOrNil(.conversation) ?? count(b.surfaceMessageCount, .entry)
+                    detail: detail(.conversation, count(b.surfaceMessageCount, .entry))
                 )
                 Divider()
                 // Measured or estimated — the row says which, from the store's own
@@ -1371,11 +1370,12 @@ struct DSHContextPanel: View {
     /// "1 char" · "812 chars" — through `AppLocalized`, because a key built from
     /// a variable cannot go through `Text`'s `LocalizedStringKey` initialiser and
     /// would render English on every device.
-    /// An override of "" means "draw no detail line", which is different from
-    /// "no override" (nil → the store-derived detail).
-    private func rowDetailOverrideOrNil(_ row: DSHContextPanelRow) -> String? {
-        guard let value = rowDetailOverrides[row] else { return nil }
-        return value.isEmpty ? nil : value
+    /// Three-state detail: no override → the caller's fallback; override "" →
+    /// NO detail line at all (a host that reports tokens but no entry count must
+    /// not produce "0 entries"); otherwise the override's text.
+    private func detail(_ row: DSHContextPanelRow, _ fallback: @autoclosure () -> String) -> String? {
+        guard let override = rowDetailOverrides[row] else { return fallback() }
+        return override.isEmpty ? nil : override
     }
 
     private func count(_ n: Int, _ noun: CountUnit) -> String {
