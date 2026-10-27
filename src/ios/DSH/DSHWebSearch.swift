@@ -61,6 +61,7 @@
 //
 
 import Foundation
+import Security
 
 // MARK: - Result
 
@@ -760,13 +761,20 @@ extension DSHWebSearchEntry {
 
     /// The stored shape: flat, string-keyed, so a field added later reads back
     /// as its default instead of invalidating the whole row.
+    /// The stored shape.
+    ///
+    /// [T-websearch-keychain] `apiKey` is NOT here any more: it lives in the
+    /// Keychain (`DSHWebSearchKeychain`), because this JSON goes to UserDefaults,
+    /// which lands in the app's plist and in every iTunes/iCloud backup. Every
+    /// other credential in this app already used the Keychain; web search was the
+    /// one exception. `DSHWebSearchEntry.init?(json:)` still READS a legacy
+    /// `apiKey` so the one-time migration can move it.
     var json: [String: Any] {
         [
             "id": id,
             "enabled": enabled,
             "provider": provider.rawValue,
             "label": label,
-            "apiKey": apiKey,
             "endpoint": endpoint,
         ]
     }
@@ -790,6 +798,67 @@ extension DSHWebSearchEntry {
     }
 }
 
+// MARK: - Keychain
+
+/// The search entries' API keys.
+///
+/// [T-websearch-keychain] Modelled on `ProviderKeychainHelper` (same class of
+/// secret, same failure modes), with one service for the whole feature and the
+/// ENTRY ID as the account — an entry's key therefore survives a rename, a
+/// reorder and a provider change, and is deleted with the entry.
+///
+/// `kSecAttrAccessibleAfterFirstUnlock`: the model can call `web_search` from a
+/// background task. `synchronizable` is deliberately NOT set: a search key is
+/// device-local here, and iCloud Keychain would put it on every device that
+/// never configured it.
+enum DSHWebSearchKeychain {
+    private static let service = "com.openminis.minidsh.websearch"
+
+    private static func query(_ id: String) -> [String: Any] {
+        [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: id,
+        ]
+    }
+
+    /// Store (or replace) one entry's key. Returns whether the Keychain accepted
+    /// it — the migration needs that answer to decide if the plaintext copy may
+    /// be removed.
+    @discardableResult
+    static func save(_ key: String, for id: String) -> Bool {
+        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            delete(for: id)
+            return true
+        }
+        SecItemDelete(query(id) as CFDictionary)
+        var add = query(id)
+        add[kSecValueData as String] = Data(trimmed.utf8)
+        add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+        let status = SecItemAdd(add as CFDictionary, nil)
+        AppLogger(category: "Keychain").info(
+            "websearch write entry=\(id.prefix(8)) keyLen=\(trimmed.count) status=\(status)")
+        return status == errSecSuccess
+    }
+
+    static func key(for id: String) -> String? {
+        var read = query(id)
+        read[kSecReturnData as String] = true
+        read[kSecMatchLimit as String] = kSecMatchLimitOne
+        var item: CFTypeRef?
+        guard SecItemCopyMatching(read as CFDictionary, &item) == errSecSuccess,
+              let data = item as? Data,
+              let text = String(data: data, encoding: .utf8),
+              !text.isEmpty else { return nil }
+        return text
+    }
+
+    static func delete(for id: String) {
+        SecItemDelete(query(id) as CFDictionary)
+    }
+}
+
 // MARK: - Configuration
 
 /// The stored settings, read live.
@@ -805,6 +874,10 @@ enum DSHWebSearchConfig {
         /// One key, so a reorder is one atomic write and no entry can be left
         /// half-saved against another.
         static let entries = "minis.webSearch.entries"
+        /// Ids the Keychain may hold a key for. Only ids — never a secret — so
+        /// this key is safe in the plist, and it is how a deleted entry's Keychain
+        /// item is found and removed.
+        static let knownEntryIds = "minis.webSearch.knownEntryIds"
     }
 
     /// The pre-queue shape. Read by `migrate()` and deleted by it; nothing else
@@ -840,7 +913,9 @@ enum DSHWebSearchConfig {
             // A stored list is authoritative even when it is empty: an empty
             // queue is a decision the user made, and it is reported as one
             // rather than silently refilled with a default entry.
-            return deduplicated(rows.compactMap { DSHWebSearchEntry(json: $0) })
+            var entries = deduplicated(rows.compactMap { DSHWebSearchEntry(json: $0) })
+            entries = migrateKeysToKeychain(entries)
+            return entries
         }
         return migrate()
     }
@@ -850,6 +925,58 @@ enum DSHWebSearchConfig {
     private static func deduplicated(_ entries: [DSHWebSearchEntry]) -> [DSHWebSearchEntry] {
         var seen = Set<String>()
         return entries.filter { seen.insert($0.id).inserted }
+    }
+
+    // MARK: Keychain migration
+
+    /// One-time move of the plaintext `apiKey` fields out of UserDefaults.
+    ///
+    /// [T-websearch-keychain] Rule for every row: write the Keychain FIRST, and
+    /// only remove the plaintext copy when that write succeeded. A denied write
+    /// (locked device, missing entitlement, Keychain reset) therefore leaves the
+    /// user's configuration exactly as it was — losing a search key because a
+    /// migration ran during a bad moment would be worse than the plaintext.
+    ///
+    /// The pass is gated by `migratedKey`, so it runs once per install: the flag
+    /// is only written after a pass in which every row succeeded, so a partial
+    /// migration is retried on the next launch instead of being abandoned.
+    private static let migratedKey = "minis.webSearch.keychainMigrated"
+
+    private static func migrateKeysToKeychain(_ entries: [DSHWebSearchEntry]) -> [DSHWebSearchEntry] {
+        guard !UserDefaults.standard.bool(forKey: migratedKey) else {
+            // Already migrated: the keys come from the Keychain, full stop. A row
+            // whose Keychain item vanished loses its key rather than silently
+            // resurrecting a stale plaintext one.
+            var hydrated = entries
+            for i in hydrated.indices { hydrated[i].apiKey = DSHWebSearchKeychain.key(for: hydrated[i].id) ?? "" }
+            return hydrated
+        }
+        var updated = entries
+        var allSucceeded = true
+        for i in updated.indices where !updated[i].apiKey.isEmpty {
+            if DSHWebSearchKeychain.save(updated[i].apiKey, for: updated[i].id) {
+                // Stored: the plaintext copy in the queue may now be dropped.
+                AppLogger(category: "Keychain").info(
+                    "websearch migrated entry=\(updated[i].id.prefix(8)) keyLen=\(updated[i].apiKey.count)")
+            } else {
+                allSucceeded = false
+                AppLogger(category: "Keychain").warning(
+                    "websearch migrate DEFERRED entry=\(updated[i].id.prefix(8)) — keychain refused, plaintext kept")
+            }
+        }
+        // Rewrite the queue WITHOUT the keys (also drops legacy plaintext fields
+        // from rows whose key was already empty).
+        if allSucceeded {
+            _ = setEntries(updated)
+            UserDefaults.standard.set(true, forKey: migratedKey)
+        }
+        // Hydrate from the Keychain so callers see the same value either way.
+        for i in updated.indices {
+            if let stored = DSHWebSearchKeychain.key(for: updated[i].id), !stored.isEmpty {
+                updated[i].apiKey = stored
+            }
+        }
+        return updated
     }
 
     // MARK: Writing
@@ -869,6 +996,18 @@ enum DSHWebSearchConfig {
             assertionFailure("web_search queue could not be encoded; the edit is lost")
             return false
         }
+        // [T-websearch-keychain] The queue JSON never carries a key; the Keychain
+        // is written here so an edit (new key, cleared key, deleted entry) is one
+        // save path, not two. Deletion is explicit: an entry removed from the
+        // queue must not leave its key behind.
+        let keptIds = Set(entries.map(\.id))
+        for entry in entries {
+            _ = DSHWebSearchKeychain.save(entry.apiKey, for: entry.id)
+        }
+        for stale in UserDefaults.standard.stringArray(forKey: Key.knownEntryIds) ?? [] where !keptIds.contains(stale) {
+            DSHWebSearchKeychain.delete(for: stale)
+        }
+        UserDefaults.standard.set(Array(keptIds), forKey: Key.knownEntryIds)
         UserDefaults.standard.set(text, forKey: Key.entries)
         return true
     }
@@ -876,8 +1015,10 @@ enum DSHWebSearchConfig {
     /// Back to the shipped default, which is an empty queue: there is no search
     /// key the app could restore, so "the default" is "nothing configured".
     static func resetToDefaults() {
+        // Empty queue first, so `setEntries` deletes every known Keychain item.
         setEntries([])
         clearLegacyKeys()
+        UserDefaults.standard.set(true, forKey: migratedKey)
     }
 
     // MARK: Migration
