@@ -320,7 +320,7 @@ final class DSHRemoteStore: ObservableObject {
                 connectionState = .unavailable(error.message)
             }
         } catch {
-            NSLog("[DSH] connect failed: \(error)")
+            NSLog("[DSH] connect failed: \(((error as NSError).domain)):\(((error as NSError).code))")
             status = .failed(error.localizedDescription)
             errorText = error.localizedDescription
             disconnectReason = error.localizedDescription
@@ -465,7 +465,7 @@ final class DSHRemoteStore: ObservableObject {
                     self.markNeedsRepair(error.message)
                 } catch {
                     // A network blip while idle says nothing about the pairing.
-                    NSLog("[DSH] idle probe failed (ignored): \(error.localizedDescription)")
+                    NSLog("[DSH] idle probe failed (ignored): \(((error as NSError).domain)):\(((error as NSError).code))")
                 }
             }
         }
@@ -699,8 +699,11 @@ final class DSHRemoteStore: ObservableObject {
         }
         let age = Int(Date().timeIntervalSince(cached.savedAt))
         NSLog("[DSH] cache hit sid=\(slot.sessionId.prefix(12)) records=\(cached.records.count) age=\(age)s cursor=\(cached.cursor)")
-        streamCursors[slot.sessionId] = max(streamCursors[slot.sessionId] ?? 0, cached.cursor)
         recordMirror[slot.sessionId] = cached.records
+        recordMirrorSeqs[slot.sessionId] = Set(cached.records.compactMap { $0.seq })
+        // The cached page IS the baseline for this Session: both cursors move to it
+        // together (it is a reset, not an increment).
+        alignCursors(sessionId: slot.sessionId, cursor: cached.cursor, reset: true)
         slot.onFrame(.snapshot(cursor: cached.cursor, records: cached.records, hasMore: false,
                                running: false, title: nil, contextPressure: nil, tokenUsage: nil))
     }
@@ -913,14 +916,13 @@ final class DSHRemoteStore: ObservableObject {
             if pressure != nil || usage != nil {
                 mergeLiveContext(sessionId: slot.sessionId, pressure: pressure, usage: usage)
             }
-            if cursor > 0 {
-                // A snapshot is the Session's CURRENT state, so its cursor REPLACES
-                // the stored one. Taking `max` made a host that renumbered after a
-                // reset unrecoverable: the client kept asking `after=<old, larger
-                // seq>`, the host could never satisfy it, and every reconnect
-                // re-sent the whole page.
-                streamCursors[slot.sessionId] = cursor
-            }
+            // A snapshot is the Session's CURRENT state, so its cursor REPLACES the
+            // stored one. Taking `max` made a host that renumbered after a reset
+            // unrecoverable: the client kept asking `after=<old, larger seq>`, the
+            // host could never satisfy it, and every reconnect re-sent the page.
+            //
+            // `mirrorFrame` below aligns the mirror cursor to the same value; both
+            // go through `alignCursors` so they can never disagree.
             errorText = nil
         }
         // Keep the on-disk copy in step with what the writer has been given: a
@@ -953,7 +955,9 @@ final class DSHRemoteStore: ObservableObject {
         lastFrameAt = now
         markHealthy()
         guard cursor > 0 else { return }
-        streamCursors[slot.sessionId] = max(streamCursors[slot.sessionId] ?? 0, cursor)
+        // Heartbeats and `resumed` records both arrive through here: forward only,
+        // and the mirror cursor moves with it.
+        alignCursors(sessionId: slot.sessionId, cursor: cursor, reset: false)
     }
 
     /// A stream ended. Reconnect with exponential backoff (0.5 s → 5 s) unless
@@ -1084,28 +1088,58 @@ final class DSHRemoteStore: ObservableObject {
     /// cost O(n²) on the MAIN ACTOR — the input field stutters exactly when the
     /// transcript is longest. A set makes it O(1).
     private var recordMirrorSeqs: [String: Set<Double>] = [:]
+    /// The cursor the MIRROR corresponds to (`after=` for the next session open).
+    ///
+    /// It has to be the same number as `streamCursors[sessionId]` at all times.
+    /// When they drifted, a `reset` left the mirror on the old, larger seq: the next
+    /// open asked `after=<old>` and the host — which had renumbered — answered with
+    /// nothing for a range of messages. On device that looked like "sometimes a few
+    /// messages in the middle never arrive".
+    ///
+    /// `alignCursors` is the ONLY writer of either dictionary.
+    private var recordMirrorCursor: [String: Int] = [:]
     /// Session → pending save task (2 s throttle, one per Session).
     private var cacheSaveTasks: [String: Task<Void, Never>] = [:]
     /// Records are cheap to hold but pointless to write on every frame.
     private static let cacheSaveDelay: TimeInterval = 2
 
+    /// Move BOTH cursors in one place.
+    ///
+    /// - `reset` (a full snapshot): the frame's cursor is the new baseline, even when
+    ///   it is SMALLER than what we had — the host renumbered, and keeping the old
+    ///   value is what made `after=` unsatisfiable.
+    /// - `increment` (live events / `resumed` records): the cursor only moves
+    ///   forward, so a late out-of-order delivery cannot rewind it.
+    /// - Idempotent: applying the same value twice is two assignments, no side
+    ///   effect beyond the state it already had.
+    private func alignCursors(sessionId: String, cursor: Int, reset: Bool) {
+        let value = max(cursor, 0)
+        let current = streamCursors[sessionId] ?? 0
+        let next = reset ? value : max(current, value)
+        guard next != current || recordMirrorCursor[sessionId] != next else { return }
+        streamCursors[sessionId] = next
+        recordMirrorCursor[sessionId] = next
+        NSLog("[DSH] cursor aligned sid=\(sessionId.prefix(12)) value=\(next) reset=\(reset)")
+    }
+
     private func mirrorFrame(_ frame: DSHRemoteStreamFrame, sessionId: String) {
         switch frame {
-        case .snapshot(_, let records, _, _, _, _, _):
+        case .snapshot(let cursor, let records, _, _, _, _, _):
             // A snapshot is a REPLACE: the mirror must not keep a single record the
-            // page no longer shows, or the next open resurrects them.
+            // page no longer shows, or the next open resurrects them. Its cursor is
+            // the new baseline, and the stream cursor follows it.
             recordMirror[sessionId] = records
             recordMirrorSeqs[sessionId] = Set(records.compactMap { $0.seq })
+            alignCursors(sessionId: sessionId, cursor: cursor, reset: true)
             scheduleCacheSave(sessionId: sessionId)
         case .event(let seq, let event):
-            // Dedupe by seq: a resumed stream and a live event can carry the same
-            // record, and a duplicated record would be applied twice on the next
-            // open.
+            let sequence = Double(seq)
             var seqs = recordMirrorSeqs[sessionId] ?? []
-            guard !seqs.contains(Double(seq)) else { return }
-            seqs.insert(Double(seq))
+            guard !seqs.contains(sequence) else { return }
+            seqs.insert(sequence)
             recordMirrorSeqs[sessionId] = seqs
-            recordMirror[sessionId, default: []].append(DSHHistoryRecord(seq: Double(seq), event: event))
+            recordMirror[sessionId, default: []].append(DSHHistoryRecord(seq: sequence, event: event))
+            alignCursors(sessionId: sessionId, cursor: seq, reset: false)
             scheduleCacheSave(sessionId: sessionId)
         case .delta, .deltaEnd:
             break
@@ -1129,7 +1163,7 @@ final class DSHRemoteStore: ObservableObject {
             // "everything after this point", so a page with a hole in the middle
             // would come back as a transcript with a piece missing for ever.
             let tail = DSHRemoteTranscriptCache.contiguousTail(records)
-            guard let last = tail.last?.seq.map(Int.init) ?? self.streamCursors[sessionId], last > 0 else { return }
+            guard let last = tail.last?.seq.map(Int.init) ?? self.recordMirrorCursor[sessionId], last > 0 else { return }
             // `records`/`tail` are values, so handing them to a detached task is
             // safe; nothing but the return value comes back.
             let total = records.count

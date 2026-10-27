@@ -465,8 +465,27 @@ final class DSHRemoteTranscriptWriter: ObservableObject {
         // Reuse the SAME object: the bubble does not blink, and an error stamped
         // on it by a failed send survives its eventual echo.
         rowChat[key] = pending.chat
-        pending.chat.content = text
-        pending.chat.error = nil
+        // Only write when the value really changes.
+        //
+        // The echo usually carries the text the optimistic row already shows, and an
+        // unconditional assignment was an in-place write to a `@Published` property:
+        // the reference stayed the same, so a diffable list that compares identities
+        // had nothing to reconfigure and the OLD text stayed on screen. Writing only
+        // on a real change keeps the row's identity stable while still telling
+        // observers (and the publisher below) that there is something to redraw.
+        var changed = false
+        if pending.chat.content != text {
+            pending.chat.content = text
+            changed = true
+        }
+        if pending.chat.error != nil {
+            pending.chat.error = nil
+            changed = true
+        }
+        if changed {
+            NSLog("[DSH] optimistic user promoted key=\(key) len=\(text.count)")
+            vm.publishUnlessTransitioning()
+        }
     }
 
     // MARK: - Rendering

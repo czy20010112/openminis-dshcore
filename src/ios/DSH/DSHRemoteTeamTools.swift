@@ -75,7 +75,7 @@ enum DSHRemoteTeamTools {
         } catch {
             // A transport failure says nothing about the host's capabilities: keep
             // the last known answer instead of flipping the tools off on a hiccup.
-            NSLog("[DSH] team availability probe failed: \(error.localizedDescription)")
+            NSLog("[DSH] team availability probe failed: \(((error as NSError).domain)):\(((error as NSError).code))")
         }
         return cached
     }
@@ -211,7 +211,7 @@ enum DSHRemoteTeamTools {
                 return (false, "Error: \(describe(error))")
             } catch {
                 // A transient read failure is not an answer: keep polling.
-                NSLog("[DSH] team output poll failed: \(error.localizedDescription)")
+                NSLog("[DSH] team output poll failed: \(((error as NSError).domain)):\(((error as NSError).code))")
             }
 
             if Date() >= deadline {

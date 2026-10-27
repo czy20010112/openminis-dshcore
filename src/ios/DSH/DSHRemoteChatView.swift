@@ -228,7 +228,7 @@ final class DSHRemoteChatAdapter: ObservableObject {
             guard loadedSessionId == sessionId else { return }
             summary = next
         } catch {
-            NSLog("[DSH] summary fetch failed sid=\(sessionId.prefix(8)) err=\(error.localizedDescription)")
+            NSLog("[DSH] summary fetch failed sid=\(sessionId.prefix(8)) err=\(((error as NSError).domain)):\(((error as NSError).code))")
         }
     }
     /// Opens the Session's live stream. The store owns the socket, the cursor and
