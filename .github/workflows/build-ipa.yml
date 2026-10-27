@@ -1,0 +1,558 @@
+name: Build IPA
+
+# Two build lines, one pipeline:
+#
+#   ios15  — zhaoxiufei/OpenMinis base (app deployment target 15.0, Swift 5) with
+#            the DSH agent core. Runs on macos-14 / Xcode 16. This is the line
+#            that installs on the iPhone 13 / iOS 15.3.1 test device.
+#   ios26  — OpenMinis/OpenMinis main (v1.14, app deployment target 16.0) with the
+#            same DSH agent core. Runs on macos-26, which is the only GitHub
+#            runner image that carries an iOS 26 SDK.
+#
+# Both lines branch on AIChatViewModel.useDSHAgentLoop, so the original loop stays
+# reachable for A/B comparison on either line.
+#
+# The ios26 job always checks out the `ios26` branch, whatever ref triggered the
+# run: this file is the single definition of the pipeline, and it lives on main.
+# For the same reason the helper scripts below are written out at run time rather
+# than committed, so there is nothing to keep in sync across the two branches.
+
+on:
+  push:
+    branches:
+      - main
+      - ios15
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      build_ios15:
+        description: 'Build the iOS 15 line'
+        required: false
+        type: boolean
+        default: true
+      build_ios26:
+        description: 'Build the iOS 26 line'
+        required: false
+        type: boolean
+        default: true
+      create_release:
+        description: 'Publish the IPAs to a GitHub Release'
+        required: false
+        type: boolean
+        default: true
+      compaction_probe:
+        description: 'TEST BUILD: lower the compaction thresholds (DSH_COMPACTION_PROBE). Never published — the probe makes the agent compact far more eagerly than it should.'
+        required: false
+        type: boolean
+        default: false
+      spill_probe:
+        description: 'TEST BUILD: force the tool-result spill on at a low budget (DSH_SPILL_PROBE), so a device log carries a real [DSHSpill] line. Never published — the probe overrides the stored setting.'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+# A newer push supersedes an in-flight build of the same ref, except for tags,
+# where every release matters.
+concurrency:
+  group: build-ipa-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # iOS 15 line
+  # ---------------------------------------------------------------------------
+  build-ios15:
+    name: iOS 15 line (macos-14 / Xcode 16)
+    runs-on: macos-14
+    timeout-minutes: 150
+    if: github.event_name != 'workflow_dispatch' || inputs.build_ios15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Resolve probe suffix
+        run: |
+          if [ "${{ inputs.compaction_probe }}" = "true" ] || [ "${{ inputs.spill_probe }}" = "true" ]; then
+            echo "PROBE_SUFFIX=-probe" >> $GITHUB_ENV
+            echo "::warning::probe build — this IPA is not publishable"
+          else
+            echo "PROBE_SUFFIX=" >> $GITHUB_ENV
+          fi
+
+      - name: Select Xcode
+        run: |
+          echo "Available Xcode versions:"
+          ls -d /Applications/Xcode* || true
+          # objectVersion 70 needs Xcode 16+. Prefer the newest available.
+          if [ -d "/Applications/Xcode_16.4.app" ]; then
+            sudo xcode-select -s /Applications/Xcode_16.4.app
+          elif [ -d "/Applications/Xcode_16.2.app" ]; then
+            sudo xcode-select -s /Applications/Xcode_16.2.app
+          elif [ -d "/Applications/Xcode_16.1.app" ]; then
+            sudo xcode-select -s /Applications/Xcode_16.1.app
+          elif [ -d "/Applications/Xcode_16.0.app" ]; then
+            sudo xcode-select -s /Applications/Xcode_16.0.app
+          elif [ -d "/Applications/Xcode_15.4.app" ]; then
+            sudo xcode-select -s /Applications/Xcode_15.4.app
+          fi
+          xcodebuild -version
+
+      - name: Install build tools
+        run: |
+          brew install ninja llvm lld libarchive pkg-config meson || pip3 install --break-system-packages meson
+          echo "/opt/homebrew/opt/llvm/bin" >> $GITHUB_PATH
+          echo "/opt/homebrew/opt/lld/bin" >> $GITHUB_PATH
+          echo "/opt/homebrew/opt/libarchive/bin" >> $GITHUB_PATH
+          echo "PKG_CONFIG_PATH=/opt/homebrew/opt/libarchive/lib/pkgconfig" >> $GITHUB_ENV
+          if [ -d "/opt/homebrew/opt/lld/bin" ] && [ -d "/opt/homebrew/opt/llvm/bin" ]; then
+            sudo ln -sf /opt/homebrew/opt/lld/bin/* /opt/homebrew/opt/llvm/bin/ || true
+          fi
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: false
+
+      - name: Restore native dependencies cache
+        id: cache-deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps/lame-build
+            deps/frameworks
+            deps/libs
+            deps/include
+            deps/resources
+          key: native-deps-ios15-${{ runner.os }}-${{ hashFiles('deps/build_*.sh', 'deps/prepare_*.sh', '.gitmodules') }}
+
+      - name: Build native dependencies
+        if: steps.cache-deps.outputs.cache-hit != 'true'
+        run: |
+          chmod +x deps/*.sh
+          echo "==> Building LAME..."
+          ./deps/build_lame.sh
+          echo "==> Building FFmpeg..."
+          ./deps/build_ffmpeg.sh
+          echo "==> Building iSH..."
+          ./deps/build_ish.sh
+          echo "==> Preparing Alpine rootfs..."
+          ./deps/prepare_alpine_rootfs.sh
+          echo "==> Building rclone..."
+          ./deps/build_rclone_ios.sh
+
+      - name: Prepare configuration templates
+        run: |
+          cp -n src/ios/Configs/ProviderCustomization.xcconfig.example src/ios/Configs/ProviderCustomization.xcconfig || true
+
+      - name: Verify the DSH agent module is present and wired in
+        run: bash .github/scripts/check-dsh-module.sh
+
+      - name: Build iOS App (Release)
+        env:
+          DSH_PROBE: ${{ inputs.compaction_probe }}
+          DSH_SPILL_PROBE: ${{ inputs.spill_probe }}
+        run: |
+          # Compilation conditions, not runtime flags: the app registers its own
+          # defaults at launch and rewrites the plist, so a key written from
+          # outside is discarded. Off unless explicitly asked for, and a probe
+          # build is renamed and never published.
+          #
+          # Both conditions ride in ONE setting: a second
+          # SWIFT_ACTIVE_COMPILATION_CONDITIONS would replace the first instead of
+          # adding to it, so the list is assembled before it is passed.
+          PROBE_CONDS=""
+          if [ "$DSH_PROBE" = "true" ]; then
+            PROBE_CONDS="$PROBE_CONDS DSH_COMPACTION_PROBE"
+            echo "::warning::compaction probe ON — this build is for testing only"
+          fi
+          if [ "$DSH_SPILL_PROBE" = "true" ]; then
+            PROBE_CONDS="$PROBE_CONDS DSH_SPILL_PROBE"
+            echo "::warning::spill probe ON — this build is for testing only"
+          fi
+          EXTRA=()
+          if [ -n "$PROBE_CONDS" ]; then
+            EXTRA+=("SWIFT_ACTIVE_COMPILATION_CONDITIONS=\$(inherited)$PROBE_CONDS")
+          fi
+          xcodebuild -project src/ios/Minis.xcodeproj \
+            -scheme Minis \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CURRENT_PROJECT_VERSION="${GITHUB_RUN_NUMBER}" \
+            "${EXTRA[@]}" \
+            build
+
+      - name: Package IPA
+        run: |
+          APP_DIR=$(find build/Build/Products/Release-iphoneos -name "Minis.app" -type d | head -n 1)
+          if [ -z "$APP_DIR" ]; then
+            echo "Error: Minis.app not found under build/Build/Products/Release-iphoneos"
+            find build -name "*.app" -type d || true
+            exit 1
+          fi
+          echo "Found app bundle at: $APP_DIR"
+          mkdir -p Payload
+          cp -R "$APP_DIR" Payload/
+
+          # Core iOS 15 build: omit the optional extensions. The iOS 15 backport
+          # dropped the FileProvider target entirely, and the main app's
+          # chat/agent/shell features need neither of the remaining two.
+          rm -rf "Payload/Minis.app/PlugIns/AgentWidgetExtension.appex" \
+                 "Payload/Minis.app/PlugIns/MinisShare.appex"
+
+          bash .github/scripts/adhoc-sign.sh "Payload/Minis.app" src/ios
+
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          OUT="MinisDSH-ios15${PROBE_SUFFIX}-unsigned.ipa"
+          zip -q -r9 "$OUT" Payload
+          ls -lh "$OUT"
+
+      - name: Build report
+        run: |
+          {
+            echo "line=ios15"
+            echo "base=zhaoxiufei/OpenMinis"
+            echo "xcode=$(xcodebuild -version | head -n 1)"
+            echo "sha=$(git rev-parse --short HEAD)"
+            echo "ipa=$(stat -f%z MinisDSH-ios15${PROBE_SUFFIX}-unsigned.ipa) bytes"
+          } | tee build-report-ios15.txt
+
+      - name: Upload IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MinisDSH-ios15-ipa
+          path: |
+            MinisDSH-ios15*-unsigned.ipa
+            build-report-ios15.txt
+          retention-days: 30
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # iOS 26 line (upstream OpenMinis/OpenMinis v1.14 + the same DSH core)
+  # ---------------------------------------------------------------------------
+  build-ios26:
+    name: iOS 26 line (macos-26 / Xcode 26)
+    runs-on: macos-26
+    timeout-minutes: 180
+    if: github.event_name != 'workflow_dispatch' || inputs.build_ios26
+
+    steps:
+      - name: Check that the ios26 branch exists
+        id: probe
+        run: |
+          if git ls-remote --exit-code --heads \
+               "https://github.com/${{ github.repository }}.git" ios26 >/dev/null 2>&1; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "::notice::branch 'ios26' does not exist yet — skipping this job"
+          fi
+
+      - name: Checkout the ios26 branch
+        if: steps.probe.outputs.exists == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ios26
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Resolve probe suffix
+        if: steps.probe.outputs.exists == 'true'
+        run: |
+          if [ "${{ inputs.compaction_probe }}" = "true" ] || [ "${{ inputs.spill_probe }}" = "true" ]; then
+            echo "PROBE_SUFFIX=-probe" >> $GITHUB_ENV
+            echo "::warning::probe build — this IPA is not publishable"
+          else
+            echo "PROBE_SUFFIX=" >> $GITHUB_ENV
+          fi
+
+      - name: Take the pipeline helpers from main
+        if: steps.probe.outputs.exists == 'true'
+        run: |
+          # The helpers live once, on main, next to this workflow. This job has
+          # checked out a different tree, so copy them across explicitly rather
+          # than keeping a second copy in sync on the ios26 branch.
+          mkdir -p "$RUNNER_TEMP/ci"
+          git fetch --no-tags --depth=1 origin main
+          git show origin/main:.github/scripts/check-dsh-module.sh > "$RUNNER_TEMP/ci/check-dsh-module.sh"
+          git show origin/main:.github/scripts/adhoc-sign.sh       > "$RUNNER_TEMP/ci/adhoc-sign.sh"
+          chmod +x "$RUNNER_TEMP/ci/"*.sh
+          echo "CI_HELPERS=$RUNNER_TEMP/ci" >> $GITHUB_ENV
+
+      - name: Select Xcode 26
+        if: steps.probe.outputs.exists == 'true'
+        run: |
+          echo "Available Xcode versions:"
+          ls -d /Applications/Xcode* || true
+          # The project declares IPHONEOS_DEPLOYMENT_TARGET = 26.2 on its test
+          # bundles, so the SDK must be at least 26.2. Take the newest 26.x on
+          # the image; macos-26 ships 26.0.1 through 26.6.
+          PICK=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -n 1 || true)
+          if [ -n "$PICK" ]; then
+            echo "Selecting $PICK"
+            sudo xcode-select -s "$PICK"
+          else
+            echo "::error::no Xcode 26 on this runner image"
+            exit 1
+          fi
+          xcodebuild -version
+          echo "--- installed SDKs ---"
+          xcodebuild -showsdks | grep -i -E 'ios|iphoneos' || true
+
+      - name: Install the Metal toolchain
+        if: steps.probe.outputs.exists == 'true'
+        run: |
+          # FFmpeg's configure probes for the metal compiler and, when it is
+          # missing, silently drops the Metal-backed yadif_videotoolbox
+          # deinterlace filter. Xcode 26 ships Metal as a separate component.
+          xcodebuild -downloadComponent MetalToolchain || true
+          xcrun -sdk iphoneos metal --version \
+            || echo "::warning::Metal toolchain unavailable — FFmpeg will build without yadif_videotoolbox"
+
+      - name: Install build tools
+        if: steps.probe.outputs.exists == 'true'
+        run: |
+          brew install ninja llvm lld libarchive pkg-config meson || pip3 install --break-system-packages meson
+          echo "/opt/homebrew/opt/llvm/bin" >> $GITHUB_PATH
+          echo "/opt/homebrew/opt/lld/bin" >> $GITHUB_PATH
+          echo "/opt/homebrew/opt/libarchive/bin" >> $GITHUB_PATH
+          echo "PKG_CONFIG_PATH=/opt/homebrew/opt/libarchive/lib/pkgconfig" >> $GITHUB_ENV
+          if [ -d "/opt/homebrew/opt/lld/bin" ] && [ -d "/opt/homebrew/opt/llvm/bin" ]; then
+            sudo ln -sf /opt/homebrew/opt/lld/bin/* /opt/homebrew/opt/llvm/bin/ || true
+          fi
+
+      - name: Setup Go
+        if: steps.probe.outputs.exists == 'true'
+        uses: actions/setup-go@v5
+        with:
+          # BUILDING.md on the iOS 26 line requires Go 1.25+ for the rclone
+          # XCFramework.
+          go-version: '1.25'
+          cache: false
+
+      - name: Restore native dependencies cache
+        id: cache-deps
+        if: steps.probe.outputs.exists == 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps/lame-build
+            deps/frameworks
+            deps/libs
+            deps/include
+            deps/resources
+          # Separate namespace from the iOS 15 line: deps/build_ish.sh and
+          # deps/build_rclone_ios.sh differ between the two branches.
+          key: native-deps-ios26-${{ runner.os }}-${{ hashFiles('deps/build_*.sh', 'deps/prepare_*.sh', '.gitmodules') }}
+
+      - name: Build native dependencies
+        if: steps.probe.outputs.exists == 'true' && steps.cache-deps.outputs.cache-hit != 'true'
+        run: |
+          chmod +x deps/*.sh
+          # Order matters: FFmpeg links LAME, so LAME must exist first or MP3
+          # encoding is silently dropped.
+          echo "==> Building LAME..."
+          ./deps/build_lame.sh
+          echo "==> Building FFmpeg..."
+          ./deps/build_ffmpeg.sh
+          echo "==> Building iSH..."
+          ./deps/build_ish.sh
+          echo "==> Preparing Alpine rootfs..."
+          ./deps/prepare_alpine_rootfs.sh
+          echo "==> Building rclone..."
+          ./deps/build_rclone_ios.sh
+
+      - name: Prepare configuration templates
+        if: steps.probe.outputs.exists == 'true'
+        run: |
+          cp -n src/ios/Configs/ProviderCustomization.xcconfig.example src/ios/Configs/ProviderCustomization.xcconfig || true
+
+      - name: Verify the DSH agent module is present and wired in
+        if: steps.probe.outputs.exists == 'true'
+        run: bash "$CI_HELPERS/check-dsh-module.sh"
+
+      - name: Show resolved build settings
+        if: steps.probe.outputs.exists == 'true'
+        run: |
+          xcodebuild -project src/ios/Minis.xcodeproj -scheme Minis -configuration Release \
+            -showBuildSettings 2>/dev/null \
+            | grep -E 'IPHONEOS_DEPLOYMENT_TARGET|SWIFT_VERSION|SDKROOT|PRODUCT_NAME' | sort -u
+
+      - name: Build iOS App (Release)
+        if: steps.probe.outputs.exists == 'true'
+        env:
+          DSH_PROBE: ${{ inputs.compaction_probe }}
+          DSH_SPILL_PROBE: ${{ inputs.spill_probe }}
+        run: |
+          PROBE_CONDS=""
+          if [ "$DSH_PROBE" = "true" ]; then
+            PROBE_CONDS="$PROBE_CONDS DSH_COMPACTION_PROBE"
+            echo "::warning::compaction probe ON — this build is for testing only"
+          fi
+          if [ "$DSH_SPILL_PROBE" = "true" ]; then
+            PROBE_CONDS="$PROBE_CONDS DSH_SPILL_PROBE"
+            echo "::warning::spill probe ON — this build is for testing only"
+          fi
+          EXTRA=()
+          if [ -n "$PROBE_CONDS" ]; then
+            EXTRA+=("SWIFT_ACTIVE_COMPILATION_CONDITIONS=\$(inherited)$PROBE_CONDS")
+          fi
+          xcodebuild -project src/ios/Minis.xcodeproj \
+            -scheme Minis \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CURRENT_PROJECT_VERSION="${GITHUB_RUN_NUMBER}" \
+            "${EXTRA[@]}" \
+            build
+
+      - name: Package IPA
+        if: steps.probe.outputs.exists == 'true'
+        run: |
+          APP_DIR=$(find build/Build/Products/Release-iphoneos -name "Minis.app" -type d | head -n 1)
+          if [ -z "$APP_DIR" ]; then
+            echo "Error: Minis.app not found under build/Build/Products/Release-iphoneos"
+            find build -name "*.app" -type d || true
+            exit 1
+          fi
+          echo "Found app bundle at: $APP_DIR"
+          mkdir -p Payload
+          cp -R "$APP_DIR" Payload/
+          echo "--- embedded plug-ins ---"
+          ls -la "Payload/Minis.app/PlugIns" || echo "(no PlugIns directory)"
+
+          # The iOS 26 line is the full upstream app, so the extensions stay in
+          # and get signed with their own entitlements.
+          bash "$CI_HELPERS/adhoc-sign.sh" "Payload/Minis.app" src/ios
+
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          OUT="MinisDSH-ios26${PROBE_SUFFIX}-unsigned.ipa"
+          zip -q -r9 "$OUT" Payload
+          ls -lh "$OUT"
+
+      - name: Build report
+        if: steps.probe.outputs.exists == 'true'
+        run: |
+          {
+            echo "line=ios26"
+            echo "base=OpenMinis/OpenMinis"
+            echo "xcode=$(xcodebuild -version | head -n 1)"
+            echo "sha=$(git rev-parse --short HEAD)"
+            echo "ipa=$(stat -f%z MinisDSH-ios26${PROBE_SUFFIX}-unsigned.ipa) bytes"
+          } | tee build-report-ios26.txt
+
+      - name: Upload IPA Artifact
+        if: steps.probe.outputs.exists == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: MinisDSH-ios26-ipa
+          path: |
+            MinisDSH-ios26*-unsigned.ipa
+            build-report-ios26.txt
+          retention-days: 30
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # Publish
+  # ---------------------------------------------------------------------------
+  publish:
+    name: Publish to GitHub Release
+    needs: [build-ios15, build-ios26]
+    runs-on: ubuntu-latest
+    if: always() && !cancelled() && (needs.build-ios15.result == 'success' || needs.build-ios26.result == 'success') && (github.event_name != 'workflow_dispatch' || (inputs.create_release && !inputs.compaction_probe && !inputs.spill_probe))
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download built IPAs
+        uses: actions/download-artifact@v4
+        with:
+          pattern: MinisDSH-*-ipa
+          merge-multiple: true
+          path: release
+
+      - name: Show what will be published
+        run: ls -lhR release
+
+      - name: Resolve release coordinates
+        id: rel
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            echo "tag=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
+            echo "title=Minis DSH ${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
+          else
+            # One release per build, tagged with the run number.
+            #
+            # This used to be a single rolling `latest-main` release. That
+            # accumulated every IPA it had ever been handed: two assets per build,
+            # and after the artifact rename both the old and new names were still
+            # attached, so the download list grew without bound and the newest
+            # build was impossible to identify by eye. A new tag per run makes
+            # each build a fixed, self-contained download.
+            STAMP="$(date -u +%Y%m%d-%H%M)"
+            echo "tag=build-${GITHUB_RUN_NUMBER}" >> $GITHUB_OUTPUT
+            echo "title=Minis DSH build ${GITHUB_RUN_NUMBER} (${STAMP}Z)" >> $GITHUB_OUTPUT
+          fi
+          echo "make_latest=true" >> $GITHUB_OUTPUT
+
+      - name: Collect commit ids
+        id: ids
+        run: |
+          git fetch --no-tags --depth=1 origin main 2>/dev/null || true
+          git fetch --no-tags --depth=1 origin ios26 2>/dev/null || true
+          echo "main=$(git rev-parse --short origin/main 2>/dev/null || echo n/a)" >> $GITHUB_OUTPUT
+          echo "ios26=$(git rev-parse --short origin/ios26 2>/dev/null || echo n/a)" >> $GITHUB_OUTPUT
+
+      - name: Create or update the Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*.ipa
+          tag_name: ${{ steps.rel.outputs.tag }}
+          name: ${{ steps.rel.outputs.title }}
+          make_latest: ${{ steps.rel.outputs.make_latest }}
+          draft: false
+          body: |
+            Minis with the DSH agent core. Two lines, one pipeline.
+
+            ## Downloads
+
+            | Line | Runs on | IPA |
+            |---|---|---|
+            | iOS 15 (device baseline) | iOS 15.0+ arm64 | `MinisDSH-ios15-unsigned.ipa` |
+            | iOS 26 (upstream v1.14 line) | iOS 16.0+ arm64 | `MinisDSH-ios26-unsigned.ipa` |
+
+            Both are **unsigned**. Install with `ios-mcp` (`POST /upload_file`, then
+            `install_app`) on a jailbroken device with AppSync Unified, or with
+            TrollStore / Sideloadly.
+
+            ## Revisions
+
+            - `main` (iOS 15 line): `${{ steps.ids.outputs.main }}`
+            - `ios26` (upstream v1.14 + DSH): `${{ steps.ids.outputs.ios26 }}`
+
+            ## What the DSH port replaces
+
+            Prompt assembly, the tool registry and schemas, tool scheduling, the loop
+            guard, conversation identity and compaction now come from `src/ios/DSH`.
+            Streaming, persistence, image budgeting, group fallback, TTS, the UI and
+            every tool handler stay where they were. The original loop is one flag
+            away: `AIChatViewModel.useDSHAgentLoop` (`minis.useDSHAgentLoop`,
+            default `true`).
