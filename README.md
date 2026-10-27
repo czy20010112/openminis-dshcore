@@ -122,6 +122,27 @@ Probe artefacts carry a `-probe` suffix and the publish job refuses them.
   decision, not implemented).
 - `waitForAny` drains a tool batch rather than waking on the first completion; the latency is real and
   documented in the code.
+- **An occasional overlap in local conversations is unverified, not fixed.** Two overlap defects were
+  closed by measurement (a bubble painting over the body after a send, and misalignment after
+  collapsing a thinking block). The third — reported as occasional, in ordinary local chats — is a
+  static-state defect, and a probe that samples after a transition cannot see one: a cell's height
+  comes from the layout attribute it was handed, so the two numbers agree exactly when both are
+  wrong. A resting-state instrument exists and, across four trigger edges (scroll,
+  background/foreground, session switch, idle) found no clipping and no unresolved mismatch. To
+  reproduce it you need a long conversation containing single-line truncated tool rows, scrolled
+  until one is visible; a screen of wrapped rows held still produces nothing.
+- **Switching a model from the phone also changes the paired computer's default model**, and can
+  drop that profile's thinking effort. That is the host's own semantics — it exposes no
+  session-only entry point — so the app states the consequence rather than pretending otherwise.
+- **"Five minutes with no stream activity after a pairing is revoked" is not yet verified.** Device
+  logs cannot settle it: the panel sleeps, iOS suspends the app, and a suspended app logs exactly
+  like a correctly dead client. The observation belongs on the host, which sees every request and
+  whose clock ignores a sleeping phone; that check is written but needs a host restart to run.
+- **Keyboard navigation on iOS 15/16 is verified only in parts.** The wiring is covered by tests
+  (both arrows registered, both taking priority, both falling back to cursor movement, both
+  declining when no menu is open), and `↓` / `Return` / dismiss were confirmed on a device. Whether
+  iOS 15/16 actually delivers the up-arrow key event cannot be tested without a matching simulator
+  runtime.
 
 ## Upstream and licence
 
