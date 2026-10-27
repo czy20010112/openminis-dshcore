@@ -116,7 +116,7 @@ final class DSHRemoteTranscriptWriter: ObservableObject {
     /// One frame from `DSHRemoteStore`. The only entry point a view needs.
     func apply(_ frame: DSHRemoteStreamFrame) {
         switch frame {
-        case .snapshot(let cursor, let records, _, let running, _, _):
+        case .snapshot(let cursor, let records, _, let running, _, _, _):
             applySnapshot(cursor: cursor, records: records, running: running)
         case .event(_, let event):
             apply(event: event)

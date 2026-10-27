@@ -39,6 +39,16 @@ struct DSHHostSession: Codable, Identifiable, Equatable, Sendable {
     var isSubagent: Bool { origin == "subagent" }
 }
 
+/// Where a context-usage number came from.
+///
+/// `pressure` is the harness' own measurement of what is actually in the window;
+/// `projected` is an ESTIMATE for the next step. Showing them as the same number is
+/// dishonest — the ring is allowed to say "≈" only when it knows which one it has.
+enum DSHRemoteContextUsageSource: String, Codable, Sendable {
+    case pressure
+    case projected
+}
+
 struct DSHContextPressure: Codable, Equatable, Sendable {
     /// The harness reports pressureTokens / projectedTokens; the older
     /// surfaceTokens pair is kept as a fallback for other builds.
@@ -47,10 +57,23 @@ struct DSHContextPressure: Codable, Equatable, Sendable {
     var surfaceTokens: Double?
     var sampledSurfaceTokens: Double?
     var contextWindow: Double?
+    /// Announced by newer hosts. Absent ⇒ derived from which field was present.
+    var source: String?
 
     /// Tokens currently occupying the window.
     var usedTokens: Double? {
         projectedTokens ?? surfaceTokens ?? sampledSurfaceTokens ?? pressureTokens
+    }
+
+    /// Which of the two the number above is — so the UI can label it "≈ projected".
+    var usedSource: DSHRemoteContextUsageSource {
+        if let source, let parsed = DSHRemoteContextUsageSource(rawValue: source) { return parsed }
+        // A measured pressure always wins the label when the host is silent: if it
+        // reported one, `usedTokens` is either it or a projection of it.
+        if pressureTokens != nil, projectedTokens == nil, surfaceTokens == nil, sampledSurfaceTokens == nil {
+            return .pressure
+        }
+        return .projected
     }
 
     /// 0…1 fill of the context window, for the ring indicator.

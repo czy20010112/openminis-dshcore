@@ -53,6 +53,15 @@ final class DSHRemoteChatAdapter: ObservableObject {
     private var sessionsSubscription: AnyCancellable?
     private var runningSubscription: AnyCancellable?
     private var storeErrorSubscription: AnyCancellable?
+
+    /// The Session's goal + task list, as the computer reports them. `nil` until
+    /// the first fetch answers, and `nil` again when the page closes. A failed
+    /// poll keeps the last good document: blanking the panels because one poll
+    /// timed out is a worse lie than a second-older truth.
+    @Published private(set) var summary: DSHRemoteSessionSummary?
+
+    /// When to refetch: open, every `turn/end`, every SECOND snapshot.
+    private var summaryCadence = DSHRemoteSummaryCadence()
     /// Text blocks whose `cachedAttributedString` is current, valued by the
     /// content length that string was built from. See `refreshHeightMetadata`.
     private var renderedTextLengths: [UUID: Int] = [:]
@@ -80,7 +89,14 @@ final class DSHRemoteChatAdapter: ObservableObject {
                     // were growing are final from here on, so this is the moment
                     // their true height can be cached — and the moment the cells
                     // that were laid out on an estimate need to be told.
-                    if wasRunning, !value { self.refreshHeightMetadata(nudge: true) }
+                    if wasRunning, !value {
+                        self.refreshHeightMetadata(nudge: true)
+                        // `turn/end` is when the host writes goal/todo, so this
+                        // is the edge that matters for the panels.
+                        if let sessionId = self.loadedSessionId {
+                            Task { await self.fetchSummary(sessionId: sessionId) }
+                        }
+                    }
                 }
             }
         storeErrorSubscription = DSHRemoteStore.shared.$errorText
@@ -132,6 +148,11 @@ final class DSHRemoteChatAdapter: ObservableObject {
         // A new Session's blocks are new objects; the old ids would only keep
         // memory alive and could match a recycled id by accident.
         renderedTextLengths.removeAll(keepingCapacity: true)
+        // A new Session starts with no panels: the previous document describes
+        // another Session, and a stale goal above the composer is a lie.
+        summary = nil
+        summaryCadence.onOpen()
+        Task { await fetchSummary(sessionId: sessionId) }
         // Resolve now as well as through the subscription: the list is usually
         // already here (the user tapped a row it painted).
         apply(rows: DSHRemoteStore.shared.rows)
@@ -159,8 +180,24 @@ final class DSHRemoteChatAdapter: ObservableObject {
         closeStream()
         loadedSessionId = nil
         renderedTextLengths.removeAll(keepingCapacity: true)
+        summary = nil
     }
 
+    /// Fetch the goal/task document from the paired computer.
+    ///
+    /// A FAILED fetch keeps the previous document: the panels are a status view,
+    /// and blanking them because one poll timed out is a worse lie than showing a
+    /// second-older truth. The store owns the transport, the auth refresh and the
+    /// caching (`summaries[sessionId]`), so there is no second path here.
+    private func fetchSummary(sessionId: String) async {
+        do {
+            let next = try await DSHRemoteStore.shared.sessionSummary(sessionId: sessionId)
+            guard loadedSessionId == sessionId else { return }
+            summary = next
+        } catch {
+            NSLog("[DSH] summary fetch failed sid=\(sessionId.prefix(8)) err=\(error.localizedDescription)")
+        }
+    }
     /// Opens the Session's live stream. The store owns the socket, the cursor and
     /// the reconnect backoff; this page only receives frames — and the token it
     /// gets back is how it detaches on the way out.
@@ -184,7 +221,10 @@ final class DSHRemoteChatAdapter: ObservableObject {
         // Any frame at all proves the stream is alive.
         awaitingSnapshot = false
         switch frame {
-        case .snapshot(_, _, _, _, let snapshotTitle, let pressure):
+        // Seven associated values since `tokenUsage` joined the frame: the
+        // pattern's arity must match exactly, so the trailing one is matched and
+        // ignored — the page gets usage from the summary document, not here.
+        case .snapshot(_, _, _, _, let snapshotTitle, let pressure, _):
             // A snapshot proves the stream is alive, so whatever the last
             // connection error said no longer describes this page.
             errorText = nil
@@ -204,6 +244,11 @@ final class DSHRemoteChatAdapter: ObservableObject {
         // this call returns), so caching here is what makes `applySnapshot` seed a
         // TextKit-accurate `precalcHeight` instead of a coarse estimate.
         refreshHeightMetadata(nudge: false)
+        // Panels change at step boundaries, not per token: refetch every SECOND
+        // snapshot rather than on every frame (a streaming turn emits hundreds).
+        if case .snapshot = frame, summaryCadence.onSnapshot(), let sessionId = loadedSessionId {
+            Task { await fetchSummary(sessionId: sessionId) }
+        }
     }
 
     // MARK: - Height metadata
@@ -379,10 +424,18 @@ struct DSHRemoteChatView: View {
     /// The connection itself, not the page's own adapter: the banner's whole job
     /// is to describe the transport when the adapter has nothing to say.
     @ObservedObject private var store = DSHRemoteStore.shared
+    /// For the banner's "Pair again": settings is a deep link, not a push from
+    /// this page.
+    @Environment(\.openURL) private var openURL
     @State private var draft = ""
     /// Measured composer height, handed to the list as its bottom inset. The list
     /// is the only view that knows how much of the bottom it must keep clear.
     @State private var composerHeight: CGFloat = 0
+    /// Measured height of the goal/task card, handed to the list as its
+    /// `panelHeights` inset — the same mechanism the local page uses. 0 when the
+    /// computer reports no goal and no tasks, which is the behaviour this page
+    /// had before the panels existed.
+    @State private var panelHeight: CGFloat = 0
     /// The usage panel, opened by tapping the composer's context ring.
     @State private var showContextPanel = false
     /// Mirrors the editor's focus so the list keeps its "keyboard raised → scroll
@@ -404,6 +457,7 @@ struct DSHRemoteChatView: View {
                     Task { await adapter.load(sessionId: conversationId, force: true) }
                 }
             }
+            DSHRemoteStatusPanel(summary: adapter.summary, onHeightChange: { panelHeight = $0 })
             DSHRemoteComposer(
                 text: $draft,
                 contextReading: adapter.contextReading,
@@ -417,7 +471,7 @@ struct DSHRemoteChatView: View {
             )
         }
         .sheet(isPresented: $showContextPanel) {
-            DSHRemoteContextSheet(reading: adapter.contextReading, running: adapter.isRunning)
+            DSHRemoteContextSheet(reading: adapter.contextReading, running: adapter.isRunning, summary: adapter.summary)
         }
         .navigationTitle(adapter.title)
         .navigationBarTitleDisplayMode(.inline)
@@ -460,7 +514,7 @@ struct DSHRemoteChatView: View {
                 maxContentWidth: 0,
                 floatingBarHeight: 0,
                 inputBarHeight: composerHeight > 0 ? composerHeight : 132,
-                panelHeights: 0
+                panelHeights: panelHeight
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             if adapter.awaitingSnapshot, !adapter.isLoading {
@@ -474,34 +528,109 @@ struct DSHRemoteChatView: View {
     /// single step that retries it.
     // MARK: - Connection banner
 
-    /// One hairline row above the transcript: no dialog, no alert, and it is
-    /// GONE the moment the transport is healthy again (`EmptyView`), because a
-    /// permanent "reconnecting" strip trains people to ignore it.
+    /// What the banner should say, if anything.
     ///
-    /// Two states, because they mean different things to the user:
-    /// * the session had a stream and the transport dropped → "连接已断开，正在重连…";
-    /// * paired but never reachable → "已配对但无法到达那台电脑".
-    /// The retry button is on both: the reconnect loop is the store's, but a
-    /// user watching a dead screen needs a way to force it.
+    /// Read from `DSHRemoteStore.connectionState` — the transport's OWN verdict,
+    /// which is the only thing that can tell "the host is fine but nobody is
+    /// subscribed" from "the socket is dead". `.connected`/`.unpaired` draw
+    /// nothing; a permanent strip trains people to ignore it.
+    private enum ConnectionBanner: Equatable {
+        /// Frames stopped arriving. `detail` is the "N s ago" line when we have
+        /// a timestamp for it.
+        case lost(text: String, detail: String?)
+        /// A host is saved but unusable (Keychain empty, refresh rejected). The
+        /// action is "open the pairing page", never an inline form: pairing needs
+        /// a URL and a code, and neither belongs in a chat header.
+        case unusable(reason: String)
+
+        var text: String {
+            switch self {
+            case .lost(let text, _): return text
+            case .unusable(let reason):
+                return reason.isEmpty
+                    ? AppLocalized("This computer needs to be paired again.")
+                    : reason
+            }
+        }
+
+        var detail: String? {
+            if case .lost(_, let detail) = self { return detail }
+            return nil
+        }
+
+        var actionTitle: String {
+            switch self {
+            case .lost: return AppLocalized("Retry")
+            case .unusable: return AppLocalized("Pair again")
+            }
+        }
+
+        var isUnusable: Bool {
+            if case .unusable = self { return true }
+            return false
+        }
+    }
+
+    private var connectionBannerState: ConnectionBanner? {
+        switch store.connectionState {
+        case .unpaired, .connected:
+            return nil
+        case .unavailable(let reason):
+            return .unusable(reason: reason)
+        case .stale(let since):
+            return .lost(text: AppLocalized("Connection lost. Reconnecting…"),
+                         detail: elapsedText(since: since))
+        case .reconnecting(let attempt):
+            return .lost(text: String(format: AppLocalized("Connection lost. Reconnecting… (attempt %lld)"), attempt),
+                         // `flatMap`: `elapsedText` already returns an optional,
+                         // so `map` would produce a `String??` the label cannot take.
+                         detail: store.lastFrameAt.flatMap { elapsedText(since: $0) })
+        }
+    }
+
+    private func elapsedText(since: Date) -> String? {
+        let seconds = Int(Date().timeIntervalSince(since))
+        guard seconds >= 1 else { return nil }
+        return String(format: AppLocalized("Last data %llds ago"), seconds)
+    }
+
     @ViewBuilder
     private var connectionBanner: some View {
-        if let banner = connectionBannerText {
+        if let banner = connectionBannerState {
             HStack(spacing: 8) {
-                Image(systemName: "exclamationmark.triangle.fill")
+                Image(systemName: banner.isUnusable ? "exclamationmark.lock.fill" : "wifi.exclamationmark")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.orange)
-                Text(banner)
-                    .font(AppFont.sw(11, weight: .regular, category: .ui))
-                    .foregroundStyle(ChatColors.secondaryText)
-                    .lineLimit(1)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(banner.text)
+                        .font(AppFont.sw(11, weight: .regular, category: .ui))
+                        .foregroundStyle(ChatColors.secondaryText)
+                        .lineLimit(1)
+                    if let detail = banner.detail {
+                        Text(detail)
+                            .font(AppFont.sw(10, weight: .regular, category: .ui))
+                            .foregroundStyle(ChatColors.secondaryText.opacity(0.8))
+                            .lineLimit(1)
+                    }
+                }
                 Spacer(minLength: 4)
                 Button {
-                    Task {
-                        await DSHRemoteStore.shared.connect()
-                        await adapter.load(sessionId: conversationId, force: true)
+                    switch banner {
+                    case .lost:
+                        Task {
+                            await DSHRemoteStore.shared.connect()
+                            await adapter.load(sessionId: conversationId, force: true)
+                        }
+                    case .unusable:
+                        // `minis://settings` is the app's settings root; the DSH
+                        // page has no route of its own yet (see the note in
+                        // `verify/REMOTE-UI-NOTES.md` §7).
+                        if let url = URL(string: "minis://settings") {
+                            openURL(url)
+                        }
                     }
                 } label: {
-                    Text(AppLocalized("Retry"))
+                    Text(banner.actionTitle)
                         .font(AppFont.sw(11, weight: .medium, category: .ui))
                 }
                 .buttonStyle(.plain)
@@ -512,20 +641,6 @@ struct DSHRemoteChatView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(ChatColors.inputIconBg.opacity(0.6))
             .accessibilityIdentifier("dshConnectionBanner")
-        }
-    }
-
-    private var connectionBannerText: String? {
-        guard store.host != nil else { return nil }
-        switch store.status {
-        case .connected:
-            return nil
-        case .connecting:
-            return AppLocalized("Connection lost. Reconnecting…")
-        case .failed:
-            return AppLocalized("Connection lost. Reconnecting…")
-        case .disconnected:
-            return AppLocalized("Paired, but this computer can't be reached.")
         }
     }
 
@@ -581,7 +696,32 @@ struct DSHRemoteChatView: View {
 struct DSHRemoteContextSheet: View {
     var reading: DSHContextReading?
     var running: Bool
+    /// The summary document, for the one row a live snapshot cannot answer: when
+    /// the computer last compacted this Session's context.
+    var summary: DSHRemoteSessionSummary?
     @Environment(\.dismiss) private var dismiss
+
+    /// "2 min ago · 296K before", or "Not reported" when the host has no
+    /// compaction record for this Session.
+    private var lastCompactionText: String {
+        guard let compaction = summary?.context?.lastCompaction else {
+            return AppLocalized("Not reported")
+        }
+        var parts: [String] = []
+        if let at = compaction.at, at > 0 {
+            // `at` is the host's clock in milliseconds.
+            let date = Date(timeIntervalSince1970: at / 1000)
+            let formatter = RelativeDateTimeFormatter()
+            formatter.unitsStyle = .short
+            parts.append(formatter.localizedString(for: date, relativeTo: Date()))
+        }
+        if let before = compaction.before, before > 0 {
+            parts.append(String(format: AppLocalized("%@ before"), DSHContextFormat.magnitude(Int(before))))
+        }
+        // `after` is deliberately not read: the host reports it as null by
+        // contract, and printing a placeholder for it would imply a number.
+        return parts.isEmpty ? AppLocalized("Not reported") : parts.joined(separator: " · ")
+    }
 
     private var used: Int { reading?.usedTokens ?? 0 }
     private var window: Int { reading?.windowTokens ?? 0 }
@@ -627,7 +767,11 @@ struct DSHRemoteContextSheet: View {
                         ? DSHContextFormat.magnitude(max(window - used, 0))
                         : AppLocalized("Not reported"))
                     row("Share", hasWindow ? "\(reading?.percent ?? 0)%" : AppLocalized("Not reported"))
-                    row("Last compaction", AppLocalized("Not reported"))
+                    // `before` and `at` are host facts; `after` is ALWAYS null on
+                    // the host side (the projection does not record the size
+                    // after a compaction), so it is never printed — a fabricated
+                    // "after 40K" would be worse than saying nothing.
+                    row("Last compaction", lastCompactionText)
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
