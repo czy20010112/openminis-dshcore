@@ -88,7 +88,7 @@ struct AboutView: View {
                                     .stroke(Color(UIColor.separator), lineWidth: 0.5)
                             )
                     }
-                    Text("Minis")
+                    Text("mini-dsh")
                         .font(AppFont.sw(22, weight: .bold, category: .title))
                     Text("Version \(appVersion)")
                         .font(AppFont.sw(15, weight: .regular, category: .body))
@@ -105,7 +105,7 @@ struct AboutView: View {
                         .font(AppFont.sw(12, weight: .regular, category: .ui))
                         .foregroundStyle(.tertiary)
                         .textSelection(.enabled)
-                    Text("Minis is Your Fully Local, Fully Private On-Device Agent.")
+                    Text("mini-dsh is Your Fully Local, Fully Private On-Device Agent.")
                         .font(AppFont.sw(15, weight: .regular, category: .body))
                         .foregroundStyle(.secondary)
                 }

@@ -930,7 +930,7 @@ extension AIChatViewModel {
         JobInsuranceNotification.schedule(
             jobId: job.id,
             at: startedAt.addingTimeInterval(TimeInterval(minutes * 60 + 60)),
-            title: AppLocalized("Minis agent"),
+            title: AppLocalized("mini-dsh agent"),
             body: String(format: AppLocalized("The agent \"%@\" may have finished or been interrupted. Open to check."), title),
             userInfo: ["sessionId": job.target.parentSessionId ?? "", "childSessionId": childId, "helperJobId": job.id])
 

@@ -3991,7 +3991,7 @@ private var dshSidebarActive: Bool { dshRemoteStore.mode == .dsh }
                         dshRemoteStore.setMode(dshSidebarActive ? .minis : .dsh)
                         refreshSessionList()
                     } label: {
-                        Label(dshSidebarActive ? "Show Minis Chats" : "Show DSH Chats",
+                        Label(dshSidebarActive ? "Show mini-dsh Chats" : "Show DSH Chats",
                               systemImage: "arrow.left.arrow.right.circle")
                     }
                     Button {
@@ -4618,7 +4618,7 @@ private var dshSidebarActive: Bool { dshRemoteStore.mode == .dsh }
                 .padding(.bottom, 4)
 
             VStack(spacing: 8) {
-                Text("Welcome to Minis")
+                Text("Welcome to mini-dsh")
                     .font(AppFont.sw(22, weight: .bold, category: .title))
                 Text("Your first On-Device Agent is almost ready.")
                     .font(AppFont.sw(15, weight: .regular, category: .body))
@@ -8606,7 +8606,7 @@ private struct SettingsSheet: View {
                         AboutView()
                     } label: {
                         Label {
-                            Text("About Minis")
+                            Text("About mini-dsh")
                         } icon: {
                             Image(systemName: "info")
                                 .font(.system(size: 9))

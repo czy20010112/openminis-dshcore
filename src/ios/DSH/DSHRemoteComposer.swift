@@ -387,7 +387,7 @@ struct DSHRemoteComposer: View {
 
     private func selectSlashRow(_ row: RemoteSlashRow) {
         guard row.hostSide else {
-            showNotice(AppLocalized("That command only affects local Minis chats."))
+            showNotice(AppLocalized("That command only affects local mini-dsh chats."))
             text = ""
             return
         }

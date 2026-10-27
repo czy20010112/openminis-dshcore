@@ -3891,7 +3891,7 @@ struct AIChatView: View {
                 // Unlike the hints above, this one points at a Setting rather
                 // than an in-composer gesture, and so takes no soul name — the
                 // Return Key preference (Settings -> Appearance) is global.
-                AppLocalized("Minis can make the Return key send or insert a newline"),
+                AppLocalized("mini-dsh can make the Return key send or insert a newline"),
             ],
             // [T-ios-composer-placeholder-rotation] Rotate on the very first
             // focus too, but only when there is already a conversation to

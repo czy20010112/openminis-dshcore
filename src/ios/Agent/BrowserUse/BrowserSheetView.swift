@@ -365,7 +365,7 @@ private struct AgentBrowsingOverlay: View {
                     .opacity(breathing ? 1.0 : 0.3)
                     .shadow(color: Color.accentColor.opacity(breathing ? 0.8 : 0), radius: breathing ? 8 : 0)
 
-                Text("Minis is browsing")
+                Text("mini-dsh is browsing")
                     .font(AppFont.sw(13, weight: .medium, category: .body))
                     .foregroundStyle(.white.opacity(0.9))
 

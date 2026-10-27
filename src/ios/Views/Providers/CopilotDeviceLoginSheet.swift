@@ -193,7 +193,7 @@ struct CopilotDeviceLoginSheet: View {
         // [T-copilot-copy-on-open] The wording no longer tells the user to tap
         // the code: opening the page copies it, so "paste" is the accurate
         // instruction. Tapping the code still works for anyone who wants it.
-        Text(AppLocalized("1. Open the verification page — this copies the code\n2. Paste it to authorize Minis"))
+        Text(AppLocalized("1. Open the verification page — this copies the code\n2. Paste it to authorize mini-dsh"))
             .font(.subheadline)
             .foregroundStyle(.secondary)
             .multilineTextAlignment(.center)

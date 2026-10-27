@@ -228,7 +228,7 @@ struct SoulSettingsView: View {
                 Text(AppLocalized("Any image works. It's cropped to a square and shown with rounded corners."))
             }
             VStack(alignment: .leading, spacing: 2) {
-                Text(name.isEmpty ? "Minis" : name)
+                Text(name.isEmpty ? "mini-dsh" : name)
                     .font(AppFont.sw(20, weight: .semibold, category: .title))
                 if !style.trimmingCharacters(in: .whitespaces).isEmpty {
                     Text(style)

@@ -120,37 +120,11 @@ final class MessageListLayout: UICollectionViewLayout {
     /// Vertical spacing between cells.
     var itemSpacing: CGFloat = 0
 
-    /// [T-ios-zerocell-eats-gap] Per-prepare() cursor for the run of
-    /// zero-height cells currently being walked (see `prepare()`). `start` is
-    /// -1 when no run is open; `count` is how many empty cells the open run
-    /// spans. Both are reset every pass, so nothing carries across layout
-    /// cycles and no gap can be paid twice.
-    private var zeroRunStart: Int = -1
-    private var zeroRunCount: Int = 0
-
-    /// [T-ios-zerocell-eats-gap] 1Hz-aggregated evidence counter + last flush
+   /// [T-ios-zerocell-eats-gap] 1Hz-aggregated evidence counter + last flush
     /// time for the carried-gap log line.
     private static var carriedGapCount: Int = 0
     private static var carriedGapLastFlush: CFTimeInterval = 0
 
-    /// [T-ios-zerocell-eats-gap] Emit ONE line per second (never per pass) when
-    /// a run of zero-height cells had to be given back the gap it was silently
-    /// eating. This is the only place that logs the condition, so a device
-    /// capture answers "did the zero-cell case fire, where, and how big was the
-    /// hole" without any per-cell noise.
-    private static func reportCarriedGap(count: Int, start: Int, gap: CGFloat,
-                                        totalBefore: CGFloat, itemCount: Int) {
-        carriedGapCount &+= 1
-        let now = CACurrentMediaTime()
-        guard now - carriedGapLastFlush > 1.0 else { return }
-        AppLogger(category: "SpacingDiag").info(
-            "[Spacing][zerocell-gap] idx \(start)…\(start + count - 1) (\(count) zero-height cell(s), "
-            + "items=\(itemCount)) ate the inter-cell gap — restored \(String(format: "%.0f", gap))pt "
-            + "before idx \(start + count) (totalH before=\(String(format: "%.0f", totalBefore)); "
-            + "carries this second=\(carriedGapCount))")
-        carriedGapCount = 0
-        carriedGapLastFlush = now
-    }
 
     /// Cached heights keyed by item index. Persists across invalidation cycles.
     private var heightCache: [Int: CGFloat] = [:]
@@ -277,31 +251,12 @@ final class MessageListLayout: UICollectionViewLayout {
             //
             // `zGap` is a per-cell value, like the frame it belongs to, so a
             // carried gap can never leak onto a later, unrelated cell.
+            // [T-overlap-5.4] Upstream's single payment, restored (see ios15 twin):
+            // the gap between two visible cells separated by an empty one belongs
+            // to the FIRST of them. The run machinery paid it twice and moved an
+            // attribute; deleting it is the correct form, not rewriting it.
             let gapAfter = !isLast && !nextIsFooter
-            let zGap = h <= 0 && gapAfter
-            if gapAfter, !zGap { y += itemSpacing }
-            if zGap {
-                // Open (or extend) a run of zero-height cells that owe exactly
-                // one trailing gap between their two visible neighbours.
-                if zeroRunStart < 0 { zeroRunStart = i }
-                zeroRunCount += 1
-            } else if zeroRunStart >= 0 {
-                // The run just ended because a VISIBLE cell started here — pay
-                // its single gap at the run's own position (shifting the empty
-                // cells and everything below), then close the run. Runs that
-                // sit at the very END of the list never reach this branch, so a
-                // trailing empty cell still collapses instead of enlarging
-                // contentSize with nothing to separate.
-                let pay = itemSpacing
-                for k in zeroRunStart..<(zeroRunStart + zeroRunCount) where k < itemAttributes.count {
-                    itemAttributes[k].frame.origin.y += pay
-                }
-                y += pay
-                Self.reportCarriedGap(count: zeroRunCount, start: zeroRunStart, gap: pay,
-                                      totalBefore: y - pay, itemCount: itemCount)
-                zeroRunStart = -1
-                zeroRunCount = 0
-            }
+            if gapAfter, h > 0 { y += itemSpacing }
         }
         totalHeight = y
         lastItemCount = itemCount
@@ -685,7 +640,11 @@ final class MessageListLayout: UICollectionViewLayout {
         // unchanged — real delta, not a streaming cell (its position is owned
         // by the pin logic), and coalesced to at most one `prepare()` per
         // runloop tick so a burst of N corrections cannot go O(N²).
-        if abs(delta) > 0.5, !isStreamingCell(index), !pendingFooterReflow {
+        // [T-overlap-5.3] No `!isStreamingCell` here — the offset has its own
+        // guards above and a `prepare()` never touches `contentOffset`. While a
+        // turn runs the whole tail is "streaming", which is why the overlap showed
+        // up right after sending. `pendingFooterReflow` stays (one prepare per tick).
+        if abs(delta) > 0.5, !pendingFooterReflow {
             pendingFooterReflow = true
             // [T-ios-steadystate-reflow-gap] Rate evidence: a full prepare() is
             // O(items), so if this fired per correction during a fast scroll it
@@ -861,9 +820,17 @@ final class MessageListLayout: UICollectionViewLayout {
 
     /// Invalidate the cached height for a specific item index, forcing re-measurement.
     /// Use this for the actively streaming message whose height is changing.
-    func invalidateHeight(at index: Int) {
+    func invalidateHeight(at index: Int, droppingSeed: Bool = false) {
         heightCache.removeValue(forKey: index)
         geometryReaderConfirmed.remove(index)
+        // [T-overlap-5.2] See the ios15 twin: a caller that knows the CONTENT
+        // changed must drop the layout's own seed too, or the fallback is the
+        // pre-change height — which is the overlap. Default false keeps every
+        // other call site byte-for-byte as it behaved.
+        if droppingSeed {
+            precalcHeights.removeValue(forKey: index)
+            estimatedHeights.removeValue(forKey: index)
+        }
         // [T-ios-scroll-decel-height-drift] Belt-and-suspenders: also drop the
         // content-keyed memo for this index. The content-versioned key already
         // makes a height change miss the old entry, but an explicit invalidate

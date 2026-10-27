@@ -342,7 +342,7 @@ struct MCPFormSheet: View {
             }
         } else {
             VStack(alignment: .leading, spacing: 8) {
-                Text(AppLocalized("Minis will find this service's sign-in page automatically. No Client ID needed."))
+                Text(AppLocalized("mini-dsh will find this service's sign-in page automatically. No Client ID needed."))
                     .font(AppFont.sw(12, weight: .regular, category: .ui))
                     .foregroundStyle(.secondary)
                 Button {
@@ -467,7 +467,7 @@ struct MCPFormSheet: View {
             } header: {
                 Text("Startup timeout (seconds)")
             } footer: {
-                Text("How long to wait for this server's first initialize. Raise it for slow-starting servers (e.g. uvx). Leave blank for the default (60s). Minis setting, not part of the MCP protocol.")
+                Text("How long to wait for this server's first initialize. Raise it for slow-starting servers (e.g. uvx). Leave blank for the default (60s). mini-dsh setting, not part of the MCP protocol.")
             }
         }
     }

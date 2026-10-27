@@ -95,7 +95,7 @@ enum DSHRemoteTranscriptCache {
             guard cached.isValid(serverId: serverId, sessionId: sessionId) else {
                 // Wrong host (re-paired), wrong version, or an empty page: the file
                 // describes a different world, so it must not be shown.
-                NSLog("[DSH] cache rejected sid=\(sessionId.prefix(12)) version=\(cached.version) server=\(cached.serverId.prefix(8)) records=\(cached.records.count) → removed")
+                NSLog("[DSH] cache rejected sid=\(sessionId.prefix(12)) version=\(cached.version) records=\(cached.records.count) → removed")
                 remove(sessionId: sessionId)
                 return nil
             }
