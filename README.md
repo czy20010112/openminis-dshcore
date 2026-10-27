@@ -1,104 +1,139 @@
-# openminis-dshcore
+# mini-dsh
 
-**OpenMinis 的 agent 内核换成 [DeepSeek Harness](https://github.com/deepseek-ai)（DSH）的 agent 框架**，保留原 app 的交互、工具实现与 UI。
+**OpenMinis with its agent core replaced by [DeepSeek Harness](https://github.com/deepseek-ai) (DSH)** — the app, its tools and its UI stay; the loop that decides what to do next is DSH's.
 
-> **这是 OpenMinis 的修改版**（GPL-3.0 §5(a)）。最近一次修改：**2026-10-27**。
-> 上游项目：[OpenMinis/OpenMinis](https://github.com/OpenMinis/OpenMinis)（GPL-3.0）。
-> 本仓库与 OpenMinis 官方无关，不代表其立场；名字与图标等品牌元素不随 GPL 授权，本仓库沿用上游名称仅为说明来源。
+> **This is a modified version of OpenMinis** (GPL-3.0 §5(a)). Last modified: **2026-10-28**.
+> Upstream: [OpenMinis/OpenMinis](https://github.com/OpenMinis/OpenMinis). This repository is not
+> affiliated with the upstream project and does not speak for it; the upstream name and icon are
+> not covered by the code licence and remain with their authors.
 
-原版 OpenMinis 的 agent loop 是一个单文件的大循环：请求拼装、工具调度、重试、压缩、持久化全挤在一起。这个 fork 把**决策内核**换成 DSH 的分层实现（agent / agent-loop / system-prompt / tools / llm / compaction / session 七个包移植进来），**工具本身一行没改**——每个工具仍然调用 OpenMinis 原本的实现。
+The original loop is one large file: request assembly, tool scheduling, retries, compaction and
+persistence all in one place. This fork moves the **decision core** to DSH's layered packages
+(agent / agent-loop / system-prompt / tools / llm / compaction / session) and leaves **every tool
+handler untouched** — each tool still calls OpenMinis' own implementation. The original loop is one
+flag away: `AIChatViewModel.useDSHAgentLoop` (`minis.useDSHAgentLoop`, default `true`).
 
-## 两条线，一套流水线
+## Two lines, one pipeline
 
-| | iOS 15 线 | iOS 26 线 |
+| | iOS 26 line (default) | iOS 15 line |
 |---|---|---|
-| 分支 | `main` | `ios26` |
-| 基线 | [zhaoxiufei/OpenMinis](https://github.com/zhaoxiufei/OpenMinis)（部署目标 15.0） | [OpenMinis/OpenMinis](https://github.com/OpenMinis/OpenMinis) v1.14（部署目标 16.0） |
-| runner | `macos-14` / Xcode 16 | `macos-26` / Xcode 26 |
-| 扩展 | 剔除 AgentWidget / MinisShare | 全量保留并逐个签名 |
+| Branch | **`main`** | **`ios15`** |
+| Baseline | [OpenMinis/OpenMinis](https://github.com/OpenMinis/OpenMinis) v1.14, deployment target 16.2 | [zhaoxiufei/OpenMinis](https://github.com/zhaoxiufei/OpenMinis), deployment target 15.0 |
+| CI runner | `macos-26` / Xcode 26 | `macos-14` / Xcode 16 |
+| Extensions | all kept, each signed individually | AgentWidget / MinisShare dropped |
 
-`src/ios/DSH/` 那 65 个文件**两条线字节一致**，只有两个文件按分支不同（`DSHTurnDriver.swift` 适配 `.responseModel` 枚举、`DSHTurnDriverBridge.swift` 适配工具块的元组 arity 与行专属 block kind）。所以**内核改一次，两条线同时生效**。
+`src/ios/DSH/**` is **byte-identical on both branches**, with exactly two exceptions —
+`DSHTurnDriver.swift` (adapts the `.responseModel` enum) and `DSHTurnDriverBridge.swift` (tool-block
+tuple arity). Change the core once and both lines get it.
 
-## 这一版新增：把「手机上远程用另一台电脑上的 DSH」做成和本机对话一样
+## What it does
 
-**读远端会话**
+### A conversation on the phone
 
-- 模型切换提示、注入的上下文、运行时记录按 `source.kind` 分流：用户的仍显示成气泡，系统的不再冒出一句「人话」。
-- 思考块回到它该在的位置：每个 `ContentPart.reasoning` 就地成为 thinking 块，`thinking → tool → thinking → text` 按真实顺序交错，而不是全塌到顶部。
-- 行在列表布局前先自测高度。iOS 15 的自适应高度对某些 hosted cell 会抛异常并退回粗估，远端页面现在填同一套 TextKit 元数据，让退回值精确——文字不再压住下一行。
-- 宽屏（iPad / 横屏）内容列封顶 900pt 并与本机一致，不再从左铺到右。
+- **Full agent loop** — tools, skills, memory, sub-agents, MCP servers, browser use, a Linux shell on
+  the device, group fallback, TTS, voice input: all of OpenMinis' tooling, unchanged.
+- **Compaction that survives a relaunch** — the boundary is persisted, so a restarted app still knows
+  where the conversation was cut and why the history above it is dimmed.
+- **Thinking blocks keep their place** — reasoning is rendered where it arrived, so
+  `thinking → tool → thinking → text` interleaves as it happened instead of collapsing to the top.
+- **A context panel that says what it measured** — system prompt / tool definitions / conversation /
+  total, with the provider's own cache-hit rate when the provider reports cache buckets, and an
+  explicit "not reported" instead of a zero when it does not.
 
-**在远端会话里生活**
+### A conversation on a paired computer
 
-- 输入框的发送、停止、排队与本地一致。
-- `/` 唤起与本机相同的命令表，每行标注 `→ PC`（交给配对的电脑执行，作为普通文本发送）或 `Local`（只影响本机，并且会说明原因，绝不把宿主看不懂的命令发出去）。
-- 上下文圆环可点开，显示宿主**自己的**测量值（已用 / 窗口 / 剩余 / 占比，以及最近一次压缩），与本机弹窗共用同一个视图、同一套行；宿主没上报的行写「这台电脑没上报」，不画 0%。
-- goal / todo 面板出现在输入框上方，几何与本机一致，数据来自宿主投影。
-- 看门狗盯住死掉的连接：15 秒没有心跳挂出细横幅，30 秒关闭并重连。心跳算存活，空闲会话的 `-1` cursor 不再被丢弃（否则一个健康的空闲会话必然被误判为死连接）。
+Pair the phone with a computer running the DS Bot bridge and DSH sessions on that machine become
+readable and writable from the phone.
 
-**把活派给那台电脑**
+- **The transcript is the same transcript** — user words stay bubbles, model switches and injected
+  context become thin status rows, and rows measure themselves before the list lays them out.
+- **It keeps up** — a 15 s silence raises a thin banner, 30 s closes and reopens the stream. An idle
+  page probes once a minute. A revoked pairing says so and stops, instead of reconnecting forever.
+- **It opens fast** — the transcript is mirrored locally (records only, never goals or todos) and
+  painted before the network answers; the host is then asked only for what came after the cached
+  cursor, and says whether it resumed or resent the whole page.
+- **The composer behaves like the local one** — send, stop, `/` commands with `→ PC` / `Local`
+  badges, arrow-key navigation on a hardware keyboard, the same context panel, and goal/todo panels
+  above the composer.
+- **Work can be dispatched** — `remote_team_spawn` / `_message` / `_list` / `_output` / `_interrupt`
+  drive the computer's real Agent Team: named, messageable, interruptible teammates that keep their
+  context, not one-shot subagents.
 
-- `remote_team_spawn` / `_message` / `_list` / `_output` / `_interrupt` 驱动宿主真正的 Agent Team：有名字、可继续对话、可打断的队友，而不是一次性的 subagent。
-- `remote_team_output` 负责取回结论，模型不再用 shell 轮询或反复问「好了吗」。
-- 派发策略写进系统提示词：需要完整桌面环境、用户点名那台机器、需要那台机器才有的数据、预计超过几分钟的任务交给电脑；闲聊与小脚本留在手机。
+### Wide screens
 
-**打开更快**
+iPad and landscape cap the conversation column at 900 pt and centre it, exactly like the local page —
+the transcript, the status rows, the goal/todo panels and the composer all sit in that column.
 
-- 远端转写本地留一份镜像（`dsh-cache/<sessionId>.json`，只存 records，不缓存 goal/todos/summary），打开时先立刻上屏，再向宿主要 cursor 之后的部分。
-- 宿主在帧上说明自己做了什么：`resumed`（续传，按条追加）或 `reset`（整页，替换缓存）。缺字段按 `reset` 处理——错的追加比多要一页糟糕得多。
+## Downloads
 
-## 下载
-
-每次构建产出自己的 release（tag = 构建号）：
+Each build publishes its own release; the tag is the build number.
 
 ```bash
 gh release list --repo czy20010112/openminis-dshcore --limit 5
 gh release download <tag> --repo czy20010112/openminis-dshcore
 ```
 
-| 产物 | 内容 |
-|---|---|
-| `MinisDSH-ios15-build143.ipa` | iOS 15.0+ arm64，ad-hoc 签名（逐层：framework → appex → app） |
-| `MinisDSH-ios26-build143.ipa` | iOS 16.2+ arm64（内嵌 Agent Activity 扩展要求 16.2），ad-hoc 签名 |
-| `MinisDSH-ios*-unsigned.ipa` | CI 产出的未签名包，供自行签名 |
+The IPA names carry the line: `MinisDSH-ios15-*` (iOS 15.0+) and `MinisDSH-ios26-*` (iOS 16.2+, the
+extension needs 16.2). They are **ad-hoc signed**, deepest first. Install with
+`ios-mcp` (`POST /upload_file`, then `install_app`) on a jailbroken device with AppSync Unified, or
+with TrollStore / Sideloadly. **Do not re-sign the bundle yourself**: the App Group entitlement is
+easy to lose, and a missing one crashes the app on launch.
 
-装在越狱设备（AppSync Unified）或用 TrollStore / Sideloadly。**请直接装这个包，不要自己重签**：签名里带着 App Group entitlement，重签工具常把它丢掉，`containerURL` 返回 nil 会让 app 在启动瞬间崩。
+Identity: bundle id `com.openminis.minidsh`, App Group `group.com.openminis.minidsh` — deliberately
+distinct from official OpenMinis so the two can coexist.
 
-**身份**：bundle id `com.openminis.minidsh`、App Group `group.com.openminis.minidsh` —— 故意与官方 OpenMinis 区分，两者可并存、互不干扰。
+## Privacy
 
-## 隐私
+- **No telemetry.** Nothing is sent anywhere except the model providers you configure and the
+  computer you pair.
+- Pairing is one phone to one computer. Access and refresh tokens live in the Keychain and refresh
+  rotates them; unpairing deletes them and the local transcript mirror.
+- Provider keys and web-search keys live in the Keychain, not in `UserDefaults` or an iCloud backup.
+- The transcript mirror is excluded from backup, and shipped logs do not print the paired host or its
+  server id.
 
-- **没有遥测**，不向任何第三方上报使用数据。
-- 配对是一台手机 ↔ 一台电脑：凭据存在 Keychain（access / refresh 令牌，refresh 会轮换），配对可以随时在设置里解除，解除即删除令牌与本地转写镜像。
-- provider 的 API Key 走 Keychain，不进 `UserDefaults`、不进 iCloud 备份。
-- 设备日志不打印配对的 host 地址与 server id（仅 `DEBUG` 构建打印）。
-- 远端转写镜像只存在本机 Application Support，并排除 iCloud 备份。
+## Architecture notes
 
-## 架构文档
+**[docs/DSH-ARCHITECTURE.md](docs/DSH-ARCHITECTURE.md)** — ten diagrams plus a before/after per
+change: what the original loop did, what the DSH turn does instead, and the root cause of each
+difference. Its §8 keeps the running "fixed / not fixed" tables, including the defect pattern that
+recurred most often: *the original loop did something the DSH turn forgot to do*.
 
-**[docs/DSH-ARCHITECTURE.md](docs/DSH-ARCHITECTURE.md)** —— 10 张图 + 逐项前后对照：原版长什么样、现在长什么样、**每一处差异的根因**。包括压缩如何跨重启持久化、六个循环入口如何全部改由 DSH 驱动、以及一条反复出现的缺陷模式（"原循环做的事，DSH 回合没做"）。
+## Building
 
-## 构建
+Pushing to `main` or `ios15` triggers `.github/workflows/build-ipa.yml`: each line checks out its own
+branch, builds, signs ad-hoc (framework → appex → app), packages, and a publish job merges the two
+into one release.
 
-推送到 `main` 或 `ios26` 即触发 `.github/workflows/build-ipa.yml`：两条线各自 checkout、编译、adhoc 签名、打包，然后由一个 publish job 合并成一次 release。
-
-手写一次测试构建（把压缩阈值降到 2000 token，便于在设备上触发压缩）：
+A one-off probe build (compaction threshold lowered so compaction is easy to trigger on a device):
 
 ```bash
 gh workflow run build-ipa.yml \
   -f compaction_probe=true -f build_ios26=false -f create_release=false
 ```
 
-探针构建产物名带 `-probe`，且 publish job 会拒绝发布它。
+Probe artefacts carry a `-probe` suffix and the publish job refuses them.
 
-## 已知缺口
+## Known gaps
 
-[docs/DSH-ARCHITECTURE.md §8](docs/DSH-ARCHITECTURE.md) 有完整的"已修 / 未修"两张表。最值得知道的一条：**group fallback 没有接进 DSH 回合**——主成员限流时直接失败报错，而不是静默换备（需要第二个 provider 才能实测，所以没动）。
+- **Group fallback is not wired into the DSH turn** — a rate-limited primary member fails loudly
+  instead of silently switching, because that needs a second provider to test.
+- **A second turn can start while the previous one settles** (queue versus interrupt is a product
+  decision, not implemented).
+- `waitForAny` drains a tool batch rather than waking on the first completion; the latency is real and
+  documented in the code.
 
-## 上游与许可
+## Upstream and licence
 
-本项目是 [OpenMinis](https://github.com/OpenMinis/OpenMinis) 的二次开发分支，遵循上游的 **GPL-3.0** 许可（见 [LICENSE](LICENSE)）。
+This project is a derivative of [OpenMinis](https://github.com/OpenMinis/OpenMinis), under the
+upstream **GPL-3.0** licence (see [LICENSE](LICENSE)).
 
-按 GPL-3.0 的要求：源码随二进制一并提供（本仓库即对应源码）、保留原作者版权声明、并在此显著声明本仓库为修改版与其修改日期（见页首）。GPL-3.0 **不授予商标权**：上游的项目名与图标仍归其作者所有，不随代码许可授权；若要在发布物中去掉或更换品牌元素，那属于 GPL 允许的修改，但**不能反过来声称是官方版本**。
+Under GPL-3.0: the source ships with the binaries (this repository is that source), the original
+authors' copyright notices are kept, and the modification is declared above with its date. GPL-3.0
+does **not** grant trademark rights — the upstream project name and icon stay with their authors and
+are not licensed with the code. Removing or replacing those brand elements is a modification the
+licence allows; claiming to be the official project is not.
 
-上游 README 的原文已不再适用，其内容与版权归原作者所有；本仓库只改动 agent 内核、远端会话能力与构建流水线，未改动任何工具实现。
+The upstream README no longer applies. Its text and copyright belong to the upstream authors. This
+repository changes the agent core, the remote-session capability and the build pipeline; it does not
+change any tool implementation.
