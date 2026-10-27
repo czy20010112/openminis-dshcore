@@ -745,6 +745,15 @@ extension CollectionViewMessageListV3 {
     }
 
     final class Coordinator: NSObject, UICollectionViewDelegate, UIScrollViewDelegate, UICollectionViewDataSourcePrefetching {
+
+    /// The rest-probe ticker, per coordinator.
+    ///
+    /// It must NOT be `static`: the ticker's closure captures `self` weakly, so a static
+    /// instance outlives the coordinator it was made for, keeps firing with a nil `self`, and
+    /// makes the next coordinator's `== nil` guard refuse to install one — leaving every later
+    /// session unprobed. It also has to live here rather than in the extension below, because
+    /// extensions cannot hold stored properties.
+    private var restProbeTimer: Timer?
         // Callbacks
         var onRetryMessage: ((UUID) -> Void)?
         var onOpenSoulSettings: (() -> Void)?
@@ -5659,11 +5668,6 @@ extension CollectionViewMessageListV3.Coordinator {
         return UserDefaults.standard.bool(forKey: "minis.layoutProbe")
     }
 
-    // Per coordinator, NOT static: a static timer captured self weakly, so when a
-    // coordinator was released on a session switch the timer survived with a nil self and
-    // the next coordinator's `== nil` guard refused to install one — leaving every later
-    // session unprobed.
-    private var restProbeTimer: Timer?
     private static var restProbeCursor = 0
     private static var restProbeTick = 0
     private static var restProbeSuppressed = 0
