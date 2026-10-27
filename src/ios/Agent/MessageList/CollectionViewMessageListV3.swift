@@ -902,7 +902,7 @@ extension CollectionViewMessageListV3 {
              if let cv = self.viewController?.collectionView,
                 let layout = cv.collectionViewLayout as? MessageListLayout {
                  cv.layoutIfNeeded()
-                 self.reportFrameMismatch(cv: cv, layout: layout)
+                 self.reportFrameMismatch(cv: cv, layout: layout, caller: "attachmentSizeChanged")
              }
             let visibleIPs = cv.indexPathsForVisibleItems.sorted()
             var cleared = 0
@@ -2492,7 +2492,10 @@ extension CollectionViewMessageListV3 {
         }
     }
 
-    private func reportFrameMismatch(cv: UICollectionView, layout: MessageListLayout) {
+    private func reportFrameMismatch(cv: UICollectionView, layout: MessageListLayout, caller: String = "?") {
+        // Unconditional on entry: a clean run must leave a trace, otherwise "no line" reads
+        // as "clean" when it may mean "never called". Counts only — no text, no identifiers.
+        AppLogger(category: "FrameMismatch").info("[FrameMismatch] check caller=\(caller) visible=\(cv.indexPathsForVisibleItems.count)")
         // Visible cells only: an off-screen cell is allowed to be stale while a
         // turn streams, and counting those would make the number unreadable.
         for indexPath in cv.indexPathsForVisibleItems {
@@ -2620,7 +2623,7 @@ extension CollectionViewMessageListV3 {
                                  if let cv = self.viewController?.collectionView,
                                     let layout = cv.collectionViewLayout as? MessageListLayout {
                                      cv.layoutIfNeeded()
-                                     self.reportFrameMismatch(cv: cv, layout: layout)
+                                     self.reportFrameMismatch(cv: cv, layout: layout, caller: "thinkingToggled")
                                  }
                         alog.info("[AttachMount] msg=\(msgId.uuidString.prefix(8)) idx=\(idx) invalidated + reconfigured")
                     }
@@ -3277,7 +3280,7 @@ extension CollectionViewMessageListV3 {
             let snapLog = AppLogger(category: "SnapshotDiag")
             let blockItems = newItems.filter { if case .assistantBlock = $0 { return true }; return false }
             if let lastAssistant = messages.last(where: { $0.role == .assistant }) {
-                snapLog.debug("[SnapshotDiag] caller=\(caller) totalItems=\(newItems.count) blockItems=\(blockItems.count) lastAssistantBlocks=\(lastAssistant.blocks.count) msgCount=\(messages.count)")
+                snapLog.info("[SnapshotDiag] caller=\(caller) totalItems=\(newItems.count) blockItems=\(blockItems.count) lastAssistantBlocks=\(lastAssistant.blocks.count) msgCount=\(messages.count)")
                 for (i, block) in lastAssistant.blocks.enumerated() {
                     let contentLen = block.content.count
                     let tail = String(block.content.suffix(20))
@@ -3512,7 +3515,7 @@ extension CollectionViewMessageListV3 {
         if let cv = self.viewController?.collectionView,
            let layout = cv.collectionViewLayout as? MessageListLayout {
             cv.layoutIfNeeded()
-            self.reportFrameMismatch(cv: cv, layout: layout)
+            self.reportFrameMismatch(cv: cv, layout: layout, caller: "applySnapshot")
         }
         }
 
