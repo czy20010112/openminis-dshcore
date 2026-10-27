@@ -9,7 +9,7 @@ import UserNotifications
 @available(iOS 16.0, *)
 struct SendPromptIntent: AppIntent {
     static var title: LocalizedStringResource = "Send Prompt"
-    static var description = IntentDescription("Sends a prompt to the Minis AI agent. Returns session info immediately while the task runs in the background.")
+    static var description = IntentDescription("Sends a prompt to the mini-dsh AI agent. Returns session info immediately while the task runs in the background.")
     static var openAppWhenRun = false
 
     // [T-shortcuts-automation-no-prompt-field] `requestValueDialog` alone marks
@@ -21,7 +21,7 @@ struct SendPromptIntent: AppIntent {
     // makes the text field appear. `inputConnectionBehavior` additionally lets
     // the field accept the previous action's output as a variable.
     @Parameter(title: "Prompt",
-               requestValueDialog: "What would you like to ask Minis?",
+               requestValueDialog: "What would you like to ask mini-dsh?",
                inputConnectionBehavior: .connectToPreviousIntentResult)
     var prompt: String
 
@@ -180,7 +180,7 @@ struct SendPromptIntent: AppIntent {
             let promptPreview = String(prompt.prefix(50))
             ShortcutNotification.post(
                 id: "shortcut-start-\(sid)",
-                title: AppLocalized("Minis Task Started"),
+                title: AppLocalized("mini-dsh Task Started"),
                 body: "\(modelName): \(promptPreview)\(prompt.count > 50 ? "…" : "")",
                 sessionId: sid
             )
@@ -202,7 +202,7 @@ struct SendPromptIntent: AppIntent {
             if sendCompletionNotification {
                 ShortcutNotification.post(
                     id: "shortcut-done-\(sid)",
-                    title: AppLocalized("Minis Task Completed"),
+                    title: AppLocalized("mini-dsh Task Completed"),
                     body: "\(modelName): \(String(responseText.prefix(200)))",
                     sessionId: sid
                 )
@@ -237,7 +237,7 @@ struct SendPromptIntent: AppIntent {
             if capturedSendCompletionNotification {
                 ShortcutNotification.post(
                     id: "shortcut-done-\(capturedSid)",
-                    title: AppLocalized("Minis Task Completed"),
+                    title: AppLocalized("mini-dsh Task Completed"),
                     body: "\(capturedModelName): \(summary)",
                     sessionId: capturedSid
                 )

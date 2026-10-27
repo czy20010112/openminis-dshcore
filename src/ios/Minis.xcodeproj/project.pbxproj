@@ -3432,6 +3432,14 @@
 					"$(SRCROOT)/../../deps/frameworks/FFmpeg.framework/Headers",
 					"$(SRCROOT)/Vendor/cppjieba/include",
 				);
+				// [T-rename-mini-dsh] Home-screen name. Deliberately a BUILD
+				// SETTING and not a new Info.plist key: the bundle identifier
+				// (`com.openminis.minidsh`), the URL schemes (`minis://`,
+				// `minis-mcp://`), the App Group and every Keychain service name
+				// stay exactly as they are — changing any of them would break
+				// deep links, drop the Keychain items and make an over-the-top
+				// install impossible.
+				INFOPLIST_KEY_CFBundleDisplayName = "mini-dsh";
 				INFOPLIST_FILE = "$(SRCROOT)/Info.plist";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "VM requires network access for SLIRP networking";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -3487,6 +3495,14 @@
 					"$(SRCROOT)/../../deps/frameworks/FFmpeg.framework/Headers",
 					"$(SRCROOT)/Vendor/cppjieba/include",
 				);
+				// [T-rename-mini-dsh] Home-screen name. Deliberately a BUILD
+				// SETTING and not a new Info.plist key: the bundle identifier
+				// (`com.openminis.minidsh`), the URL schemes (`minis://`,
+				// `minis-mcp://`), the App Group and every Keychain service name
+				// stay exactly as they are — changing any of them would break
+				// deep links, drop the Keychain items and make an over-the-top
+				// install impossible.
+				INFOPLIST_KEY_CFBundleDisplayName = "mini-dsh";
 				INFOPLIST_FILE = "$(SRCROOT)/Info.plist";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "VM requires network access for SLIRP networking";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;

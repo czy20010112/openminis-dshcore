@@ -220,7 +220,7 @@ struct SoulSettingsView: View {
                 Text(AppLocalized("Images must have a transparent background (PNG). Photos without transparency can't be used."))
             }
             VStack(alignment: .leading, spacing: 2) {
-                Text(name.isEmpty ? "Minis" : name)
+                Text(name.isEmpty ? "mini-dsh" : name)
                     .font(AppFont.sw(20, weight: .semibold, category: .title))
                 if !style.trimmingCharacters(in: .whitespaces).isEmpty {
                     Text(style)

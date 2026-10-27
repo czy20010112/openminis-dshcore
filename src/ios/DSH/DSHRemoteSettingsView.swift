@@ -136,7 +136,7 @@ struct DSHRemoteSettingsView: View {
             // now reads as a promise of rendering-only. The pairing sends text to
             // the computer, the answer streams back live, and the model still runs
             // there — say exactly that.
-            Text("When on, the conversation list shows this computer's conversations instead of local Minis chats. Messages you send from here run on the computer and stream back live; the model never runs on this device.")
+            Text("When on, the conversation list shows this computer's conversations instead of local mini-dsh chats. Messages you send from here run on the computer and stream back live; the model never runs on this device.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }
@@ -150,7 +150,7 @@ struct DSHRemoteSettingsView: View {
     private var teammateSection: some View {
         Section("Teammates") {
             Toggle("Dispatch tasks to this computer", isOn: $team.autoDispatch)
-            Text("When on, the Minis agent on this phone may hand a task to this computer by itself — full desktop toolchains, large builds, that machine's own files — and keeps talking to the same teammate for follow-ups. When off it only dispatches when you ask: the tools stay available, the standing instruction disappears.")
+            Text("When on, the mini-dsh agent on this phone may hand a task to this computer by itself — full desktop toolchains, large builds, that machine's own files — and keeps talking to the same teammate for follow-ups. When off it only dispatches when you ask: the tools stay available, the standing instruction disappears.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
             // The availability answer comes from the same place the tool

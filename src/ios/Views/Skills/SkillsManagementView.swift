@@ -139,7 +139,7 @@ struct SkillsManagementView: View {
                     Button {
                         showSkillsBrowser = true
                     } label: {
-                        Label(AppLocalized("Minis Skills"), systemImage: "globe")
+                        Label(AppLocalized("mini-dsh Skills"), systemImage: "globe")
                     }
                     // Skill iCloud sync is wired through SyncV2; hide the
                     // force-sync entry entirely when the user has the

@@ -6,7 +6,7 @@ import Foundation
 @available(iOS 16.0, *)
 struct OpenSessionIntent: AppIntent {
     static var title: LocalizedStringResource = "Open Session"
-    static var description = IntentDescription("Opens a Minis chat session in the app.")
+    static var description = IntentDescription("Opens a mini-dsh chat session in the app.")
     static var openAppWhenRun = true
 
     @Parameter(title: "Session")

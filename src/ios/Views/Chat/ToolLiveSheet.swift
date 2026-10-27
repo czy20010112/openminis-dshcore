@@ -532,7 +532,7 @@ struct ToolLiveSheet: View {
                 // out to the step pill's trailing column (under the
                 // elapsed-duration "5s" text) so it lives next to where the
                 // user is already scanning timing info.
-                Text("Minis Computer")
+                Text("mini-dsh Computer")
                     .font(AppFont.sw(15, weight: .semibold, category: .body))
 
                 Spacer()

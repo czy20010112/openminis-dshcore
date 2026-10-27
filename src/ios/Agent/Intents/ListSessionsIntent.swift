@@ -6,7 +6,7 @@ import Foundation
 @available(iOS 16.0, *)
 struct ListSessionsIntent: AppIntent {
     static var title: LocalizedStringResource = "List Sessions"
-    static var description = IntentDescription("Lists all Minis chat sessions with their titles and IDs.")
+    static var description = IntentDescription("Lists all mini-dsh chat sessions with their titles and IDs.")
     static var openAppWhenRun = false
 
     func perform() async throws -> some IntentResult & ReturnsValue<String> {
