@@ -976,7 +976,11 @@ final class DSHRemoteStream: @unchecked Sendable {
     }
 
     private func noteCursor(_ cursor: Int?) {
-        guard let cursor, cursor > 0 else { return }
+        // Delivered even when the cursor is 0/-1 (a Session with no events yet):
+        // the store uses this callback as its LIVENESS signal, and a heartbeat is
+        // the only traffic an idle Session produces. Progress is still only ever
+        // recorded from a positive value.
+        guard let cursor else { return }
         lock.lock()
         let previous = lastCursor ?? 0
         if cursor > previous { lastCursor = cursor }
