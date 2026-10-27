@@ -442,33 +442,59 @@ struct DSHRemoteChatView: View {
     /// to bottom" behaviour.
     @State private var composerFocused = false
 
+    /// Regular width (iPad, and an iPhone in landscape on some models) reads badly
+    /// edge-to-edge, so the local conversation caps its column at 900pt and centres
+    /// it — `AIChatView.maxContentWidth`. The remote page used to pass 0 here, which
+    /// meant "no cap": on an iPad in landscape the transcript ran from edge to edge
+    /// while the same conversation on the phone stayed a readable column. Same rule,
+    /// same constant, one place: if the local cap changes, change it here too.
+    private static let regularWidthContentCap: CGFloat = 900
+    @Environment(\.horizontalSizeClass) private var hSizeClass
+    private var maxContentWidth: CGFloat {
+        hSizeClass == .regular ? Self.regularWidthContentCap : 0
+    }
+
+    /// Everything that is not the transcript sits in the same capped column as the
+    /// local page's bars. The transcript itself is capped INSIDE the list (per cell),
+    /// which is why it is not wrapped here.
+    @ViewBuilder
+    private func capped<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        content().frame(maxWidth: maxContentWidth > 0 ? maxContentWidth : .infinity)
+    }
+
     var body: some View {
         VStack(spacing: 0) {
-            connectionBanner
+            capped { connectionBanner }
             transcript
             if let sendError = adapter.sendErrorText {
-                statusLine(sendError, retryTitle: AppLocalized("Retry")) {
-                    adapter.dismissSendError()
-                    send()
+                capped {
+                    statusLine(sendError, retryTitle: AppLocalized("Retry")) {
+                        adapter.dismissSendError()
+                        send()
+                    }
                 }
             }
             if let error = adapter.errorText {
-                statusLine(error, retryTitle: AppLocalized("Reconnect")) {
-                    Task { await adapter.load(sessionId: conversationId, force: true) }
+                capped {
+                    statusLine(error, retryTitle: AppLocalized("Reconnect")) {
+                        Task { await adapter.load(sessionId: conversationId, force: true) }
+                    }
                 }
             }
-            DSHRemoteStatusPanel(summary: adapter.summary, onHeightChange: { panelHeight = $0 })
-            DSHRemoteComposer(
-                text: $draft,
-                contextReading: adapter.contextReading,
-                isRunning: adapter.isRunning,
-                isSending: adapter.isSending,
-                onSend: { send() },
-                onStop: { Task { await adapter.stop() } },
-                onHeightChange: { composerHeight = $0 },
-                onFocusChange: { composerFocused = $0 },
-                onContextTap: { showContextPanel = true }
-            )
+            capped { DSHRemoteStatusPanel(summary: adapter.summary, onHeightChange: { panelHeight = $0 }) }
+            capped {
+                DSHRemoteComposer(
+                    text: $draft,
+                    contextReading: adapter.contextReading,
+                    isRunning: adapter.isRunning,
+                    isSending: adapter.isSending,
+                    onSend: { send() },
+                    onStop: { Task { await adapter.stop() } },
+                    onHeightChange: { composerHeight = $0 },
+                    onFocusChange: { composerFocused = $0 },
+                    onContextTap: { showContextPanel = true }
+                )
+            }
         }
         .sheet(isPresented: $showContextPanel) {
             DSHRemoteContextSheet(reading: adapter.contextReading, running: adapter.isRunning, summary: adapter.summary)
@@ -511,7 +537,7 @@ struct DSHRemoteChatView: View {
                 onResume: nil,
                 onStop: { Task { await adapter.stop() } },
                 onCompact: nil,
-                maxContentWidth: 0,
+                maxContentWidth: maxContentWidth,
                 floatingBarHeight: 0,
                 inputBarHeight: composerHeight > 0 ? composerHeight : 132,
                 panelHeights: panelHeight

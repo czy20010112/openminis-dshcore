@@ -76,6 +76,9 @@ final class DSHRemoteTranscriptWriter: ObservableObject {
     /// durable `assistant/message` has no attempt field, so this is the only real
     /// source for the `a=` in `writer apply`.
     private var attemptByStep: [String: String] = [:]
+    /// The newest `seq` this writer has applied. Drives the dedupe in
+    /// `applyIncremental`: a resumed stream may repeat what the page already has.
+    private var lastAppliedSeq: Double?
 
     private static let mediaResolver: (MediaRef) -> URL = { _ in URL(fileURLWithPath: "/dev/null") }
 
@@ -100,6 +103,7 @@ final class DSHRemoteTranscriptWriter: ObservableObject {
         deltaOpened = []
         attemptByStep = [:]
         cursor = 0
+        lastAppliedSeq = nil
         // Only publish when something actually changes: `@Published` fires on
         // every assignment, and each one makes the list run a full diffable
         // snapshot apply. Opening a page on a fresh view model would otherwise
@@ -118,13 +122,45 @@ final class DSHRemoteTranscriptWriter: ObservableObject {
         switch frame {
         case .snapshot(let cursor, let records, _, let running, _, _, _):
             applySnapshot(cursor: cursor, records: records, running: running)
-        case .event(_, let event):
-            apply(event: event)
+        case .event(let seq, let event):
+            // One implementation for "a record arrived", not two: a resumed stream
+            // arrives as a run of `.event` frames, and a live frame is a run of one.
+            applyIncremental(records: [DSHHistoryRecord(seq: Double(seq), event: event)])
         case .delta(let turn, let step, let attempt, let index, let channel, let text):
             applyDelta(turn: turn, step: step, attempt: attempt, index: index, channel: channel, text: text)
         case .deltaEnd(let turn, _, let attempt):
             endDelta(turn: turn, attempt: attempt)
         }
+    }
+
+    /// Append records that continue the transcript (`resumed: true` from the host,
+    /// or a cached tail being caught up).
+    ///
+    /// Deliberately NOT `applySnapshot`: this must not rebuild the list, because
+    /// the point of an incremental fetch is that the page is already on screen.
+    /// Records are de-duplicated by `seq`, so a resumed stream that overlaps the
+    /// page cannot double-apply a turn.
+    ///
+    /// - Returns: how many records were actually applied (0 = nothing new).
+    @discardableResult
+    func applyIncremental(records: [DSHHistoryRecord]) -> Int {
+        var applied = 0
+        for record in records.sorted(by: { ($0.seq ?? 0) < ($1.seq ?? 0) }) {
+            guard let event = record.event else { continue }
+            if let seq = record.seq {
+                if let last = lastAppliedSeq, seq <= last {
+                    NSLog("[DSH] incremental skipped seq=\(Int(seq)) last=\(Int(last))")
+                    continue
+                }
+                lastAppliedSeq = seq
+            }
+            apply(event: event)
+            applied += 1
+        }
+        if applied > 0 {
+            NSLog("[DSH] incremental applied=\(applied) lastSeq=\(Int(lastAppliedSeq ?? 0)) rows=\(vm.messages.count)")
+        }
+        return applied
     }
 
     /// Replace the transcript with a page of records.
@@ -163,6 +199,9 @@ final class DSHRemoteTranscriptWriter: ObservableObject {
         // row, exactly like a live one — otherwise the snapshot duplicates it.
         for event in echoedUserMessages { promoteOptimisticUser(echo: event) }
         self.cursor = max(cursor, projection.lastSeq)
+        // A rebuild re-establishes the watermark: anything at or below this seq is
+        // already on screen.
+        lastAppliedSeq = records.compactMap { $0.seq }.max() ?? lastAppliedSeq
         renderAll()
         // `running` comes from the harness' own Session row and is authoritative:
         // a turn that died without a `turn/end` (host killed mid-turn) leaves the

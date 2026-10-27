@@ -456,6 +456,26 @@ final class DSHRemoteClient: @unchecked Sendable {
         }
     }
 
+    /// How a `snapshot` response must be applied.
+    enum DSHRemoteSnapshotDisposition: Equatable {
+        /// Throw away whatever is on screen and rebuild from these records.
+        case replace
+        /// These records continue the log: append them.
+        case append
+    }
+
+    /// `reset` wins; an absent pair means REPLACE.
+    ///
+    /// A host that predates the flags cannot tell us it resumed, and appending a
+    /// whole transcript onto the cached one is unrecoverable, while re-reading a
+    /// full page only costs one fetch. A host that DOES send `resumed: true` is new
+    /// enough to be believed even when it omits `reset`.
+    static func snapshotDisposition(resumed: Bool?, reset: Bool?) -> DSHRemoteSnapshotDisposition {
+        if reset == true { return .replace }
+        if resumed == true { return .append }
+        return .replace
+    }
+
     /// `GET /mobile/v1/dsh/summary` — context / goal / todos / token usage in one
     /// call, for the context panel.
     ///
@@ -931,6 +951,22 @@ final class DSHRemoteStream: @unchecked Sendable {
         case "snapshot":
             noteCursor(envelope.cursor)
             let records = envelope.records?.values ?? []
+            // A host that cannot answer `after` must be treated as a FULL page:
+            // assuming "resumed" would append a whole transcript onto the cached
+            // one. `snapshotDisposition` is that rule, in one testable place.
+            let disposition = DSHRemoteClient.snapshotDisposition(resumed: envelope.resumed,
+                                                                  reset: envelope.reset)
+            if disposition == .append {
+                // Continue: hand each record over as an EVENT, which is the path
+                // the writer already uses to append to a live transcript. Nothing
+                // downstream has to learn a new frame shape.
+                NSLog("[DSH] snapshot resumed cursor=\(envelope.cursor ?? -1) records=\(records.count) (append)")
+                for record in records.sorted(by: { ($0.seq ?? 0) < ($1.seq ?? 0) }) {
+                    guard let event = record.event else { continue }
+                    deliver { self.onFrame(.event(seq: Int(record.seq ?? 0), event: event)) }
+                }
+                return
+            }
             let frame = DSHRemoteStreamFrame.snapshot(
                 cursor: envelope.cursor ?? 0, records: records, hasMore: envelope.hasMore ?? false,
                 running: envelope.running ?? false, title: envelope.title,
