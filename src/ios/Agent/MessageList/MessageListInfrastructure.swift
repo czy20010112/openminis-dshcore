@@ -1217,3 +1217,67 @@ final class CellStateBridgeV2: ObservableObject {
     /// Compact summary — presented from overlay outside cell tree for animation.
     var onShowCompactSummary: ((String) -> Void)?
 }
+
+// MARK: - Rest-state diagnostics (I2 / I3)
+
+extension SelfSizingCell {
+
+    /// What one sampled cell looks like from the OUTSIDE of the layout.
+    ///
+    /// [T-rest-probe] These three numbers deliberately do NOT come from
+    /// `MessageListLayout`: in the failure state the cell's frame IS the layout's
+    /// attribute (a throwing `preferredLayoutAttributesFitting` returns it), so any
+    /// "frame vs attributes" comparison reads zero. What can be wrong is *inside*
+    /// the cell, and only a measurement from inside can see it.
+    struct RestProbeReading {
+        var clipWant: CGFloat = 0
+        var clipHave: CGFloat = 0
+        var clipped = false
+        var contentWant: CGFloat = 0
+        var contentChecked = false
+        var contentMismatch = false
+    }
+
+    /// The markdown text view inside this cell, if the cell hosts one.
+    private var restProbeTextView: UITextView? {
+        var subtree: [UIView] = []
+        Self.collectSubtree(contentView, into: &subtree)
+        return subtree.compactMap { $0 as? UITextView }.first
+    }
+
+    /// I2: the inner markdown view wants more height than it was given.
+    ///
+    /// Cheap and safe — reading `contentSize`/`bounds` does not re-enter the
+    /// hosting graph, so it can run every tick.
+    func clipProbe() -> (want: CGFloat, have: CGFloat, clipped: Bool)? {
+        guard let tv = restProbeTextView else { return nil }
+        let want = tv.contentSize.height
+        let have = tv.bounds.height
+        return (want, have, want > have + 4)
+    }
+
+    /// I3: what the content view WOULD need, measured with the sizes that ignore
+    /// the cell's current frame.
+    ///
+    /// RE-ENTERS the hosting graph (FB13213926 family), so it is guarded twice: it
+    /// only runs when the probe switch is on, and a throw aborts the sample instead
+    /// of reporting a mismatch.
+    func contentMismatchProbe(width: CGFloat) -> (want: CGFloat, ok: Bool) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        var subtree: [UIView] = []
+        Self.collectSubtree(contentView, into: &subtree)
+        var want: CGFloat = 0
+        // `noff_try_objc` takes a Void closure and reports only "did it throw",
+        // so the measurement lands in `want` and nothing is returned from it.
+        let ok = noff_try_objc {
+            withExtendedLifetime(subtree) {
+                want = contentView.systemLayoutSizeFitting(
+                    CGSize(width: width, height: 0),
+                    withHorizontalFittingPriority: .required,
+                    verticalFittingPriority: .fittingSizeLevel
+                ).height
+            }
+        }
+        return (want, ok)
+    }
+}
