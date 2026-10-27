@@ -96,6 +96,15 @@ struct DSHRemoteModelPicker: View {
                             .font(AppFont.sw(11, weight: .semibold, category: .ui))
                     }
                 }
+                // Host fact, not a guess: the host's `selectModel` writes that
+                // computer's own profile (`agent-default-model`, patchReload: live),
+                // so this changes that machine's DEFAULT model — permanent, and it
+                // applies to conversations started there too.
+                Section {
+                    Text("This also becomes the paired computer's default model, so conversations you start there will use it.")
+                        .font(AppFont.sw(11, weight: .regular, category: .ui))
+                        .foregroundStyle(ChatColors.secondaryText)
+                }
                 if let notice {
                     Section {
                         Text(notice)
@@ -172,7 +181,7 @@ struct DSHRemoteModelPicker: View {
             onSwitched(answer)
             // The host applies the change to the NEXT request, so say it instead of
             // letting the user think a running turn was restarted.
-            notice = AppLocalized("Takes effect on the next request.")
+            notice = AppLocalized("Takes effect on the next request. Also changes this computer's default model.")
             var updated = list
             updated?.current = answer.current ?? item.ref
             list = updated

@@ -62,6 +62,15 @@ final class DSHRemoteChatAdapter: ObservableObject {
     /// poll keeps the last good document: blanking the panels because one poll
     /// timed out is a worse lie than a second-older truth.
     @Published private(set) var summary: DSHRemoteSessionSummary?
+    /// Whether THIS turn has produced anything the user can already see (a thinking
+    /// block, a tool block, or text).
+    ///
+    /// [T-thinking-indicator] The indicator must be gated on THIS, not on
+    /// `isRunning`: a remote turn keeps the flag true for its whole duration, so an
+    /// `isRunning`-driven indicator stays lit long after the first token — the same
+    /// trap `isStreamingCell` set for the layout. Reset on the false→true edge,
+    /// flipped by the first frame that carries content.
+    @Published private(set) var hasContentThisTurn = false
 
     /// When to refetch: open, every `turn/end`, every SECOND snapshot.
     private var summaryCadence = DSHRemoteSummaryCadence()
@@ -92,6 +101,11 @@ final class DSHRemoteChatAdapter: ObservableObject {
                     // were growing are final from here on, so this is the moment
                     // their true height can be cached — and the moment the cells
                     // that were laid out on an estimate need to be told.
+                    if !wasRunning, value {
+                        // A new turn: nothing on screen yet, so the indicator is
+                        // allowed to show until the first frame carries content.
+                        self.hasContentThisTurn = false
+                    }
                     if wasRunning, !value {
                         self.refreshHeightMetadata(nudge: true)
                         // `turn/end` is when the host writes goal/todo, so this
@@ -243,7 +257,10 @@ final class DSHRemoteChatAdapter: ObservableObject {
         // Seven associated values since `tokenUsage` joined the frame: the
         // pattern's arity must match exactly, so the trailing one is matched and
         // ignored — the page gets usage from the summary document, not here.
-        case .snapshot(_, _, _, _, let snapshotTitle, let pressure, _):
+        case .snapshot(let records, _, _, _, let snapshotTitle, let pressure, _):
+            // A restored snapshot with records means the turn already has visible
+            // content: the indicator must not appear over an already-written answer.
+            if records > 0 { hasContentThisTurn = true }
             // A snapshot proves the stream is alive, so whatever the last
             // connection error said no longer describes this page.
             errorText = nil
@@ -252,7 +269,11 @@ final class DSHRemoteChatAdapter: ObservableObject {
                 if !trimmed.isEmpty { title = trimmed }
             }
             if let pressure { apply(pressure: pressure) }
-        case .event, .delta, .deltaEnd:
+        case .event, .delta:
+            // First content of the turn: the indicator retires on this very frame,
+            // not one runloop later.
+            hasContentThisTurn = true
+        case .deltaEnd:
             break
         }
         // The writer is the only place blocks are created, so this is the single
@@ -514,6 +535,23 @@ struct DSHRemoteChatView: View {
                     statusLine(error, retryTitle: AppLocalized("Reconnect")) {
                         Task { await adapter.load(sessionId: conversationId, force: true) }
                     }
+                }
+            }
+            // [T-thinking-indicator] Reuses the LOCAL component verbatim
+            // (`TypingIndicator` — the same three-dot animation the local chat
+            // shows) so the two surfaces cannot drift. Gated on "this turn has
+            // produced nothing yet": `isRunning` alone stays true for the whole
+            // turn and would keep the dots lit over an answer already on screen.
+            if adapter.isRunning && !adapter.hasContentThisTurn {
+                capped {
+                    HStack {
+                        TypingIndicator()
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 6)
+                    .transition(.opacity)
+                    .accessibilityIdentifier("dshThinkingIndicator")
                 }
             }
             capped { DSHRemoteStatusPanel(summary: adapter.summary, onHeightChange: { panelHeight = $0 }) }
