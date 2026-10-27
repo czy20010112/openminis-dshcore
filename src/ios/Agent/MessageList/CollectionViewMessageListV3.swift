@@ -2073,7 +2073,13 @@ extension CollectionViewMessageListV3 {
                     // layout doesn't reuse the stale empty-content height.
                     // Without this, the cell briefly keeps its ~0pt height from
                     // the empty block, causing overlap with the tool block above.
-                    self.viewController?.messageListLayout?.invalidateHeight(at: idx)
+                    // [T-overlap-5.1] `droppingSeed: true` — the block went from
+                    // empty to filled, so the layout's seed for this index is not
+                    // a conservative fallback any more: it is the height of the
+                    // EMPTY block, i.e. the number that made the next cell overlap
+                    // this one. Dropping it forces the layout to place the next
+                    // cell from the height this cell measures now.
+                    self.viewController?.messageListLayout?.invalidateHeight(at: idx, droppingSeed: true)
 
                     // [T-ios-empty-block-fill-cell-cache] Clear on BOTH sides of
                     // the apply — same shape as the `.thinkingBlockToggled`
@@ -2448,7 +2454,81 @@ extension CollectionViewMessageListV3 {
         /// set to true so we know to re-apply later.
         private var hasPendingSnapshot: Bool = false
 
-        private func applySnapshot(messages rawMessages: [ChatMessage], caller: String = "?") {
+        // MARK: - [FrameMismatch] invariant probe
+
+    /// Counts the cells whose REAL frame disagrees with the frame the layout
+    /// reserved for them.
+    ///
+    /// WHY THIS EXISTS: `frame.maxY <= next.frame.minY` is the whole definition of
+    /// "no overlap", and nothing in the tree measured it. A cell that overshoots
+    /// its reserved slot by more than 2pt is a cell that is painting over its
+    /// neighbour — exactly the operator's report. One line per second (a burst of
+    /// `apply` calls would otherwise print hundreds) is enough to settle it.
+    ///
+    /// PRIVACY: index, kind, and points only. Never the text, never a message id,
+    /// never a Session id or its prefix — this line ships in Release.
+    private static var frameMismatchLastFlush = Date.distantPast
+    private static var frameMismatchPending = 0
+    private static var frameMismatchKinds: Set<String> = []
+    private static var frameMismatchMax: CGFloat = 0
+    /// Whether any visible content cell in this window measured as ~0pt. Sticky
+    /// for the window: a `Zero` that appears once must show up in the line even if
+    /// the max delta is tiny.
+    private static var frameMismatchZeroSeen = false
+
+    /// Only real content cells can "collapse": a footer or the typing row is
+    /// legitimately short, and counting those would make the probe cry wolf.
+    private func isContentItem(_ item: MessageListItem?) -> Bool {
+        switch item {
+        case .wholeMessage?, .assistantBlock?: return true
+        default: return false
+        }
+    }
+
+    private func reportFrameMismatch(cv: UICollectionView, layout: MessageListLayout) {
+        // Visible cells only: an off-screen cell is allowed to be stale while a
+        // turn streams, and counting those would make the number unreadable.
+        for indexPath in cv.indexPathsForVisibleItems {
+            guard let cell = cv.cellForItem(at: indexPath),
+                  let attrs = layout.layoutAttributesForItem(at: indexPath) else { continue }
+            let delta = abs(cell.frame.height - attrs.frame.height)
+            let item = self.dataSource?.itemIdentifier(for: indexPath)
+            // Two ways to be wrong, and the second is invisible to a difference
+            // test: a cell can paint OVER its neighbour (delta > 2), or the cell
+            // and the layout can AGREE that it is ~0pt tall — a collapse, which is
+            // exactly the failure a `droppingSeed` change could introduce. A run
+            // whose `kinds` contains `Zero` is a FAILED run even when `n` is small.
+            let isZero = cell.frame.height < 20 && attrs.frame.height < 20 && isContentItem(item)
+            guard delta > 2 || isZero else { continue }
+            let kind: String
+            if case .assistantBlock = item {
+                kind = "Block"
+            } else {
+                kind = "WholeMessage"
+            }
+            Self.frameMismatchPending += 1
+            Self.frameMismatchKinds.insert(kind)
+            if isZero { Self.frameMismatchZeroSeen = true }
+            Self.frameMismatchMax = max(Self.frameMismatchMax, delta)
+        }
+        guard Self.frameMismatchPending > 0 else { return }
+        let now = Date()
+        guard now.timeIntervalSince(Self.frameMismatchLastFlush) >= 1 else { return }
+        Self.frameMismatchLastFlush = now
+        var kinds = Self.frameMismatchKinds.sorted()
+        if Self.frameMismatchZeroSeen, !kinds.contains("Zero") { kinds.append("Zero") }
+        AppLogger(category: "FrameMismatch").info(
+            "[FrameMismatch] n=\(Self.frameMismatchPending) "
+            + "kinds=\(kinds.joined(separator: ",")) "
+            + "max=\(String(format: "%.1f", Self.frameMismatchMax))"
+        )
+        Self.frameMismatchZeroSeen = false
+        Self.frameMismatchPending = 0
+        Self.frameMismatchKinds.removeAll(keepingCapacity: true)
+        Self.frameMismatchMax = 0
+    }
+
+    private func applySnapshot(messages rawMessages: [ChatMessage], caller: String = "?") {
             guard let vm, !vm.isLoadingSession else { return }
 
             // [T-bridge-message-ui-leak] Single UI-collection sink for EVERY
@@ -2577,10 +2657,22 @@ extension CollectionViewMessageListV3 {
                                 if let cell = cellOpt {
                                     cell.clearCachedHeight()
                                 }
-                                layout.invalidateHeight(at: i)
+                                // [T-overlap-5.1] Same reason as the fill signal:
+                                // a collapse/expand changes the block's height, so
+                                // the pre-change seed must go with the measured
+                                // cache. Leaving it behind is what kept the cells
+                                // below at the EXPANDED positions after a collapse.
+                                layout.invalidateHeight(at: i, droppingSeed: true)
                                 var snap = snapshot
                                 snap.reconfigureItems([item])
                                 self.dataSource?.apply(snap, animatingDifferences: false)
+                    // [T-overlap-probe] Measure the invariant right after every
+                    // apply: a cell whose real height disagrees with its reserved
+                    // slot is a cell painting over its neighbour.
+                    if let cv = self.viewController?.collectionView,
+                       let layout = cv.collectionViewLayout as? MessageListLayout {
+                        self.reportFrameMismatch(cv: cv, layout: layout)
+                    }
                                 layout.invalidateLayout()
                                 tlog.info("[ThinkingCollapse] HIT block=\(blockId.uuidString.prefix(8)) idx=\(i) cellFound=\(cellOpt != nil) frameH=\(String(format: "%.1f", frameH)) beforeLayout=\(beforeLayout.map { String(format: "%.1f", $0) } ?? "nil") beforePrecalc=\(beforePrecalc.map { String(format: "%.1f", $0) } ?? "nil")")
                                 // Defer one runloop tick to capture the
