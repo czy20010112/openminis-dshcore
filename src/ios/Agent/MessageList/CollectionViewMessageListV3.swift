@@ -1228,6 +1228,9 @@ extension CollectionViewMessageListV3 {
             self.vm = vm
             vc.loadViewIfNeeded()
             guard let collectionView = vc.collectionView else { return }
+            // [T-rest-probe] Someone has to install the ticker; this is the only
+            // place the coordinator is handed its view controller.
+            startRestProbeIfNeeded()
             collectionView.delegate = self
             collectionView.prefetchDataSource = self
             // Disable UIKit's main-thread cell prefetch. Profile (Time Profiler)
@@ -3987,6 +3990,9 @@ extension CollectionViewMessageListV3 {
              self.reportFrameMismatch(cv: cv, layout: layout, caller: "applySnapshot")
              self.reportSeedSources(cv: cv, layout: layout, caller: "applySnapshot")
         }
+        // [T-rest-probe] Also start on the first transcript update after the switch
+        // is turned on, so an already-open session needs no relaunch.
+        self.startRestProbeIfNeeded()
         }
 
         private func reconfigureAllCells() {
