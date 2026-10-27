@@ -1027,7 +1027,8 @@ extension AIChatViewModel {
                 messages[msgIdx].blocks[blockIdx].content = toolOutput
             }
 
-        case "remote_team_spawn", "remote_team_message", "remote_team_list", "remote_team_interrupt":
+        case "remote_team_spawn", "remote_team_message", "remote_team_list", "remote_team_interrupt",
+             "remote_team_output":
             // [T-tools-remote-team] Dispatching work to the paired computer. The
             // whole feature lives in `DSHRemoteTeamTools.swift` (naming, the 409
             // rename retry, availability), and the transport is the SAME
