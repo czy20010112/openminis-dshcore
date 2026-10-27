@@ -908,7 +908,7 @@ final class DSHRemoteStore: ObservableObject {
         slot.lastActivityAt = now
         lastFrameAt = now
         markHealthy()
-        if case .snapshot(let cursor, _, _, _, _, let pressure, let usage) = frame {
+        if case .snapshot(_, _, _, _, _, let pressure, let usage) = frame {
             // Live context data goes straight into the panel's published slot: the
             // ring must not need a second request, and a summary fetched earlier
             // keeps its goal/todos while these two are refreshed.
@@ -916,13 +916,11 @@ final class DSHRemoteStore: ObservableObject {
             if pressure != nil || usage != nil {
                 mergeLiveContext(sessionId: slot.sessionId, pressure: pressure, usage: usage)
             }
-            // A snapshot is the Session's CURRENT state, so its cursor REPLACES the
-            // stored one. Taking `max` made a host that renumbered after a reset
-            // unrecoverable: the client kept asking `after=<old, larger seq>`, the
-            // host could never satisfy it, and every reconnect re-sent the page.
-            //
-            // `mirrorFrame` below aligns the mirror cursor to the same value; both
-            // go through `alignCursors` so they can never disagree.
+            // The snapshot's cursor is applied by `mirrorFrame` below, which owns
+            // BOTH cursors (stream + mirror) through `alignCursors`. A snapshot is
+            // the Session's CURRENT state, so its cursor REPLACES the stored one:
+            // taking `max` made a host that renumbered after a reset unrecoverable
+            // (the client kept asking `after=<old, larger seq>`).
             errorText = nil
         }
         // Keep the on-disk copy in step with what the writer has been given: a
