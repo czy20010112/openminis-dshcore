@@ -2355,7 +2355,7 @@ extension CollectionViewMessageListV3 {
                     // layout doesn't reuse the stale empty-content height.
                     // Without this, the cell briefly keeps its ~0pt height from
                     // the empty block, causing overlap with the tool block above.
-                    self.viewController?.messageListLayout?.invalidateHeight(at: idx)
+                    self.viewController?.messageListLayout?.invalidateHeight(at: idx, droppingSeed: true)
 
                     // [T-ios-empty-block-fill-cell-cache] Clear on BOTH sides of
                     // the apply — same shape as the `.thinkingBlockToggled`
@@ -2747,7 +2747,67 @@ extension CollectionViewMessageListV3 {
             return unique
         }
 
-        private func applySnapshot(messages rawMessages: [ChatMessage], caller: String = "?") {
+        // MARK: - [FrameMismatch] invariant probe
+
+    /// The one-line statement of this whole bug — `frame.maxY <= next.frame.minY` —
+    /// measured after every apply that can move cells.
+    ///
+    /// TWO KINDS OF WRONG, counted separately:
+    /// * `Block` / `WholeMessage`: the cell paints over its neighbour (>2pt);
+    /// * `Zero`: the cell and the layout agree it is ~0pt tall. A difference test
+    ///   cannot see this, and it is exactly what a wrong `droppingSeed` would
+    ///   produce — so a run whose `kinds` contains `Zero` is a FAILED run even
+    ///   when `n` is small.
+    ///
+    /// PRIVACY: index kind, counts and points only. Never text, never an id.
+    private static var frameMismatchLastFlush = Date.distantPast
+    private static var frameMismatchPending = 0
+    private static var frameMismatchKinds: Set<String> = []
+    private static var frameMismatchMax: CGFloat = 0
+    private static var frameMismatchZeroSeen = false
+
+    /// Footers and the typing row are legitimately short; only real content
+    /// cells can "collapse".
+    private func isContentItem(_ item: MessageListItem?) -> Bool {
+        switch item {
+        case .wholeMessage?, .assistantBlock?: return true
+        default: return false
+        }
+    }
+
+    private func reportFrameMismatch(cv: UICollectionView, layout: MessageListLayout) {
+        for indexPath in cv.indexPathsForVisibleItems {
+            guard let cell = cv.cellForItem(at: indexPath),
+                  let attrs = layout.layoutAttributesForItem(at: indexPath) else { continue }
+            let delta = abs(cell.frame.height - attrs.frame.height)
+            let item = self.dataSource?.itemIdentifier(for: indexPath)
+            let isZero = cell.frame.height < 20 && attrs.frame.height < 20 && isContentItem(item)
+            guard delta > 2 || isZero else { continue }
+            let kind: String
+            if case .assistantBlock = item { kind = "Block" } else { kind = "WholeMessage" }
+            Self.frameMismatchPending += 1
+            Self.frameMismatchKinds.insert(kind)
+            Self.frameMismatchMax = max(Self.frameMismatchMax, delta)
+            if isZero { Self.frameMismatchZeroSeen = true }
+        }
+        guard Self.frameMismatchPending > 0 else { return }
+        let now = Date()
+        guard now.timeIntervalSince(Self.frameMismatchLastFlush) >= 1 else { return }
+        Self.frameMismatchLastFlush = now
+        var kinds = Self.frameMismatchKinds.sorted()
+        if Self.frameMismatchZeroSeen, !kinds.contains("Zero") { kinds.append("Zero") }
+        AppLogger(category: "FrameMismatch").info(
+            "[FrameMismatch] n=\(Self.frameMismatchPending) "
+            + "kinds=\(kinds.joined(separator: ",")) "
+            + "max=\(String(format: "%.1f", Self.frameMismatchMax))"
+        )
+        Self.frameMismatchPending = 0
+        Self.frameMismatchKinds.removeAll(keepingCapacity: true)
+        Self.frameMismatchMax = 0
+        Self.frameMismatchZeroSeen = false
+    }
+
+    private func applySnapshot(messages rawMessages: [ChatMessage], caller: String = "?") {
             guard let vm, !vm.isLoadingSession else { return }
 
             // [T-bridge-message-ui-leak] Single UI-collection sink for EVERY
@@ -2893,10 +2953,16 @@ extension CollectionViewMessageListV3 {
                                 if let cell = cellOpt {
                                     cell.clearCachedHeight()
                                 }
-                                layout.invalidateHeight(at: i)
+                                layout.invalidateHeight(at: i, droppingSeed: true)
                                 var snap = snapshot
                                 snap.reconfigureItems([item])
                                 self.dataSource?.apply(snap, animatingDifferences: false)
+                                // [T-frame-mismatch-probe] Measure the invariant
+                                // right after the apply that can move cells.
+                                if let probeCV = self.viewController?.collectionView,
+                                   let probeLayout = probeCV.collectionViewLayout as? MessageListLayout {
+                                    self.reportFrameMismatch(cv: probeCV, layout: probeLayout)
+                                }
                                 layout.invalidateLayout()
                                 tlog.info("[ThinkingCollapse] HIT block=\(blockId.uuidString.prefix(8)) idx=\(i) cellFound=\(cellOpt != nil) frameH=\(String(format: "%.1f", frameH)) beforeLayout=\(beforeLayout.map { String(format: "%.1f", $0) } ?? "nil") beforePrecalc=\(beforePrecalc.map { String(format: "%.1f", $0) } ?? "nil")")
                                 // Defer one runloop tick to capture the

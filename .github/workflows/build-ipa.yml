@@ -260,11 +260,11 @@ jobs:
             echo "::notice::branch 'ios26' does not exist yet — skipping this job"
           fi
 
-      - name: Checkout the ios26 branch
+      - name: Checkout the main branch (iOS 26 line)
         if: steps.probe.outputs.exists == 'true'
         uses: actions/checkout@v4
         with:
-          ref: ios26
+          ref: main
           submodules: recursive
           fetch-depth: 0
 
@@ -278,18 +278,18 @@ jobs:
             echo "PROBE_SUFFIX=" >> $GITHUB_ENV
           fi
 
-      - name: Take the pipeline helpers from main
+      - name: Check the pipeline helpers are present
         if: steps.probe.outputs.exists == 'true'
         run: |
-          # The helpers live once, on main, next to this workflow. This job has
-          # checked out a different tree, so copy them across explicitly rather
-          # than keeping a second copy in sync on the ios26 branch.
-          mkdir -p "$RUNNER_TEMP/ci"
-          git fetch --no-tags --depth=1 origin main
-          git show origin/main:.github/scripts/check-dsh-module.sh > "$RUNNER_TEMP/ci/check-dsh-module.sh"
-          git show origin/main:.github/scripts/adhoc-sign.sh       > "$RUNNER_TEMP/ci/adhoc-sign.sh"
-          chmod +x "$RUNNER_TEMP/ci/"*.sh
-          echo "CI_HELPERS=$RUNNER_TEMP/ci" >> $GITHUB_ENV
+          # Both branches now carry .github/scripts (the 26 line got them when the
+          # workflow moved here), so this job reads them from its own checkout.
+          # Fetching them from another branch by name is exactly what broke when
+          # the branches were renamed.
+          set -e
+          for helper in check-dsh-module.sh adhoc-sign.sh; do
+            test -f ".github/scripts/$helper" || { echo "::error::missing .github/scripts/$helper on this branch"; exit 1; }
+          done
+          echo "CI_HELPERS=$PWD/.github/scripts" >> $GITHUB_ENV
 
       - name: Select Xcode 26
         if: steps.probe.outputs.exists == 'true'
@@ -519,7 +519,7 @@ jobs:
           git fetch --no-tags --depth=1 origin main 2>/dev/null || true
           git fetch --no-tags --depth=1 origin ios26 2>/dev/null || true
           echo "main=$(git rev-parse --short origin/main 2>/dev/null || echo n/a)" >> $GITHUB_OUTPUT
-          echo "ios26=$(git rev-parse --short origin/ios26 2>/dev/null || echo n/a)" >> $GITHUB_OUTPUT
+          echo "ios15=$(git rev-parse --short origin/ios15 2>/dev/null || echo n/a)" >> $GITHUB_OUTPUT
 
       - name: Create or update the Release
         uses: softprops/action-gh-release@v2
@@ -545,8 +545,8 @@ jobs:
 
             ## Revisions
 
-            - `main` (iOS 15 line): `${{ steps.ids.outputs.main }}`
-            - `ios26` (upstream v1.14 + DSH): `${{ steps.ids.outputs.ios26 }}`
+            - `ios15` (iOS 15 line): `${{ steps.ids.outputs.ios15 }}`
+            - `main` (upstream v1.14 + DSH, iOS 26 line): `${{ steps.ids.outputs.main }}`
 
             ## What the DSH port replaces
 
