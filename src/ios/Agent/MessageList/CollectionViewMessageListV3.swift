@@ -6224,6 +6224,7 @@ extension CollectionViewMessageListV3.Coordinator {
     private static var restProbeTimer: Timer?
     private static var restProbeCursor = 0
     private static var restProbeTick = 0
+    private static var restProbeSuppressed = 0
     private static var restProbeClipStreak: [Int: Int] = [:]
     private static var restProbeLastContentSample = Date.distantPast
 
@@ -6246,26 +6247,28 @@ extension CollectionViewMessageListV3.Coordinator {
     /// diagnostic run unreadable (and turns a 1 Hz probe into a burst).
     func tickRestProbes() {
         guard Self.layoutProbeEnabled else { return }          // ← zero cost when off
+        // A missing collection view or a view that is momentarily out of a window
+        // (switching Sessions does exactly that) must NOT stop the timer: nothing
+        // restarts it, and the probe would be silent for the rest of the run — the
+        // fourth bug of this family today. Idling at 1 Hz costs nothing; only a
+        // real teardown stops the clock.
         guard let cv = viewController?.collectionView,
-              let layout = cv.collectionViewLayout as? MessageListLayout else {
-            stopRestProbe()
-            return
-        }
-        // The page went away: no view in a window means no ticks to pay for.
-        guard cv.window != nil else { stopRestProbe(); return }
+              let layout = cv.collectionViewLayout as? MessageListLayout else { return }
+        guard cv.window != nil else { return }
 
         let cells = cv.indexPathsForVisibleItems
             .filter { isContentItem(dataSource?.itemIdentifier(for: $0)) }
             .sorted { $0.item < $1.item }
+        let geometry = "offset=\(String(format: "%.1f", cv.contentOffset.y)) size=\(String(format: "%.1f", cv.contentSize.height))"
         guard !cells.isEmpty else {
-            AppLogger(category: "RestProbe").info("[RestProbe] sampling tick=\(Self.restProbeTick) idx=- visible=0 cell=- clip=- content=-")
+            AppLogger(category: "RestProbe").info("[RestProbe] sampling tick=\(Self.restProbeTick) idx=- visible=0 cell=- clip=- content=- suppressed=\(Self.restProbeSuppressed) \(geometry)")
             return
         }
         let ip = cells[min(Self.restProbeCursor % max(cells.count, 1), cells.count - 1)]
         Self.restProbeCursor &+= 1
         Self.restProbeTick &+= 1
         guard let cell = cv.cellForItem(at: ip) as? SelfSizingCell else {
-            AppLogger(category: "RestProbe").info("[RestProbe] sampling idx=\(ip.item) visible=\(cells.count) cell=- clip=- content=-")
+            AppLogger(category: "RestProbe").info("[RestProbe] sampling tick=\(Self.restProbeTick) idx=\(ip.item) visible=\(cells.count) cell=- clip=- content=- suppressed=\(Self.restProbeSuppressed) \(geometry)")
             return
         }
         let item = dataSource?.itemIdentifier(for: ip)
@@ -6275,11 +6278,12 @@ extension CollectionViewMessageListV3.Coordinator {
 
         // I2 — clip: two consecutive ticks before it is worth a line.
         var clipText = "ok"
-        if let clip = cell.clipProbe() {
+        let clip = cell.clipProbe()
+        if let clip {
             let streak = (Self.restProbeClipStreak[ip.item] ?? 0) + (clip.clipped ? 1 : 0)
             Self.restProbeClipStreak[ip.item] = clip.clipped ? streak : 0
             if clip.clipped {
-                clipText = "clip"
+                clipText = "clipped"
                 if streak >= 2 {
                     AppLogger(category: "ClipProbe").info(
                         "[ClipProbe] idx=\(ip.item) want=\(String(format: "%.1f", clip.want)) "
@@ -6290,6 +6294,12 @@ extension CollectionViewMessageListV3.Coordinator {
         }
 
         // I3 — content size, at most once per 500ms, guarded against throws.
+        //
+        // A cell that renders ONE truncated line legitimately wants more height than
+        // it was given (`want=83 frame=36` with the visual `…`), so `want > frame` is
+        // only a DEFECT when the inner text view is actually clipped. Without that
+        // gate the probe reports a feature (truncation) as a bug — measured on
+        // device as 19 mismatches with `clip=ok`.
         var contentText = "skipped"
         let now = Date()
         if now.timeIntervalSince(Self.restProbeLastContentSample) >= 0.5 {
@@ -6298,12 +6308,19 @@ extension CollectionViewMessageListV3.Coordinator {
             if reading.ok, cell.bounds.width > 0 {
                 let frame = cell.frame.height
                 if abs(reading.want - frame) > 4 {
-                    contentText = "mismatch"
-                    AppLogger(category: "ContentMismatch").info(
-                        "[ContentMismatch] idx=\(ip.item) want=\(String(format: "%.1f", reading.want)) "
-                        + "frame=\(String(format: "%.1f", frame)) source=\(source.rawValue) "
-                        + "kind=\(kindText) caller=restTick"
-                    )
+                    if clip?.clipped == true {
+                        contentText = "mismatch"
+                        AppLogger(category: "ContentMismatch").info(
+                            "[ContentMismatch] idx=\(ip.item) want=\(String(format: "%.1f", reading.want)) "
+                            + "frame=\(String(format: "%.1f", frame)) source=\(source.rawValue) "
+                            + "kind=\(kindText) clip=clipped trunc=\(Self.truncationMark(clip)) caller=restTick"
+                        )
+                    } else {
+                        // Suppressed, but counted: the number stays visible in the
+                        // self-attesting line instead of disappearing.
+                        contentText = "suppressed"
+                        Self.restProbeSuppressed += 1
+                    }
                 } else {
                     contentText = "ok"
                 }
@@ -6312,10 +6329,17 @@ extension CollectionViewMessageListV3.Coordinator {
 
         // Self-attesting line: printed EVERY tick, `0` and `-` included, so "no
         // line" can never be read as "clean" — the mistake three earlier probes
-        // made.
+        // made. `offset`/`size` let a signal be matched to the scroll position.
         AppLogger(category: "RestProbe").info(
             "[RestProbe] sampling tick=\(Self.restProbeTick) idx=\(ip.item) visible=\(cells.count) cell=\(kindText) "
-            + "clip=\(clipText) content=\(contentText)"
+            + "clip=\(clipText) content=\(contentText) suppressed=\(Self.restProbeSuppressed) \(geometry)"
         )
     }
-}
+
+    /// Whether the inner view is showing a truncated tail. Only meaningful for the
+    /// log line; `trunc=yes` + `clip=clipped` is a defect, `trunc=yes` + `clip=ok`
+    /// is the normal single-line ellipsis.
+    private static func truncationMark(_ clip: (want: CGFloat, have: CGFloat, clipped: Bool)?) -> String {
+        guard let clip else { return "no" }
+        return clip.want > clip.have + 4 ? "yes" : "no"
+    }}
