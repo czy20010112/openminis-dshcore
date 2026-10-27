@@ -897,6 +897,13 @@ extension CollectionViewMessageListV3 {
                 alog.warning("[AttachmentSize] infra missing")
                 return
             }
+            // [T-overlap-probe] Sample AFTER the re-flow: the apply only queues it,
+            // so measuring before this point reports the state the user no longer sees.
+             if let cv = self.viewController?.collectionView,
+                let layout = cv.collectionViewLayout as? MessageListLayout {
+                 cv.layoutIfNeeded()
+                 self.reportFrameMismatch(cv: cv, layout: layout)
+             }
             let visibleIPs = cv.indexPathsForVisibleItems.sorted()
             var cleared = 0
             for ip in visibleIPs {
@@ -2600,7 +2607,7 @@ extension CollectionViewMessageListV3 {
                         guard let idx = snapshot.itemIdentifiers.firstIndex(of: item) else {
                             alog.info("[AttachMount] msg=\(msgId.uuidString.prefix(8)) not in snapshot — nothing to invalidate")
                             return
-                        }
+                                }
                         let ip = IndexPath(item: idx, section: 0)
                         (cv.cellForItem(at: ip) as? SelfSizingCell)?.clearCachedHeight()
                         layout.invalidateHeight(at: idx)
@@ -2608,6 +2615,13 @@ extension CollectionViewMessageListV3 {
                         snap.reconfigureItems([item])
                         ds.apply(snap, animatingDifferences: false)
                         layout.invalidateLayout()
+                                // [T-overlap-probe] Sample AFTER the re-flow: the apply only queues it,
+                                // so measuring before this point reports the state the user no longer sees.
+                                 if let cv = self.viewController?.collectionView,
+                                    let layout = cv.collectionViewLayout as? MessageListLayout {
+                                     cv.layoutIfNeeded()
+                                     self.reportFrameMismatch(cv: cv, layout: layout)
+                                 }
                         alog.info("[AttachMount] msg=\(msgId.uuidString.prefix(8)) idx=\(idx) invalidated + reconfigured")
                     }
             }
@@ -2666,13 +2680,7 @@ extension CollectionViewMessageListV3 {
                                 var snap = snapshot
                                 snap.reconfigureItems([item])
                                 self.dataSource?.apply(snap, animatingDifferences: false)
-                    // [T-overlap-probe] Measure the invariant right after every
-                    // apply: a cell whose real height disagrees with its reserved
-                    // slot is a cell painting over its neighbour.
-                    if let cv = self.viewController?.collectionView,
-                       let layout = cv.collectionViewLayout as? MessageListLayout {
-                        self.reportFrameMismatch(cv: cv, layout: layout)
-                    }
+
                                 layout.invalidateLayout()
                                 tlog.info("[ThinkingCollapse] HIT block=\(blockId.uuidString.prefix(8)) idx=\(i) cellFound=\(cellOpt != nil) frameH=\(String(format: "%.1f", frameH)) beforeLayout=\(beforeLayout.map { String(format: "%.1f", $0) } ?? "nil") beforePrecalc=\(beforePrecalc.map { String(format: "%.1f", $0) } ?? "nil")")
                                 // Defer one runloop tick to capture the
