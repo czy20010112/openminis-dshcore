@@ -237,7 +237,9 @@ final class DSHRemoteClient: @unchecked Sendable {
     func freshAccessToken() async throws -> String {
         let current = currentSession()
         let remaining = current.expiresAt - Date().timeIntervalSince1970 * 1000
-        NSLog("[DSH] token check remaining=\(Int(remaining / 1000))s server=\(current.serverId.prefix(12))")
+        // The server id identifies the user's own computer and is exactly the kind of
+        // thing that ends up pasted into a bug report, so it is not logged at all.
+        NSLog("[DSH] token check remaining=\(Int(remaining / 1000))s")
         guard remaining < 60_000 else {
             return current.accessToken
         }
@@ -253,7 +255,9 @@ final class DSHRemoteClient: @unchecked Sendable {
             // The host may reissue the id. Keep the old lookup working so a
             // restored pairing does not resurrect a dead token.
             DSHRemoteKeychain.save(value, account: previous.serverId)
-            NSLog("[DSH] auth serverId changed old=\(previous.serverId.prefix(8)) new=\(value.serverId.prefix(8))")
+            // Server ids are the pairing's identity; a changed id only needs to be
+            // reported, not identified.
+            NSLog("[DSH] auth serverId changed")
         }
     }
 
@@ -870,7 +874,12 @@ final class DSHRemoteStream: @unchecked Sendable {
             let request = try await client.makeStreamRequest(
                 sessionId: sessionId, after: after, maxMessages: maxMessages
             )
-            NSLog("[DSH] sse request ready sid=\(sessionId.prefix(12)) url=\(request.url?.absoluteString ?? "nil")")
+            // The URL carries the host (that is the pairing's own domain). Debug builds
+            // get the path, which is what says *which* endpoint was hit; release builds
+            // get nothing, because a shipped log must not name the computer.
+            #if DEBUG
+            NSLog("[DSH] sse request ready sid=\(sessionId.prefix(12)) path=\(request.url?.path ?? "nil")")
+            #endif
             NSLog("[DSH] run stage=open")
             let (bytes, response) = try await client.openByteStream(request)
             let http = response as? HTTPURLResponse
