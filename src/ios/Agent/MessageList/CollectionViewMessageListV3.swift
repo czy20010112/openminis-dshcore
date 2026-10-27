@@ -3506,6 +3506,14 @@ extension CollectionViewMessageListV3 {
                 snapshotLayout?.suppressContentOffsetAdjustment = false
                 isFlushing = false
             }
+        // [T-overlap-probe] A send lands here, not in the attachment handler: every
+        // transcript update goes through applySnapshot, and measuring after the layout
+        // pass is the only way the numbers describe what is on screen.
+        if let cv = self.viewController?.collectionView,
+           let layout = cv.collectionViewLayout as? MessageListLayout {
+            cv.layoutIfNeeded()
+            self.reportFrameMismatch(cv: cv, layout: layout)
+        }
         }
 
         private func reconfigureAllCells() {
