@@ -456,6 +456,39 @@ final class DSHRemoteClient: @unchecked Sendable {
         }
     }
 
+    /// What a teammate has actually SAID, read from its own Session.
+    ///
+    /// The team endpoints return the roster and receipts; the answer lives in that
+    /// teammate's `assistant/message` events, so this reads `/dsh/messages` (same
+    /// authenticated path as everything else — no new stream, no extra endpoint).
+    ///
+    /// Shape trap: an assistant message puts its blocks in `data.message.content[]`,
+    /// NOT `data.content[]` — reading the outer array comes back empty for every
+    /// message, which reads as "the teammate never answered".
+    func teamTranscript(sessionId: String, limit: Int = 20) async throws -> DSHRemoteTeamAnswer {
+        let page = try await hostMessages(sessionId: sessionId, limit: max(1, limit))
+        let records = (page.records ?? []).sorted { ($0.seq ?? 0) < ($1.seq ?? 0) }
+        var answer = DSHRemoteTeamAnswer.none
+        answer.records = records.count
+        for record in records {
+            guard let event = record.event, event.type == "assistant/message" else { continue }
+            let blocks = event.data?.message?.content ?? event.data?.content ?? []
+            let text = blocks
+                .filter { $0.type == "text" }
+                .compactMap { $0.text }
+                .joined()
+            // Keep the NEWEST message that actually has text: a step that only
+            // called tools must not erase the answer that came before it.
+            guard !text.isEmpty else { continue }
+            answer.text = text
+            answer.turn = event.data?.turn
+            let seq = record.seq ?? event.seq ?? 0
+            answer.fingerprint = "\(Int(seq))|\(text.count)"
+        }
+        NSLog("[DSH] team transcript sid=\(sessionId.prefix(12)) records=\(records.count) turn=\(answer.turn.map(String.init) ?? "-") chars=\(answer.text.count)")
+        return answer
+    }
+
     func conversations() async throws -> [DSHRemoteConversation] {
         let data = try await authorizedData(path: "/conversations")
         struct Envelope: Decodable { var items: [DSHRemoteConversation]?; var conversations: [DSHRemoteConversation]? }

@@ -305,7 +305,7 @@ extension AIChatViewModel {
         DSHRemoteTeamTools.availability
     }
 
-    /// Register the four tools ONLY when the paired host can actually serve them
+    /// Register the team tools ONLY when the paired host can actually serve them
     /// (`availability == .available`).
     ///
     /// `.notPaired` — nothing to dispatch to. `.unavailable` — the host has no
@@ -356,9 +356,10 @@ extension AIChatViewModel {
     Plain conversation, analysis, reading files on this phone, and small scripts stay here.
     When dispatching, write the COMPLETE initial task in `remote_team_spawn` — the teammate cannot see this phone, this conversation, or its files — and tell the user in your reply who you dispatched it to.
     For follow-ups on the same goal use `remote_team_message` to that same teammate (it keeps its context); do not spawn again.
+    After dispatching, read the result with `remote_team_output` for that teammate — it waits for the answer and returns the text. Do not poll with shell commands, and do not send the same teammate extra messages just to ask whether it is done; one follow-up with a concrete requirement is the most it should receive. If `remote_team_output` reports no new answer, tell the user that teammate's status and offer to open its session rather than retrying blindly.
     """
 
-    /// The four tools of contract §2. Names and parameter keys are the registry
+    /// The five tools of contract §2 (+ the output reader). Names and parameter keys are the registry
     /// `DSHRemoteTeamTools.run(name:arguments:)` parses, character for
     /// character — the schema and the handler cannot drift without this file
     /// changing too. Descriptions are the contract's own wording: the model reads
@@ -408,6 +409,24 @@ extension AIChatViewModel {
                 ],
                 required: ["tool_title", "target"],
                 propertyOrdering: ["tool_title", "target"]
+            ),
+            // [T-remote-team-output] The missing half of the dispatch loop: spawn
+            // starts work, this reads the ANSWER. Without it the model falls back
+            // to shell `echo waiting`/`sleep` polling on the HOST and to nagging
+            // the teammate — both observed on the device (v15) — and ends the turn
+            // saying "it never sent the result" while the answer sat in the
+            // teammate's Session. The wait happens inside the call, so the model
+            // has nothing to poll with.
+            AgentToolDefinition(
+                name: "remote_team_output",
+                description: "Read the latest answer text from a teammate on the paired computer. Use this after remote_team_spawn to collect the result: the call WAITS inside itself (wait_seconds, default 60, max 600) until the teammate answers, then returns that text. Do NOT poll with shell commands (no echo/sleep loops) and do NOT message the teammate to ask whether it is done. If it reports no new answer, tell the user the teammate's status and offer to open its session instead of retrying blindly.",
+                parameters: [
+                    "tool_title": title,
+                    "target": AgentToolParam(type: .string, description: "The teammate's name, or its host session id as returned by remote_team_spawn."),
+                    "wait_seconds": AgentToolParam(type: .integer, description: "How long to wait inside this call for an answer, in seconds (default 60, max 600). One call is normally enough — do not add shell sleeps around it."),
+                ],
+                required: ["tool_title", "target"],
+                propertyOrdering: ["tool_title", "target", "wait_seconds"]
             ),
         ]
     }

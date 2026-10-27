@@ -656,6 +656,14 @@ final class DSHRemoteStore: ObservableObject {
         return result
     }
 
+    /// What a teammate has said so far, read from its own Session transcript.
+    func teamTranscript(sessionId: String, limit: Int = 20) async throws -> DSHRemoteTeamAnswer {
+        guard let client else {
+            throw DSHRemoteError(code: "dsh/unavailable", message: "This device is not paired.", status: nil)
+        }
+        return try await client.teamTranscript(sessionId: sessionId, limit: limit)
+    }
+
     // MARK: Send (bot conversations)
 
     /// Sends a message through `/submissions`. Returns false when the host rejects it.

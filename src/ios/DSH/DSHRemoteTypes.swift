@@ -291,6 +291,24 @@ struct DSHRemoteTeamInterrupt: Decodable, Sendable {
     var interrupted: Bool?
 }
 
+/// The last thing a teammate SAID — read out of its own Session transcript.
+///
+/// The team endpoints only carry the roster and delivery receipts; the answer a
+/// teammate produced lives in its `assistant/message` events. `remote_team_output`
+/// is what turns those into something the phone agent can read.
+struct DSHRemoteTeamAnswer: Sendable, Equatable {
+    /// Concatenated `text` blocks of the newest assistant message that had any.
+    var text: String
+    var turn: Int?
+    var records: Int
+    /// Identity of that message: `seq|chars`. A change means "it said something new".
+    var fingerprint: String
+
+    var isEmpty: Bool { text.isEmpty }
+
+    static let none = DSHRemoteTeamAnswer(text: "", turn: nil, records: 0, fingerprint: "-")
+}
+
 // MARK: - Merge (same rules as mergeMessages/applyConversationEvent in the SDK)
 
 enum DSHRemoteMerge {

@@ -103,9 +103,148 @@ enum DSHRemoteTeamTools {
             return await list()
         case "remote_team_interrupt":
             return await interrupt(arguments)
+        case "remote_team_output":
+            return await output(arguments)
         default:
             return (false, "Error: unknown remote team tool \(name)")
         }
+    }
+
+    // MARK: - output
+
+    /// Read a teammate's answer, waiting for it when necessary.
+    ///
+    /// This is the tool that closes the loop: the roster shows status, the receipts
+    /// show delivery, and only this shows the RESULT. It polls inside the call on
+    /// purpose — a model that has to `sleep`/`echo` between turns burns the user's
+    /// time and forgets what it was waiting for.
+    private static func output(_ arguments: [String: Any]) async -> (success: Bool, output: String) {
+        guard let rawTarget = (arguments["target"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !rawTarget.isEmpty else {
+            return (false, "Error: remote_team_output needs `target` (a teammate name from remote_team_list, or its session id).")
+        }
+        let requested = intArgument(arguments["wait_seconds"], default: 60, min: 5, max: 600)
+
+        // Resolve the name → session id once, up front: the poll loop must not hit
+        // the roster on every tick.
+        var sessionId = rawTarget
+        var name = rawTarget
+        do {
+            let roster = try await DSHRemoteStore.shared.listTeamMembers()
+            if let member = roster.members.first(where: { $0.name == rawTarget || $0.id == rawTarget }) {
+                name = member.name
+                guard let id = member.sessionId, !id.isEmpty else {
+                    return (false, "Error: \(member.name) has no Session yet (status \(member.displayStatus)) — it may still be provisioning. Try remote_team_list again in a moment.")
+                }
+                sessionId = id
+            } else if !looksLikeSessionId(rawTarget) {
+                let names = roster.members.map(\.name).joined(separator: ", ")
+                return (false, "Error: no teammate named \(rawTarget) on that computer. Known: \(names.isEmpty ? "(none)" : names)")
+            }
+        } catch {
+            return (false, "Error: \(describe(error))")
+        }
+
+        // The transcript is polled every tick; the roster (which carries the
+        // status) every third tick — a 10-minute wait would otherwise mean 300
+        // roster round trips.
+        var statusCache: String?
+        var tick = 0
+        return await pollAnswer(name: name, sessionId: sessionId, waitSeconds: requested) {
+            tick += 1
+            let answer = try await DSHRemoteStore.shared.teamTranscript(sessionId: sessionId)
+            if statusCache == nil || tick % 3 == 1 {
+                let roster = try await DSHRemoteStore.shared.listTeamMembers()
+                statusCache = roster.members.first(where: { $0.sessionId == sessionId || $0.name == name })?.status
+            }
+            return (answer, statusCache)
+        }
+    }
+
+    /// The polling loop, with the host behind two closures so it can be exercised
+    /// without a store (see `_tools/dsh-remote-team-test.ps1`).
+    ///
+    /// Stops on whichever comes first:
+    ///   • the teammate said something NEW since the call began → that answer;
+    ///   • it is no longer running and has said something → that answer (this is
+    ///     the common case: the work finished before the tool was even called);
+    ///   • it `failed` → its last answer, if any, plus the status;
+    ///   • the deadline.
+    static func pollAnswer(
+        name: String,
+        sessionId: String,
+        waitSeconds: Int,
+        interval: Double = 2,
+        read: () async throws -> (answer: DSHRemoteTeamAnswer, status: String?)
+    ) async -> (success: Bool, output: String) {
+        let deadline = Date().addingTimeInterval(Double(max(1, waitSeconds)))
+        var baseline: String?
+        var lastSeen = DSHRemoteTeamAnswer.none
+        var lastStatus: String?
+        var polls = 0
+
+        while true {
+            polls += 1
+            do {
+                let snapshot = try await read()
+                lastSeen = snapshot.answer
+                lastStatus = snapshot.status
+                if baseline == nil { baseline = snapshot.answer.fingerprint }
+
+                let status = snapshot.status ?? "unknown"
+                let isNew = baseline != snapshot.answer.fingerprint
+                let finished = status != "running" && status != "provisioning"
+
+                if status == "failed" {
+                    return render(name: name, answer: snapshot.answer, status: status,
+                                  note: snapshot.answer.isEmpty ? "failed before producing an answer" : nil)
+                }
+                if isNew, !snapshot.answer.isEmpty {
+                    return render(name: name, answer: snapshot.answer, status: status, note: nil)
+                }
+                if finished, !snapshot.answer.isEmpty {
+                    // Already done when we arrived: waiting the full window for a
+                    // second answer would be wrong.
+                    return render(name: name, answer: snapshot.answer, status: status, note: nil)
+                }
+            } catch let error as DSHRemoteError where error.code == "team/unavailable" {
+                return (false, "Error: \(describe(error))")
+            } catch {
+                // A transient read failure is not an answer: keep polling.
+                NSLog("[DSH] team output poll failed: \(error.localizedDescription)")
+            }
+
+            if Date() >= deadline {
+                let status = lastStatus ?? "unknown"
+                if lastSeen.isEmpty {
+                    return (false, "no new answer from \(name) after \(waitSeconds)s (status=\(status), polls=\(polls)). Call remote_team_list to check whether it is still running, then ask again with a longer wait_seconds.")
+                }
+                return render(name: name, answer: lastSeen, status: status,
+                              note: "no NEW answer after \(waitSeconds)s; showing its last output")
+            }
+            try? await Task.sleep(nanoseconds: UInt64(max(0.2, interval) * 1_000_000_000))
+        }
+    }
+
+    private static func render(name: String, answer: DSHRemoteTeamAnswer, status: String,
+                               note: String?) -> (success: Bool, output: String) {
+        var head = "\(name) answered"
+        if let turn = answer.turn { head += " (turn \(turn), \(answer.text.count) chars" } else { head += " (\(answer.text.count) chars" }
+        head += ", status=\(status))"
+        if let note { head += " — \(note)" }
+        return (status != "failed" || !answer.isEmpty, "\(head):\n\(answer.text)")
+    }
+
+    private static func looksLikeSessionId(_ raw: String) -> Bool {
+        raw.hasPrefix("session-") || raw.count >= 32
+    }
+
+    private static func intArgument(_ raw: Any?, default fallback: Int, min: Int, max: Int) -> Int {
+        var value = fallback
+        if let number = raw as? Int { value = number }
+        else if let double = raw as? Double { value = Int(double) }
+        else if let text = raw as? String, let parsed = Int(text) { value = parsed }
+        return Swift.min(Swift.max(value, min), max)
     }
 
     // MARK: - spawn
