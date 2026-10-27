@@ -6221,7 +6221,11 @@ extension CollectionViewMessageListV3.Coordinator {
         return UserDefaults.standard.bool(forKey: "minis.layoutProbe")
     }
 
-    private static var restProbeTimer: Timer?
+    // Per coordinator, NOT static: a static timer captured self weakly, so when a
+    // coordinator was released on a session switch the timer survived with a nil self and
+    // the next coordinator's `== nil` guard refused to install one — leaving every later
+    // session unprobed.
+    private var restProbeTimer: Timer?
     private static var restProbeCursor = 0
     private static var restProbeTick = 0
     private static var restProbeSuppressed = 0
@@ -6229,17 +6233,17 @@ extension CollectionViewMessageListV3.Coordinator {
     private static var restProbeLastContentSample = Date.distantPast
 
     func startRestProbeIfNeeded() {
-        guard Self.layoutProbeEnabled, Self.restProbeTimer == nil else { return }
+        guard Self.layoutProbeEnabled, restProbeTimer == nil else { return }
         let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tickRestProbes() }
         }
         RunLoop.main.add(timer, forMode: .common)
-        Self.restProbeTimer = timer
+        restProbeTimer = timer
     }
 
     private func stopRestProbe() {
-        Self.restProbeTimer?.invalidate()
-        Self.restProbeTimer = nil
+        restProbeTimer?.invalidate()
+        restProbeTimer = nil
         Self.restProbeClipStreak.removeAll()
     }
 
