@@ -188,6 +188,20 @@ final class DSHRemoteChatAdapter: ObservableObject {
         conversationsMissing.removeAll()
     }
 
+    /// The Session's model changed: the host answered with the new `contextWindow`,
+    /// so the ring's denominator must move with it — the same reading re-priced
+    /// against the new window, never a stale percentage.
+    func applyModelSwitch(contextWindow: Double?) {
+        guard let window = contextWindow, window > 0 else { return }
+        let used = contextReading?.usedTokens ?? 0
+        contextReading = DSHContextReading(
+            usedTokens: used,
+            windowTokens: Int(window),
+            source: contextReading?.source ?? .providerMeasured
+        )
+        NSLog("[DSH] model switch applied window=\(Int(window)) used=\(used)")
+    }
+
     /// Fetch the goal/task document from the paired computer.
     ///
     /// A FAILED fetch keeps the previous document: the panels are a status view,
@@ -454,6 +468,7 @@ struct DSHRemoteChatView: View {
     @State private var panelHeight: CGFloat = 0
     /// The usage panel, opened by tapping the composer's context ring.
     @State private var showContextPanel = false
+    @State private var showModelPicker = false
     /// Mirrors the editor's focus so the list keeps its "keyboard raised → scroll
     /// to bottom" behaviour.
     @State private var composerFocused = false
@@ -522,6 +537,11 @@ struct DSHRemoteChatView: View {
         // next request instead.
         .onAppear { DSHRemoteStore.shared.setUIVisible(true) }
         .onDisappear { DSHRemoteStore.shared.setUIVisible(false) }
+        .sheet(isPresented: $showModelPicker) {
+            DSHRemoteModelPicker(sessionId: conversationId) { answer in
+                adapter.applyModelSwitch(contextWindow: answer.contextWindow)
+            }
+        }
         .sheet(isPresented: $showContextPanel) {
             // The SAME view the local chat presents (see `DSHContextPanel`'s
             // injected inputs): identical rows, order, labels, fonts and Done
@@ -547,6 +567,12 @@ struct DSHRemoteChatView: View {
                 if adapter.isLoading {
                     ProgressView().scaleEffect(0.8)
                 } else {
+                    Button {
+                        showModelPicker = true
+                    } label: {
+                        Image(systemName: "cpu")
+                    }
+                    .accessibilityLabel(Text("Model"))
                     Button {
                         Task { await adapter.load(sessionId: conversationId, force: true) }
                     } label: {
