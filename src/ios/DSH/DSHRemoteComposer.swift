@@ -66,6 +66,13 @@ struct DSHRemoteComposer: View {
     /// Mirrors the editor's focus into the parent so the list can keep its
     /// "keyboard raised → scroll to bottom" behaviour.
     var onFocusChange: (Bool) -> Void = { _ in }
+    /// Tapping the context ring. The ring used to be a pure indicator here,
+    /// because the LOCAL breakdown describes a request this app assembled and a
+    /// remote turn is assembled on the computer. The remote reading is still a
+    /// real provider figure (`contextPressure` from the Session row), so the
+    /// panel now opens and shows exactly those numbers — and says "the computer
+    /// did not report this" for the rows it cannot know.
+    var onContextTap: () -> Void = {}
 
     /// The local composer keeps this in `@State` and hands `$inputFocused` to
     /// `PastableTextView`; the same binding shape is required here.
@@ -114,6 +121,9 @@ struct DSHRemoteComposer: View {
 
     private var surface: some View {
         VStack(spacing: 5) {
+            if let query = slashQuery, !slashRows.isEmpty {
+                slashMenu(query: query)
+            }
             if let notice {
                 Text(notice)
                     .font(AppFont.sw(11, weight: .regular, category: .ui))
@@ -183,6 +193,141 @@ struct DSHRemoteComposer: View {
         }
     }
 
+    // MARK: - `/` menu
+
+    /// One row of the remote slash menu.
+    ///
+    /// The command TABLE and the FILTER are the local ones
+    /// (`AIChatViewModel.availableSlashCommands`, plus the phone's enabled
+    /// skills), because what a user learned — `/co` finds Compact — must not
+    /// change when the conversation happens to be on the computer. What differs
+    /// is only the SEMANTICS of a row, and that is what `hostSide` records and
+    /// the `→ PC` badge shows:
+    ///
+    /// * `hostSide` — the command takes effect on the COMPUTER (`/compact`,
+    ///   `/plan`, `/goal`, a skill invocation). The row inserts `/cmd` into the
+    ///   draft and the next Return sends it as an ordinary message, which is
+    ///   exactly how those commands are triggered over there (contract §3.1: the
+    ///   bridge has one text channel).
+    /// * otherwise — a phone-local setting (`/memory`, `/thinking`) or a local
+    ///   action (`/clear`). Tapping it says so instead of pretending it reached
+    ///   the computer.
+    private struct RemoteSlashRow: Identifiable {
+        let id: String
+        let icon: String
+        let title: String
+        let subtitle: String
+        let hostSide: Bool
+    }
+
+    /// The menu is open while the draft is a single `/token` with no whitespace
+    /// after it — the same rule the local `updateSlashMenuState()` applies.
+    private var slashQuery: String? {
+        guard focused, text.hasPrefix("/") else { return nil }
+        let after = text.dropFirst()
+        guard !after.contains(where: { $0.isWhitespace }) else { return nil }
+        return after.lowercased()
+    }
+
+    private var slashRows: [RemoteSlashRow] {
+        let hostCommands: Set<String> = ["compact", "plan", "goal"]
+        var rows: [RemoteSlashRow] = AIChatViewModel.availableSlashCommands.map { cmd in
+            RemoteSlashRow(
+                id: cmd.id,
+                icon: cmd.icon,
+                title: cmd.title,
+                subtitle: cmd.subtitle,
+                // Everything that acts on the conversation itself belongs to the
+                // computer this Session lives on.
+                hostSide: hostCommands.contains(cmd.id)
+            )
+        }
+        // Skills are invoked BY the model on the host, so a skill row is a
+        // host-side message (`/skill-name …`). Only enabled ones, like local.
+        rows.append(contentsOf: SkillStore.shared.skills.filter(\.isEnabled).map { skill in
+            RemoteSlashRow(
+                id: "skill:" + skill.name,
+                icon: "puzzlepiece.extension",
+                title: skill.name,
+                subtitle: skill.description.isEmpty ? "Skill" : skill.description,
+                hostSide: true
+            )
+        })
+        guard let query = slashQuery, !query.isEmpty else { return rows }
+        return rows.filter {
+            $0.id.lowercased().contains(query) || $0.title.lowercased().contains(query)
+        }
+    }
+
+    private func slashMenu(query: String) -> some View {
+        VStack(spacing: 0) {
+            ForEach(Array(slashRows.prefix(6).enumerated()), id: \.element.id) { index, row in
+                if index > 0 {
+                    Divider().padding(.horizontal, 10)
+                }
+                Button { selectSlashRow(row) } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: row.icon)
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(ChatColors.secondaryText)
+                            .frame(width: 20)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("/" + row.title)
+                                .font(AppFont.sw(14, weight: .medium, category: .ui))
+                                .foregroundStyle(ChatColors.primaryText)
+                            Text(row.subtitle)
+                                .font(AppFont.sw(11, weight: .regular, category: .ui))
+                                .foregroundStyle(ChatColors.secondaryText)
+                                .lineLimit(1)
+                        }
+                        Spacer(minLength: 8)
+                        // The badge IS the contract: this row will reach the
+                        // computer (message) or stays on the phone (no badge).
+                        if row.hostSide {
+                            Text("→ PC")
+                                .font(AppFont.sw(10, weight: .semibold, category: .ui))
+                                .foregroundStyle(ChatColors.secondaryText)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(ChatColors.inputIconBg)
+                                .clipShape(Capsule())
+                        } else {
+                            Text("Local")
+                                .font(AppFont.sw(10, weight: .regular, category: .ui))
+                                .foregroundStyle(ChatColors.secondaryText)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(ChatColors.inputIconBg)
+                                .clipShape(Capsule())
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 7)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.vertical, 4)
+        .background(ChatColors.inputIconBg)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .padding(.horizontal, 12)
+        .accessibilityIdentifier("dshSlashMenu")
+    }
+
+    /// Host-side rows become the message the user would have typed; local rows
+    /// say why they do nothing here instead of silently clearing the draft.
+    private func selectSlashRow(_ row: RemoteSlashRow) {
+        guard row.hostSide else {
+            showNotice(AppLocalized("That command only affects local Minis chats."))
+            text = ""
+            return
+        }
+        // "skill:name" → "/name", built-in → "/id".
+        let name = row.id.hasPrefix("skill:") ? String(row.id.dropFirst("skill:".count)) : row.id
+        text = "/" + name
+    }
+
     // MARK: - Control row
 
     /// `＋ / [spacer] / ring / mic / send↑` — the local order since
@@ -216,19 +361,24 @@ struct DSHRemoteComposer: View {
         .accessibilityHint(Text("Not available for remote sessions"))
     }
 
-    /// The context ring, in the same 34pt slot the local bar uses. It is an
-    /// INDICATOR here, not a button: the local ring opens a per-component
-    /// breakdown that only exists for a request this app assembled itself, and a
-    /// remote turn is assembled on the computer — the sheet would open empty. The
-    /// fill level (from the Session's `contextPressure`) is still the honest
-    /// figure, so it is drawn and announced.
+    /// The context ring, in the same 34pt slot the local bar uses, and — since
+    /// this round — a BUTTON like the local one: tapping it opens the usage
+    /// panel. The fill level comes from the Session's `contextPressure`, which is
+    /// a provider figure the computer reported, so the panel has real numbers to
+    /// show; the per-component breakdown it cannot know is labelled as such
+    /// rather than left blank or filled with zeros.
     private var contextRing: some View {
-        DSHContextRing(fraction: contextReading?.fraction ?? 0, diameter: 22, lineWidth: 2)
-            .frame(width: Self.iconSize, height: Self.iconSize)
-            .contentShape(Circle())
-            .accessibilityElement()
-            .accessibilityLabel(Text("Context"))
-            .accessibilityValue(Text(contextRingValue))
+        Button { onContextTap() } label: {
+            DSHContextRing(fraction: contextReading?.fraction ?? 0, diameter: 22, lineWidth: 2)
+                .frame(width: Self.iconSize, height: Self.iconSize)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement()
+        .accessibilityLabel(Text("Context"))
+        .accessibilityValue(Text(contextRingValue))
+        .accessibilityHint(Text("Shows how much of the computer's context window this session has used"))
+        .accessibilityIdentifier("dshComposerContext")
     }
 
     private var contextRingValue: String {
