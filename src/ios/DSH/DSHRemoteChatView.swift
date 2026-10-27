@@ -490,7 +490,11 @@ struct DSHRemoteChatView: View {
                     }
                 }
             }
-            if let error = adapter.errorText {
+            // One strip, not two. When the banner already names the cause and
+            // offers the only action that can fix it, repeating the sentence above
+            // the composer with a "Reconnect" that cannot work reads as two
+            // contradicting sources — which is exactly what was reported.
+            if let error = adapter.errorText, connectionBannerState == nil {
                 capped {
                     statusLine(error, retryTitle: AppLocalized("Reconnect")) {
                         Task { await adapter.load(sessionId: conversationId, force: true) }
@@ -512,6 +516,12 @@ struct DSHRemoteChatView: View {
                 )
             }
         }
+        // The store's idle probe only runs while a DSH page is on screen: a
+        // revoked pairing is discovered by that probe, and a background page must
+        // not poll. Not calling this still works — the probe just waits for the
+        // next request instead.
+        .onAppear { DSHRemoteStore.shared.setUIVisible(true) }
+        .onDisappear { DSHRemoteStore.shared.setUIVisible(false) }
         .sheet(isPresented: $showContextPanel) {
             // The SAME view the local chat presents (see `DSHContextPanel`'s
             // injected inputs): identical rows, order, labels, fonts and Done
@@ -528,7 +538,7 @@ struct DSHRemoteChatView: View {
                 subtitleExtra: lastCompactionSubtitle,
                 requestInFlight: adapter.isRunning
             )
-            .compatDetents([.medium, .large])
+            .dshSheetDetents([.medium, .large])
         }
         .navigationTitle(adapter.title)
         .navigationBarTitleDisplayMode(.inline)
@@ -761,6 +771,19 @@ struct DSHRemoteChatView: View {
     }
 
     private var connectionBannerState: ConnectionBanner? {
+        // [T-banner-one-authority] ONE source, read structurally: `needsRepair`.
+        //
+        // Not `connectionState` (a watchdog can flip it back mid-window — that is
+        // exactly the defect this round exposed), not `disconnectReason` (a
+        // companion field with its own lifetime), and never a search for "401"
+        // inside a human sentence. The store owns the verdict; this view renders it.
+        //
+        // It also has an EXIT: `needsRepair` goes false when the pairing is
+        // repaired, so the banner cannot pin itself to the screen for good.
+        if store.needsRepair {
+            let reason = store.repairReason.flatMap { Self.isEmptyReason($0) ? nil : $0 }
+            return .unusable(reason: reason ?? AppLocalized("Pair this device again."))
+        }
         switch store.connectionState {
         case .unpaired, .connected:
             return nil
@@ -775,6 +798,11 @@ struct DSHRemoteChatView: View {
                          // so `map` would produce a `String??` the label cannot take.
                          detail: store.lastFrameAt.flatMap { elapsedText(since: $0) })
         }
+    }
+
+    /// `""` is "no reason stated", not "unusable with an empty sentence".
+    private static func isEmptyReason(_ reason: String) -> Bool {
+        reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private func elapsedText(since: Date) -> String? {
@@ -811,9 +839,9 @@ struct DSHRemoteChatView: View {
                             await adapter.load(sessionId: conversationId, force: true)
                         }
                     case .unusable:
-                        // `minis://settings` is the app's settings root; the DSH
-                        // page has no route of its own yet (see the note in
-                        // `verify/REMOTE-UI-NOTES.md` §7).
+                        // Pairing needs a URL and a code: re-loading this page
+                        // cannot re-authorise a revoked device, so the only honest
+                        // action is the settings page where pairing lives.
                         if let url = URL(string: "minis://settings") {
                             openURL(url)
                         }
@@ -870,4 +898,41 @@ struct DSHRemoteChatView: View {
             }
         }
     }
+}
+
+// MARK: - Sheet detents shared by both lines
+
+/// `.presentationDetents` is iOS 16+, and the iOS 15 line's shim for it
+/// (`compatDetents` in `Shared/iOS15Compat.swift`) does not exist on the iOS 26
+/// line — which is why the sheet asked for a member that line never had, and the
+/// iOS 26 build failed while the iOS 15 one passed.
+///
+/// This tree cannot call either version directly without breaking the other line,
+/// and the file has to stay byte-identical across both, so it carries the rule
+/// itself: native detents where the API exists, nothing below it (on iOS 15 a sheet
+/// then opens at its natural height, exactly as `compatDetents` did).
+extension View {
+    @ViewBuilder
+    func dshSheetDetents(_ detents: [DSHSheetDetent]) -> some View {
+        if #available(iOS 16.0, *) {
+            let native: Set<PresentationDetent> = Set(detents.map { detent in
+                switch detent {
+                case .medium: return PresentationDetent.medium
+                case .large: return PresentationDetent.large
+                case .height(let value): return PresentationDetent.height(value)
+                }
+            })
+            self.presentationDetents(native)
+        } else {
+            self
+        }
+    }
+}
+
+/// The subset of detents this tree asks for, so the call site reads the same on both
+/// lines without either importing the other's compat layer.
+enum DSHSheetDetent {
+    case medium
+    case large
+    case height(CGFloat)
 }

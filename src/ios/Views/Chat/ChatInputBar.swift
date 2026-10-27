@@ -8,9 +8,6 @@ import UIKit
 import UniformTypeIdentifiers
 
 private let pasteLog = AppLogger(category: "PastableTV")
-/// [T-ios-context-usage-hint] Diagnostic trail for the usage line: every
-/// hand-off point logs, so a missing line can be placed on a timeline.
-private let hintLog = AppLogger(category: "ContextUsageHint")
 
 private let minisLogger = AppLogger(category: "MinisURL")
 struct SwipeToSendHint: View {
@@ -70,87 +67,61 @@ struct SwipeToSendHint: View {
 
 // MARK: - Flow Layout
 
-/// A custom Layout that arranges subviews in a wrapping horizontal flow.
-private struct FlowLayout: Layout {
+private struct FlowLayoutHeightPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = .zero
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
+/// A custom View container that arranges subviews in a wrapping horizontal flow, compatible with iOS 15+.
+private struct FlowLayout<Content: View>: View {
     var hSpacing: CGFloat = 8
     var vSpacing: CGFloat = 8
     var alignment: HorizontalAlignment = .leading
+    @ViewBuilder var content: () -> Content
 
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let result = arrange(proposal: proposal, subviews: subviews)
-        // Use the full proposed width so the layout fills its container.
-        return CGSize(width: proposal.width ?? result.size.width, height: result.size.height)
-    }
+    @State private var totalHeight: CGFloat = .zero
 
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        let result = arrange(proposal: proposal, subviews: subviews)
-        let containerWidth = bounds.width
-        for (index, position) in result.positions.enumerated() {
-            let xOffset: CGFloat
-            if alignment == .trailing {
-                let rowWidth = result.rowWidths[result.rowIndices[index]]
-                xOffset = containerWidth - rowWidth + position.x
-            } else {
-                xOffset = position.x
+    var body: some View {
+        VStack(spacing: 0) {
+            GeometryReader { geometry in
+                self.generateContent(in: geometry)
             }
-            subviews[index].place(
-                at: CGPoint(x: bounds.minX + xOffset, y: bounds.minY + position.y),
-                proposal: ProposedViewSize(result.sizes[index])
-            )
         }
+        .frame(height: totalHeight)
     }
 
-    private struct ArrangeResult {
-        var positions: [CGPoint]
-        var sizes: [CGSize]
-        var size: CGSize
-        var rowWidths: [CGFloat]
-        var rowIndices: [Int]
-    }
+    private func generateContent(in g: GeometryProxy) -> some View {
+        var width = CGFloat.zero
+        var height = CGFloat.zero
 
-    private func arrange(proposal: ProposedViewSize, subviews: Subviews) -> ArrangeResult {
-        let maxWidth = proposal.width ?? .infinity
-        var positions: [CGPoint] = []
-        var sizes: [CGSize] = []
-        var rowIndices: [Int] = []
-        var rowWidths: [CGFloat] = []
-        var x: CGFloat = 0
-        var y: CGFloat = 0
-        var rowHeight: CGFloat = 0
-        var totalWidth: CGFloat = 0
-        var currentRowStart = 0
-        var currentRow = 0
-
-        for (i, subview) in subviews.enumerated() {
-            let size = subview.sizeThatFits(.unspecified)
-            if x + size.width > maxWidth, x > 0 {
-                // Finish current row
-                rowWidths.append(x - hSpacing)
-                currentRow += 1
-                x = 0
-                y += rowHeight + vSpacing
-                rowHeight = 0
-                currentRowStart = i
-            }
-            positions.append(CGPoint(x: x, y: y))
-            sizes.append(size)
-            rowIndices.append(currentRow)
-            rowHeight = max(rowHeight, size.height)
-            x += size.width + hSpacing
-            totalWidth = max(totalWidth, x - hSpacing)
+        return ZStack(alignment: alignment == .trailing ? .topTrailing : .topLeading) {
+            self.content()
+                .alignmentGuide(alignment == .trailing ? .trailing : .leading, computeValue: { d in
+                    if abs(width - d.width) > g.size.width {
+                        width = 0
+                        height -= d.height + vSpacing
+                    }
+                    let result = width
+                    if d.width == 0 {
+                        width = 0
+                    } else {
+                        width -= d.width + hSpacing
+                    }
+                    return result
+                })
+                .alignmentGuide(.top, computeValue: { _ in
+                    let result = height
+                    return result
+                })
         }
-        // Last row
-        if !subviews.isEmpty {
-            rowWidths.append(x - hSpacing)
+        .background(GeometryReader { geo in
+            Color.clear.preference(key: FlowLayoutHeightPreferenceKey.self, value: geo.size.height)
+        })
+        .onPreferenceChange(FlowLayoutHeightPreferenceKey.self) { h in
+            self.totalHeight = h
         }
-
-        return ArrangeResult(
-            positions: positions,
-            sizes: sizes,
-            size: CGSize(width: totalWidth, height: y + rowHeight),
-            rowWidths: rowWidths,
-            rowIndices: rowIndices
-        )
     }
 }
 
@@ -277,7 +248,7 @@ private struct AttachmentChip: View {
         .onAppear { loadThumbnailIfNeeded() }
         .onTapGesture { showPreview = true }
         .sheet(isPresented: $showPreview) {
-            NavigationStack {
+            CompatNavigationStack {
                 AttachmentPreviewView(url: attachment.cacheURL)
                     .navigationTitle(attachment.fileName)
                     .navigationBarTitleDisplayMode(.inline)
@@ -478,105 +449,6 @@ private struct AttachmentChip: View {
     }
 }
 
-// MARK: - Pasted-text chips [T-paste-placeholder]
-
-/// One row per stashed long paste: "📋 #N · chars · preview", with a remove
-/// button that also strips the `[Pasted#N]` literal from the draft (the vm's
-/// removePastedText does both). Tapping a chip opens a READ-ONLY full-text
-/// preview — the stash is immutable by design (editing it would silently
-/// change what an already-typed placeholder expands to), so the sheet is a
-/// selectable Text, never an editor.
-struct PastedTextChipRow: View {
-    let pastedTexts: [PastedText]
-    let onRemove: (Int) -> Void
-
-    /// The entry whose full text is being previewed (sheet presentation).
-    @State private var previewEntry: PastedText?
-
-    var body: some View {
-        // [T-paste-chip-square] Same 64x64 card as AttachmentChip.fileChip, in
-        // the same horizontal scroller as the attachment grid, so a paste and a
-        // file attachment read as the same kind of object in the composer. The
-        // old full-width capsule made a paste look like a stray line of text.
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(pastedTexts) { entry in
-                    ZStack(alignment: .topTrailing) {
-                        VStack(spacing: 2) {
-                            Image(systemName: "doc.text")
-                                .font(.system(size: 20))
-                                .foregroundStyle(ChatColors.secondaryText)
-                                .frame(maxHeight: .infinity, alignment: .bottom)
-
-                            Text("#\(entry.id)")
-                                .font(.system(size: 10, weight: .semibold).monospacedDigit())
-                                .foregroundStyle(ChatColors.primaryText)
-                            Text(String(format: AppLocalized("%d chars"), entry.charCount))
-                                .font(AppFont.sw(8, weight: .regular, category: .ui))
-                                .foregroundStyle(ChatColors.secondaryText)
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.7)
-                                .frame(maxHeight: .infinity, alignment: .top)
-                        }
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 6)
-                        .frame(width: 64, height: 64)
-                        .background(ChatColors.secondaryBg)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.gray.opacity(0.4), lineWidth: 0.5))
-                        .contentShape(RoundedRectangle(cornerRadius: 8))
-                        // The ✕ Button keeps priority for its own hit area; the
-                        // rest of the card opens the read-only preview.
-                        .onTapGesture { previewEntry = entry }
-
-                        Button {
-                            onRemove(entry.id)
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .font(.system(size: 16))
-                                .foregroundStyle(.white)
-                                .shadow(color: .black.opacity(0.4), radius: 2)
-                        }
-                        .buttonStyle(.plain)
-                        .offset(x: 4, y: -4)
-                    }
-                    .fixedSize()
-                }
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, 6)
-            // Room for the ✕ that overhangs the top-right corner.
-            .padding(.trailing, 4)
-        }
-        .sheet(item: $previewEntry) { entry in
-            NavigationStack {
-                ScrollView {
-                    // Read-only by construction: selectable text (copyable),
-                    // deliberately NOT a TextEditor.
-                    //
-                    // [T-ios-paste-preview-watchdog] Rendered in chunks rather
-                    // than as one `Text(entry.text)`. A ScrollView does not
-                    // virtualize, so a single Text forced the main thread to
-                    // lay out the ENTIRE paste through CoreText in one pass,
-                    // and that cost is super-linear: 80K chars already measured
-                    // 9.4s, past the 5s watchdog, while a real 1.07M-char paste
-                    // never finished. That was the FRONTBOARD SIGKILL users hit
-                    // when tapping a "Pasted #N" chip.
-                    LazyLongTextView(text: entry.text)
-                        .padding()
-                }
-                .navigationTitle("Pasted#\(entry.id) · " + String(format: AppLocalized("%d chars"), entry.charCount))
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button(AppLocalized("Done")) { previewEntry = nil }
-                    }
-                }
-            }
-        }
-    }
-}
-
 // MARK: - Attachment Preview (QuickLook)
 
 private struct AttachmentPreviewView: UIViewControllerRepresentable {
@@ -604,6 +476,10 @@ private struct AttachmentPreviewView: UIViewControllerRepresentable {
 
 // MARK: - Video File Transferable (for PhotosPicker video export)
 
+#if canImport(CoreTransferable)
+import CoreTransferable
+
+@available(iOS 16.0, *)
 struct VideoFileTransferable: Transferable {
     let url: URL
 
@@ -619,6 +495,7 @@ struct VideoFileTransferable: Transferable {
         }
     }
 }
+#endif
 
 // MARK: - Camera Picker (UIImagePickerController wrapper)
 
@@ -742,8 +619,6 @@ struct UserAttachmentList: View {
                     }
                 } else if meta.isVideo {
                     AsyncVideoTile(meta: meta, tileSize: tileSize)
-                } else if meta.pastedId != nil {
-                    pastedTile(meta)
                 } else {
                     fileTile(meta)
                 }
@@ -785,41 +660,6 @@ struct UserAttachmentList: View {
             )
         }
         openImageGallery(GalleryPresentation(items: items, startIndex: start))
-    }
-
-    /// [T-paste-live-bubble-card] Pasted-text reference card: same visual
-    /// language as the composer's PastedTextChipRow ("#N · n chars"), NOT the
-    /// generic file tile — a paste is a content reference the user should be
-    /// able to match to the `[Pasted#N]` marker in the bubble text, not a
-    /// file named by its storage UUID. Tap opens the stored text preview.
-    private func pastedTile(_ meta: AttachmentMeta) -> some View {
-        Button {
-            if let url = URL(string: meta.minisURL) { openURL(url) }
-        } label: {
-            VStack(spacing: 2) {
-                Image(systemName: "doc.text")
-                    .font(.system(size: 20))
-                    .foregroundStyle(ChatColors.secondaryText)
-                    .frame(maxHeight: .infinity, alignment: .bottom)
-
-                Text("#\(meta.pastedId ?? 0)")
-                    .font(.system(size: 10, weight: .semibold).monospacedDigit())
-                    .foregroundStyle(ChatColors.primaryText)
-                Text(String(format: AppLocalized("%d chars"), meta.pastedCharCount ?? meta.size))
-                    .font(AppFont.sw(8, weight: .regular, category: .ui))
-                    .foregroundStyle(ChatColors.secondaryText)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-                    .frame(maxHeight: .infinity, alignment: .top)
-            }
-            .padding(.horizontal, 4)
-            .padding(.vertical, 6)
-            .frame(width: tileSize, height: tileSize)
-            .background(ChatColors.secondaryBg)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.gray.opacity(0.4), lineWidth: 0.5))
-        }
-        .buttonStyle(.plain)
     }
 
     private func fileTile(_ meta: AttachmentMeta) -> some View {
@@ -953,10 +793,6 @@ struct QueuedAttachmentPreview: View {
 class PastableUITextView: UITextView, UIDropInteractionDelegate {
     var onPasteImage: ((UIImage) -> Void)?
     var onPasteFile: ((URL) -> Void)?
-    /// [T-paste-placeholder] Long pasted text → the vm stashes it and returns
-    /// the `[pasted#N]` literal to insert. nil (not wired) falls through to a
-    /// plain text paste — never to the removed file conversion.
-    var onPasteLongText: ((String) -> String?)?
     var onCaretChange: ((Int) -> Void)?
     var onReturnKey: (() -> Void)?
     /// Returns true if the arrow key was consumed (slash menu active).
@@ -1177,6 +1013,12 @@ class PastableUITextView: UITextView, UIDropInteractionDelegate {
         set { _inputAccessoryView = newValue }
     }
 
+    /// [T-arrow-nav] See `PastableTextView.onReturnIntercept`: asked before Return
+    /// is treated as "send". `nil` keeps every existing behaviour.
+    var onReturnIntercept: (() -> Bool)?
+    /// See `PastableTextView.onEscape`.
+    var onEscape: (() -> Bool)?
+
     override var keyCommands: [UIKeyCommand]? {
         // Return (no modifiers) → send message (hardware keyboard only)
         let send = UIKeyCommand(input: "\r", modifierFlags: [], action: #selector(handleReturnKey))
@@ -1190,11 +1032,26 @@ class PastableUITextView: UITextView, UIDropInteractionDelegate {
         // Tab for slash menu autocomplete
         let tab = UIKeyCommand(input: "\t", modifierFlags: [], action: #selector(handleTab))
         tab.wantsPriorityOverSystemBehavior = true
-        return [send, newline, up, down, tab]
+        // Escape: the `/` menu's dismiss key. Its handler falls through to the
+        // system when no hook consumes it, so this command changes nothing for a
+        // caller that does not set `onEscape`.
+        let escape = UIKeyCommand(input: UIKeyCommand.inputEscape, modifierFlags: [], action: #selector(handleEscapeKey))
+        escape.wantsPriorityOverSystemBehavior = true
+        return [send, newline, up, down, tab, escape]
     }
 
     @objc private func handleReturnKey() {
+        // Order matters: the interceptor is the ONLY caller that may swallow a
+        // Return. Never unconditional — that would break newline, send and the
+        // IME's confirm key in one go.
+        if onReturnIntercept?() == true { return }
         onReturnKey?()
+    }
+
+    @objc private func handleEscapeKey() {
+        if onEscape?() == true { return }
+        // No hook (or it declined): Escape keeps its default meaning.
+        resignFirstResponder()
     }
 
     @objc private func handleShiftReturnKey() {
@@ -1449,35 +1306,30 @@ class PastableUITextView: UITextView, UIDropInteractionDelegate {
             return
         }
 
-        // Priority 5: Long text → session paste buffer + `[pasted#N]` literal
-        // at the caret. [T-paste-placeholder] Replaces the old "write a .txt
-        // and attach it" behaviour: models treat file attachments through a
-        // different (often worse) path than inline text, so the full text now
-        // stays inline — stashed in the vm's buffer and expanded back into the
-        // message by send(). Threshold lives in PastePlaceholder.isLong,
-        // shared with the voice panel's paste menu.
-        if let text = pb.string, PastePlaceholder.isLong(text), let handler = onPasteLongText {
-            // [T-paste-huge-file-composer-residue] The handler ALWAYS consumes
-            // a long text: it returns the `[Pasted#N]` literal to insert, or
-            // nil when the text crossed the file-attachment threshold and
-            // became a .txt card (stashPastedText's only other nil-free path
-            // is the write-failure fallback, which returns a placeholder).
-            // nil used to fall through to `super.paste(sender)`, dumping the
-            // full raw text into the composer NEXT TO the file card — exactly
-            // what routing to a file exists to prevent. Now nil inserts
-            // nothing: the card carries the content, the composer stays as
-            // the user left it.
-            if let placeholder = handler(text) {
-                pasteLog.debug("[Paste] long text (\(text.count) chars) → placeholder \(placeholder)")
-                // insertText replaces the current selection / inserts at the
-                // caret, exactly like typing — the normal editing pipeline
-                // (delegate → binding) runs, no special settle needed for a
-                // dozen-character literal.
-                insertText(placeholder)
+        // Priority 5: Long text → convert to text file attachment
+        // English-dominant (>50% ASCII letters): threshold = 1000 words
+        // Otherwise (CJK / mixed): threshold = 1200 characters
+        if let text = pb.string {
+            let asciiLetters = text.unicodeScalars.filter { ($0.value >= 0x41 && $0.value <= 0x5A) || ($0.value >= 0x61 && $0.value <= 0x7A) }.count
+            let isEnglishDominant = asciiLetters > text.count / 2
+            let isLong: Bool
+            if isEnglishDominant {
+                let wordCount = text.components(separatedBy: .whitespacesAndNewlines)
+                    .filter { !$0.isEmpty }.count
+                isLong = wordCount > 1000
             } else {
-                pasteLog.debug("[Paste] huge text (\(text.count) chars) → .txt attachment card, composer untouched")
+                isLong = text.count > 1200
             }
-            return
+            if isLong {
+                pasteLog.debug("[Paste] long text (\(text.count) chars) → file attachment")
+                let tmp = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("pasted_\(UUID().uuidString.prefix(8)).txt")
+                if let data = text.data(using: .utf8) {
+                    try? data.write(to: tmp)
+                    onPasteFile?(tmp)
+                    return
+                }
+            }
         }
 
         // Priority 6: Normal text paste
@@ -1498,27 +1350,22 @@ struct PastableTextView: UIViewRepresentable {
     /// happens to overflow.
     @Binding var isAtScrollBottom: Bool
     var placeholder: String
-    /// [T-ios-composer-placeholder-rotation] Feature hints cycled while the
-    /// composer is empty. Empty (the default) keeps the static placeholder,
-    /// so the other `PastableTextView` call sites are unaffected.
-    var placeholderRotation: [String] = []
-    /// When true, the FIRST focus rotates as well. Set for sessions that
-    /// already have messages, where the default placeholder has served its
-    /// purpose and the hints are more useful than repeating it.
-    var placeholderRotatesOnFirstFocus: Bool = false
-    /// [T-ios-context-usage-hint] A request to show the context-usage line
-    /// in the placeholder for a few seconds. The Coordinator acts on each
-    /// `generation` once; nil (the default) leaves every other call site of
-    /// this view untouched.
-    var contextUsageHint: ContextUsageHint? = nil
     var onPasteImage: (UIImage) -> Void
     var onPasteFile: (URL) -> Void
-    /// [T-paste-placeholder] See PastableUITextView.onPasteLongText.
-    var onPasteLongText: ((String) -> String?)?
     var onReturnKey: (() -> Void)?
     var onArrowUp: (() -> Bool)?
     var onArrowDown: (() -> Bool)?
     var onTab: (() -> Bool)?
+    /// [T-arrow-nav] Asked BEFORE the Return key is treated as "send".
+    ///
+    /// Return `true` to swallow the keystroke (the `/` menu runs the highlighted
+    /// row), `false`/nil to let the existing send behaviour happen. Optional on
+    /// purpose: a caller that does not set it keeps today's behaviour exactly —
+    /// newline on Shift+Return, send on Return, IME confirm untouched.
+    var onReturnIntercept: (() -> Bool)?
+    /// Asked before the Escape key's default. `true` swallows it (the `/` menu
+    /// closes by clearing its query), `false`/nil keeps the system behaviour.
+    var onEscape: (() -> Bool)?
     /// Receives the caret location (UTF-16 offset) whenever the user moves
     /// the caret or edits the text. Used for `@`-mention detection.
     var onCaretChange: ((Int) -> Void)?
@@ -1583,11 +1430,12 @@ struct PastableTextView: UIViewRepresentable {
         tv.setContentHuggingPriority(.defaultHigh, for: .vertical)
         tv.onPasteImage = onPasteImage
         tv.onPasteFile = onPasteFile
-        tv.onPasteLongText = onPasteLongText
         tv.onReturnKey = onReturnKey
         tv.onArrowUp = onArrowUp
         tv.onArrowDown = onArrowDown
         tv.onTab = onTab
+        tv.onReturnIntercept = onReturnIntercept
+        tv.onEscape = onEscape
         tv.onCaretChange = onCaretChange
         // Hide the input-assistant bar that iPadOS shows above a physical
         // keyboard — it leaves a visible grey strip at the bottom of the screen.
@@ -1598,54 +1446,28 @@ struct PastableTextView: UIViewRepresentable {
         // Install custom drop interaction to intercept file/image drops on iPad
         tv.installDropInteraction()
 
-        // Placeholder overlay — same font and colour as the primary text, so
-        // the hint reads as ghosted input rather than as chrome. The default
-        // string ("Message %@ (@ to mention files)") is one parameterized
-        // xcstrings entry so translators can adapt word-order per locale
-        // (e.g. zh moves the verb and uses fullwidth brackets).
-        //
-        // [T-ios-composer-placeholder-wrap] It WRAPS. It used to be pinned by
-        // leading+top only, with UILabel's default `numberOfLines = 1`: with no
-        // trailing constraint the label laid out at its intrinsic width and ran
-        // straight off the edge of the text view, so any hint longer than the
-        // composer was clipped mid-sentence. That was survivable for the short
-        // default, but the rotating feature hints
-        // ([T-ios-composer-placeholder-rotation]) are full sentences — e.g.
-        // "Long-press anywhere in a reply to select and copy it all" — and are
-        // longer still in several locales, so most of them were unreadable.
-        //
-        // Fixing it needs BOTH halves: `numberOfLines = 0` alone still measures
-        // against an unbounded width (one line, clipped), and a trailing
-        // constraint alone still truncates at one line.
+        // Single-line placeholder — the @-mention hint sits inline in
+        // parentheses, same font and same color as the primary text.
+        // The full string ("Message %@ (@ to mention files)") is one
+        // parameterized xcstrings entry so translators can adapt
+        // word-order per locale (e.g. zh moves the verb and uses fullwidth brackets).
         let placeholderLabel = UILabel()
         placeholderLabel.text = placeholder
         placeholderLabel.font = AppFont.ui(FontSettings.shared.scaledChatInput(16.5))
         placeholderLabel.textColor = .placeholderText
         placeholderLabel.tag = 999
-        placeholderLabel.numberOfLines = 0
-        placeholderLabel.lineBreakMode = .byWordWrapping
         placeholderLabel.translatesAutoresizingMaskIntoConstraints = false
         tv.addSubview(placeholderLabel)
-        // Width is bound to the text view's own width rather than to a trailing
-        // anchor: `tv` is a UIScrollView, so its trailing anchor tracks the
-        // (unbounded) CONTENT area, not the visible viewport — anchoring there
-        // reintroduces the same runaway width this fixes. `widthAnchor` is the
-        // frame width, which is what the user actually sees.
-        //
-        // The text itself is typeset with `textContainerInset = .zero` and
-        // `lineFragmentPadding = 0` (set above), so leading/top at zero and a
-        // full-width label line up exactly with where the first typed character
-        // lands — no separate padding constant to keep in sync.
         NSLayoutConstraint.activate([
             placeholderLabel.leadingAnchor.constraint(equalTo: tv.leadingAnchor),
             placeholderLabel.topAnchor.constraint(equalTo: tv.topAnchor),
-            placeholderLabel.widthAnchor.constraint(equalTo: tv.widthAnchor),
         ])
         placeholderLabel.isHidden = !text.isEmpty
 
         return tv
     }
 
+    @available(iOS 16.0, *)
     func sizeThatFits(_ proposal: ProposedViewSize, uiView tv: PastableUITextView, context: Context) -> CGSize? {
         let width = proposal.width ?? UIScreen.main.bounds.width
         // [T-share-url-input-height] UITextView.sizeThatFits returns the
@@ -1684,14 +1506,6 @@ struct PastableTextView: UIViewRepresentable {
     }
 
     func updateUIView(_ tv: PastableUITextView, context: Context) {
-        // [T-ios-context-usage-hint] Hand the Coordinator the CURRENT view
-        // value. It was only ever assigned in init, so every `parent.*` read
-        // on the Coordinator — placeholder, rotation pool, contextUsageHint —
-        // saw the values from creation time: the usage line never showed
-        // (its request stayed nil forever) and a soul rename never reached
-        // the placeholder. The @Binding writes kept working, which is why
-        // the freeze went unnoticed. Standard UIViewRepresentable practice.
-        context.coordinator.parent = self
         // [T-ipad-composer-resize] Track the growth cap as the user drags. The
         // invalidate is required: `maxHeight` feeds `intrinsicContentSize` and
         // `isScrollEnabled`, neither of which UIKit re-derives on its own, so
@@ -1775,11 +1589,12 @@ struct PastableTextView: UIViewRepresentable {
         }
         tv.onPasteImage = onPasteImage
         tv.onPasteFile = onPasteFile
-        tv.onPasteLongText = onPasteLongText
         tv.onReturnKey = onReturnKey
         tv.onArrowUp = onArrowUp
         tv.onArrowDown = onArrowDown
         tv.onTab = onTab
+        tv.onReturnIntercept = onReturnIntercept
+        tv.onEscape = onEscape
 
         // Apply a pending caret move (e.g. after mention insert). Clamp to the
         // text length and only move when different to avoid fighting the user.
@@ -1818,22 +1633,10 @@ struct PastableTextView: UIViewRepresentable {
         if let label = tv.viewWithTag(999) as? UILabel {
             label.isHidden = !text.isEmpty
             if label.font != inputFont { label.font = inputFont }
-            // [T-ios-composer-placeholder-rotation] Only the focus handler
-            // picks a new entry. This runs on EVERY parent re-render (the
-            // composer has no Equatable gate), so assigning `placeholder`
-            // unconditionally would yank a rotated hint back to the default.
-            //
             // Sync placeholder text — soulName changes (SOUL.md edit)
             // flow through as a new `placeholder` value from the parent,
-            // and locale switches re-resolve String(localized:). Routing
-            // through the coordinator re-resolves against the pool, so those
-            // updates still land while a rotated hint is showing.
-            // [T-ios-context-usage-hint] Hint requests first: a new generation
-            // schedules the usage line; refresh then yields to it while it is
-            // on screen.
-            context.coordinator.syncContextUsageHint(in: tv)
-            context.coordinator.consumeTransientHintIfNeeded(in: tv)
-            context.coordinator.refreshPlaceholderText(in: tv)
+            // and locale switches re-resolve String(localized:).
+            if label.text != placeholder { label.text = placeholder }
         }
 
         // Sync focus from SwiftUI → UIKit (guard to prevent feedback loops)
@@ -1932,298 +1735,6 @@ struct PastableTextView: UIViewRepresentable {
             self.parent = parent
         }
 
-        // MARK: - [T-ios-composer-placeholder-rotation] Placeholder hint cycle
-        //
-        // Rotation is driven by the FOCUS EDGE, not a timer: the placeholder
-        // changes once each time the user focuses the empty composer. Nothing
-        // runs while the view merely sits on screen, so there is no periodic
-        // main-thread wakeup to pay for.
-        //
-        // State lives on the Coordinator, not in SwiftUI @State: the Coordinator
-        // is reference-typed and survives the composer's re-renders, whereas
-        // @State would be read back through a stale `self` copy — the failure
-        // the voice panel's DeleteButtonState comment records.
-        //
-        // `textViewDidBeginEditing` is the ONLY place that picks a new entry.
-        // `updateUIView` must re-resolve through `refreshPlaceholderText`, never
-        // assign `parent.placeholder` directly, or a re-render would snap a
-        // rotated hint back to the default.
-
-        /// Index into `placeholderPool` of the text currently on screen. Starts
-        /// at 0 — the default — because that is what `makeUIView` renders, and
-        /// stays there until the first focus swaps it.
-        private var placeholderPoolIndex: Int = 0
-        /// False until focus has been gained once for this composer. The FIRST
-        /// focus after entering a session leaves the text alone: the user just
-        /// tapped the field they were already reading, and swapping the words
-        /// out from under that tap reads as a glitch. Every later focus rotates.
-        private var hasFocusedOnce = false
-
-        /// The full rotation pool: the default placeholder is element 0 and is
-        /// a rotation candidate like any other, so it can come back around.
-        private var placeholderPool: [String] {
-            [parent.placeholder] + parent.placeholderRotation
-        }
-
-        /// True while something other than the default is on screen, so
-        /// `updateUIView` doesn't overwrite a rotated hint on the next
-        /// re-render (the composer has no Equatable gate — this runs a lot).
-        var isShowingRotatedHint: Bool { placeholderPoolIndex != 0 }
-
-        // MARK: - [T-ios-context-usage-hint] Transient context-usage line
-        //
-        // After a turn finishes the parent hands down a `ContextUsageHint`;
-        // the label shows "Context 62% used · 124k / 200k" and KEEPS showing it
-        // until the user actually types — the first character entering the
-        // composer is what consumes it. It used to expire on a 3.5 s Timer;
-        // the user asked for it to stay so the figure can be read at leisure.
-        // Everything about it lives here on the Coordinator for the same
-        // reason the rotation state does: it is reference-typed and survives
-        // re-renders, and a work item stored in SwiftUI @State would capture
-        // a stale copy of the view struct (the objectdestroy UAF family).
-        //
-        // Ownership rule while the line is unconsumed
-        // (`hasUnconsumedTransientHint`): `rotatePlaceholderOnFocus` skips its
-        // swap — focusing without typing must not dismiss the line — and
-        // `refreshPlaceholderText` re-asserts the line instead of the pool
-        // entry. Consumption happens once, on the empty → non-empty edge of
-        // the text; clearing the composer again afterwards brings back the
-        // ordinary default/rotation placeholder, never the old figure. Only a
-        // new generation (the next finished turn) shows a line again.
-
-        /// Last `ContextUsageHint.generation` acted on, so a re-render that
-        /// carries the same request is a no-op.
-        private var contextHintGeneration = 0
-        /// The 0.4 s debounce: a burst of quick turns shows one line, for the
-        /// last of them. Cancelled and replaced by each newer generation.
-        private var contextHintDebounce: DispatchWorkItem?
-        /// Last `[sync]` diagnostic state, to log only on change.
-        private var lastSyncLogState: String?
-        private var transientHint: ContextUsageHint?
-        /// True from the moment a usage line is REQUESTED (new generation seen)
-        /// until the user starts typing. Both placeholder paths yield to the
-        /// line while this holds — even during the debounce, before it is
-        /// visible.
-        private(set) var hasUnconsumedTransientHint = false
-        /// [T-ios-context-usage-hint-first-focus-only] True once this line has
-        /// spent its single "survive a focus" allowance. The line must ride
-        /// out exactly ONE focus gain — the auto-focus after a reply, or the
-        /// user's own tap right as it appears — but not a second one:
-        /// focusing again without ever typing retires the line and restores
-        /// the ordinary focus rotation. Without this, "keep until typing"
-        /// silently disabled rotation for as long as the composer stayed
-        /// empty (user report: after the auto-focus the tips never cycled).
-        private(set) var hasProtectedFirstFocus = false
-        /// True once the debounce fired and the label actually carries the
-        /// line; gates `refreshPlaceholderText`'s re-assertion so a re-render
-        /// inside the debounce window does not pre-empt the crossfade.
-        private var transientHintApplied = false
-
-        /// Called from `updateUIView` on every re-render; acts only when the
-        /// parent's hint carries a generation not yet seen.
-        func syncContextUsageHint(in textView: UITextView) {
-            // Diagnostic: what this Coordinator SEES on each re-render. Logged
-            // only when it changes, since updateUIView runs constantly.
-            let seen = "parentHint=\(parent.contextUsageHint.map { "gen\($0.generation)" } ?? "nil") handled=gen\(contextHintGeneration) unconsumed=\(hasUnconsumedTransientHint)"
-            if seen != lastSyncLogState {
-                lastSyncLogState = seen
-                hintLog.info("[sync] \(seen)")
-            }
-            guard let hint = parent.contextUsageHint,
-                  hint.generation != contextHintGeneration else { return }
-            contextHintGeneration = hint.generation
-            hintLog.info("[sync] new gen\(hint.generation) → debounce 0.4s (textEmpty=\(textView.text.isEmpty))")
-            // Claim the label NOW, before the debounce: from this instant a
-            // focus gain must yield rather than rotate, or a hardware-keyboard
-            // auto-focus landing inside the 0.4 s window would flash a random
-            // hint first. The visual apply still waits for the debounce
-            // (`transientHintApplied` gates re-assertion until then).
-            transientHint = hint
-            transientHintApplied = false
-            hasUnconsumedTransientHint = true
-            hasProtectedFirstFocus = false
-            contextHintDebounce?.cancel()
-            let work = DispatchWorkItem { [weak self, weak textView] in
-                guard let self, let textView else { return }
-                self.contextHintDebounce = nil
-                self.showTransientHint(hint, in: textView)
-            }
-            contextHintDebounce = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
-        }
-
-        private func showTransientHint(_ hint: ContextUsageHint, in textView: UITextView) {
-            // Re-checked at fire time: the user may have started typing during
-            // the debounce, and the label is hidden behind text anyway.
-            guard textView.text.isEmpty,
-                  let label = textView.viewWithTag(999) as? UILabel else {
-                hintLog.info("[show] gen\(hint.generation) SKIPPED textEmpty=\(textView.text.isEmpty) label=\(textView.viewWithTag(999) != nil)")
-                return
-            }
-            hintLog.info("[show] gen\(hint.generation) applying '\(hint.text)' tier=\(hint.tier) focused=\(textView.isFirstResponder) reduceMotion=\(UIAccessibility.isReduceMotionEnabled)")
-            // State was claimed in syncContextUsageHint; this is the visual.
-            transientHintApplied = true
-            let attributed = Self.attributedHint(hint, font: label.font)
-            let apply = { label.attributedText = attributed }
-            // Reduce Motion: swap instantly, same as the rotation.
-            if UIAccessibility.isReduceMotionEnabled {
-                apply()
-            } else {
-                UIView.transition(with: label, duration: 0.25,
-                                  options: .transitionCrossDissolve, animations: apply)
-            }
-        }
-
-        /// The user started typing: retire the usage line. Called on the
-        /// empty → non-empty edge from `textViewDidChange` (keystrokes,
-        /// paste, `insertText`) and from `updateUIView` (programmatic writes
-        /// such as dictation appending to the binding), so every way text
-        /// can enter the composer counts as "input began". Idempotent.
-        ///
-        /// No visual transition: the label is already hidden behind the text
-        /// the moment this runs. The pool index is reset to the default so
-        /// that, should the composer be cleared again, the ordinary
-        /// placeholder returns — never the old figure.
-        func consumeTransientHintIfNeeded(in textView: UITextView) {
-            guard hasUnconsumedTransientHint, !textView.text.isEmpty else { return }
-            hintLog.info("[consume] gen\(transientHint?.generation ?? -1) input began (\(textView.text.count) chars) → back to default")
-            hasUnconsumedTransientHint = false
-            transientHint = nil
-            placeholderPoolIndex = 0
-            transientHintApplied = false
-            hasProtectedFirstFocus = false
-            if let label = textView.viewWithTag(999) as? UILabel {
-                label.text = placeholderPool[0]
-            }
-        }
-
-        /// Grey line with the two number segments in the tier's colour and a
-        /// medium weight. Segments are located by `range(of:)` on the exact
-        /// strings the numbers were formatted as, so locale word order is
-        /// irrelevant. Below the warning tier there is no highlight at all.
-        ///
-        /// Weight is `.medium`, not `.semibold`: on device the full-strength
-        /// red at semibold jumped out of the grey placeholder line; a
-        /// placeholder is meant to sit back, so the numbers get just enough
-        /// weight to read as the part that matters.
-        private static func attributedHint(_ hint: ContextUsageHint, font: UIFont) -> NSAttributedString {
-            let attributed = NSMutableAttributedString(
-                string: hint.text,
-                attributes: [.font: font, .foregroundColor: UIColor.placeholderText])
-            guard let tone = hint.tier.highlightColor else { return attributed }
-            let emphasis = AppFont.ui(font.pointSize, weight: .medium)
-            let ns = hint.text as NSString
-            for segment in hint.highlights {
-                let range = ns.range(of: segment)
-                guard range.location != NSNotFound else { continue }
-                attributed.addAttributes([.foregroundColor: tone, .font: emphasis], range: range)
-            }
-            return attributed
-        }
-
-        deinit {
-            contextHintDebounce?.cancel()
-        }
-
-        /// Rotate to a random pool entry on focus gain. Called from
-        /// `textViewDidBeginEditing`, which is the only place that knows focus
-        /// was actually acquired.
-        func rotatePlaceholderOnFocus(_ textView: UITextView) {
-            // Only meaningful while the placeholder is visible at all.
-            guard textView.text.isEmpty else { return }
-            // [T-ios-context-usage-hint] The usage line keeps the label until
-            // the user types; merely focusing must not swap it away.
-            hintLog.info("[rotate] focus gained unconsumed=\(hasUnconsumedTransientHint) protected=\(hasProtectedFirstFocus) voiceOver=\(UIAccessibility.isVoiceOverRunning) firstFocus=\(!hasFocusedOnce) idx=\(placeholderPoolIndex)")
-            if hasUnconsumedTransientHint {
-                // [T-ios-context-usage-hint-first-focus-only] The line survives
-                // its first focus gain (auto-focus after the reply, or the
-                // user's own tap) exactly once; the next focus without typing
-                // retires it and the ordinary rotation below takes over.
-                guard hasProtectedFirstFocus else {
-                    hasProtectedFirstFocus = true
-                    hintLog.info("[rotate] yield — usage line keeps the label (first focus protected)")
-                    return
-                }
-                hintLog.info("[rotate] second focus — retiring usage line gen\(transientHint?.generation ?? -1)")
-                contextHintDebounce?.cancel()
-                contextHintDebounce = nil
-                hasUnconsumedTransientHint = false
-                transientHint = nil
-                transientHintApplied = false
-                hasProtectedFirstFocus = false
-                // Put the pool entry back first, so every early return below
-                // (VoiceOver, first-focus opt-out, single-entry pool) still
-                // leaves the label without the stale figure.
-                if let label = textView.viewWithTag(999) as? UILabel,
-                   placeholderPoolIndex < placeholderPool.count {
-                    label.text = placeholderPool[placeholderPoolIndex]
-                }
-            }
-            // VoiceOver: swapping the label retriggers announcements and talks
-            // over the user, so pin whatever is showing and never rotate.
-            guard !UIAccessibility.isVoiceOverRunning else { return }
-            // First focus normally shows the default untouched — the user just
-            // tapped the field they were already reading. In a session that
-            // already has messages the caller opts in to rotating immediately,
-            // since the default has nothing left to teach there.
-            if !hasFocusedOnce {
-                hasFocusedOnce = true
-                guard parent.placeholderRotatesOnFirstFocus else { return }
-            }
-            let pool = placeholderPool
-            guard pool.count > 1 else { return }
-            guard let label = textView.viewWithTag(999) as? UILabel else { return }
-
-            // Random, but never the entry already on screen — a repeat reads as
-            // "the rotation is broken" rather than as chance.
-            var next = Int.random(in: 0..<pool.count)
-            while next == placeholderPoolIndex { next = Int.random(in: 0..<pool.count) }
-            placeholderPoolIndex = next
-            let text = pool[next]
-            hintLog.info("[rotate] swapped to pool[\(next)]")
-            guard label.text != text else { return }
-
-            // Reduce Motion: swap instantly rather than cross-dissolving.
-            guard !UIAccessibility.isReduceMotionEnabled else {
-                label.text = text
-                return
-            }
-            // Cross-dissolve on the UIKit side. SwiftUI's .transition/.animation
-            // do not cross the UIViewRepresentable boundary, so this is the only
-            // place the fade can happen.
-            UIView.transition(with: label,
-                              duration: 0.25,
-                              options: .transitionCrossDissolve,
-                              animations: { label.text = text })
-        }
-
-        /// Re-resolve the on-screen text against the CURRENT pool, without
-        /// animating and without picking a new entry. Used by `updateUIView`
-        /// so a soul rename or locale switch still reaches a rotated hint.
-        func refreshPlaceholderText(in textView: UITextView) {
-            guard let label = textView.viewWithTag(999) as? UILabel else { return }
-            // [T-ios-context-usage-hint] While the usage line is unconsumed a
-            // parent re-render must not overwrite it with the pool entry;
-            // re-assert it instead (a font-size change re-applies the label
-            // font and would otherwise flatten the highlight).
-            if hasUnconsumedTransientHint, let hint = transientHint {
-                // Only once the debounce has applied it; before that the label
-                // keeps whatever it showed, and the crossfade lands on time.
-                if transientHintApplied, label.text != hint.text {
-                    label.attributedText = Self.attributedHint(hint, font: label.font)
-                }
-                return
-            }
-            let pool = placeholderPool
-            guard placeholderPoolIndex < pool.count else {
-                placeholderPoolIndex = 0
-                if label.text != pool[0] { label.text = pool[0] }
-                return
-            }
-            let text = pool[placeholderPoolIndex]
-            if label.text != text { label.text = text }
-        }
-
         /// [T-ios-composer-swipe-send-at-bottom] Track the at-bottom state while
         /// the user scrolls the composer, so swipe-to-send becomes available the
         /// moment they reach the end of a long value.
@@ -2272,9 +1783,6 @@ struct PastableTextView: UIViewRepresentable {
             // buffer, so any late IME callback that fires later just
             // writes "" back into the binding, not stale text.
             parent.text = textView.text
-            // [T-ios-context-usage-hint] The first character typed retires the
-            // usage line (see consumeTransientHintIfNeeded).
-            consumeTransientHintIfNeeded(in: textView)
             textView.invalidateIntrinsicContentSize()
             // [T-ios-composer-paste-truncation] Republish the scroll-state
             // bindings here too. An in-app paste mutates the text through UIKit
@@ -2341,12 +1849,6 @@ struct PastableTextView: UIViewRepresentable {
             if !isSyncingFocus {
                 parent.isFocused = true
             }
-            // [T-ios-composer-placeholder-rotation] Focus gain is the sole
-            // trigger. Fired here rather than off the `isFocused` binding
-            // because this callback runs on the real UIKit edge — it cannot
-            // double-fire from a re-render, and it covers programmatic focus
-            // (`isSyncingFocus`) the same as a tap.
-            rotatePlaceholderOnFocus(textView)
         }
 
         func textViewDidEndEditing(_ textView: UITextView) {
@@ -2378,31 +1880,5 @@ private extension UIView {
             responder = r.next
         }
         return nil
-    }
-}
-
-// MARK: - [T-ios-context-usage-hint] Tier colours for the placeholder line
-
-private extension ContextUsage.Tier {
-    /// System dynamic colours so light and dark mode both get the intended
-    /// contrast against `.placeholderText`; matches the orange the message
-    /// footer's usage capsule already uses.
-    ///
-    /// Toned down with an alpha rather than a custom hex: the alpha is applied
-    /// at draw time over the composer's own surface, so the colour tracks the
-    /// light/dark appearance the way `.placeholderText` next to it does, and
-    /// it stays a recognisable system red/orange — just no longer at full
-    /// strength, which on device read as shouting inside a placeholder line.
-    /// Red keeps a slightly lower alpha than orange because it is the more
-    /// saturated hue; it still reads as the more urgent of the two.
-    var highlightColor: UIColor? {
-        switch self {
-        case .normal: return nil
-        // Orange is the lighter hue, so it needs the lower alpha to sit at the
-        // same restraint as the red — on device 0.65 still read brighter than
-        // the 0.60 red beside it.
-        case .warning: return UIColor.systemOrange.withAlphaComponent(0.50)
-        case .critical: return UIColor.systemRed.withAlphaComponent(0.60)
-        }
     }
 }
