@@ -55,6 +55,13 @@ enum DSHRemoteTranscriptCache {
     static let maxRecords = 400
     /// Total budget for every cached Session. Beyond this the OLDEST file goes.
     static let maxTotalBytes = 20 * 1024 * 1024
+    /// How many Sessions may have a file at all.
+    ///
+    /// The byte budget alone let a machine that has opened hundreds of Sessions keep
+    /// hundreds of tiny files: a 30-record page is a few KB, so 20 MB could mean
+    /// thousands of files in one directory. A count cap keeps the directory (and the
+    /// launch-time listing) bounded whatever the pages look like.
+    static let maxSessionFiles = 50
 
     // MARK: Location
 
@@ -108,6 +115,10 @@ enum DSHRemoteTranscriptCache {
     }
 
     /// Keep the newest `maxRecords` of `records`, ordered by seq, and write.
+    ///
+    /// A cache is an optimisation: every failure here is swallowed after one log
+    /// line, because a full disk must not be able to fail the Session the cache
+    /// exists to speed up.
     @discardableResult
     static func save(serverId: String, sessionId: String, cursor: Int,
                      records: [DSHHistoryRecord]) -> Int {
@@ -119,6 +130,8 @@ enum DSHRemoteTranscriptCache {
             let data = try cacheEncoder().encode(cached)
             try data.write(to: url, options: .atomic)
             excludeFromBackup(url)
+            // Both caps are enforced here, keeping the file we just wrote: count
+            // first (cheap), then bytes.
             evictIfNeeded(keeping: url)
             return trimmed.count
         } catch {
@@ -189,6 +202,13 @@ enum DSHRemoteTranscriptCache {
     }
 
     /// Oldest first until the total fits the budget.
+    /// Evict until BOTH caps hold: at most `maxSessionFiles` files and at most
+    /// `maxTotalBytes` on disk.
+    ///
+    /// `url` (the file just written, i.e. the Session being used right now) is never
+    /// a candidate — deleting it would throw away the cache entry the user is
+    /// actively paying for, and the next save would immediately recreate it.
+    /// Oldest first, by modification date (the same order `lastUsed` would give).
     private static func evictIfNeeded(keeping url: URL) {
         guard let dir = directory(),
               let files = try? FileManager.default.contentsOfDirectory(
@@ -198,14 +218,22 @@ enum DSHRemoteTranscriptCache {
             guard let values = try? file.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]) else { return nil }
             return (file, values.fileSize ?? 0, values.contentModificationDate ?? .distantPast)
         }
-        var total = entries.reduce(0) { $0 + $1.size }
-        guard total > maxTotalBytes else { return }
         entries.sort { $0.modified < $1.modified }
-        for entry in entries where total > maxTotalBytes {
+        var total = entries.reduce(0) { $0 + $1.size }
+        var count = entries.count
+
+        for entry in entries {
+            guard count > maxSessionFiles || total > maxTotalBytes else { break }
             guard entry.url != url else { continue }
             try? FileManager.default.removeItem(at: entry.url)
             total -= entry.size
-            NSLog("[DSH] cache evicted \(entry.url.lastPathComponent) size=\(entry.size)")
+            count -= 1
+            NSLog("[DSH] cache evicted \(entry.url.lastPathComponent) size=\(entry.size) files=\(count)")
+        }
+        if count > maxSessionFiles {
+            // Only reachable when the cap is 0/1 and the current file is the one over
+            // it; say so rather than looping.
+            NSLog("[DSH] cache still over the file cap files=\(count) (current file kept)")
         }
     }
 

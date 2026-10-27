@@ -137,6 +137,9 @@ struct DSHRemoteSettingsView: View {
             // the computer, the answer streams back live, and the model still runs
             // there — say exactly that.
             Text("When on, the conversation list shows this computer's conversations instead of local mini-dsh chats. Messages you send from here run on the computer and stream back live; the model never runs on this device.")
+            Text("Switching a model from the phone also updates the computer's saved default.")
+                .font(AppFont.sw(11, weight: .regular, category: .ui))
+                .foregroundStyle(ChatColors.secondaryText)
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }
