@@ -30,6 +30,34 @@ final class DSHRemoteStore: ObservableObject {
         case failed(String)
     }
 
+    /// Connection health, in the only terms the UI can act on.
+    ///
+    /// `status` says whether the pair is usable; this says whether the LIVE side is
+    /// still alive. They differ in exactly the case that cost the user a session:
+    /// the socket dies, `status` stays `.connected`, the frozen page looks fine and
+    /// nothing streams until the page is re-entered.
+    enum ConnectionState: Equatable {
+        /// No host at all: the connection page should offer pairing.
+        case unpaired
+        /// A host is saved but nothing can talk to it (Keychain empty, refresh
+        /// rejected). Carries the sentence to show — never a silent failure.
+        case unavailable(String)
+        case connected
+        /// Frames stopped arriving (`since` = the last one). The banner belongs here.
+        case stale(since: Date)
+        case reconnecting(attempt: Int)
+
+        var isHealthy: Bool { self == .connected }
+    }
+
+    /// No frame (not even a heartbeat) for this long means the socket is dead.
+    ///
+    /// The host heartbeats every 15 s, so two missed beats is unambiguous, and it
+    /// keeps "stale" well inside the 30 s the user is willing to wait.
+    static let staleTimeout: TimeInterval = 30
+    /// Banner grace: one missed heartbeat is when the UI should start saying something.
+    static let staleHint: TimeInterval = 15
+
     enum PairingPhase: Equatable {
         case idle
         case probing
@@ -51,6 +79,13 @@ final class DSHRemoteStore: ObservableObject {
 
     @Published private(set) var host: DSHRemoteHost?
     @Published private(set) var status: Status = .disconnected
+    /// Live-socket health for the banner (see `ConnectionState`).
+    @Published private(set) var connectionState: ConnectionState = .unpaired
+    /// When the last frame OR heartbeat arrived. `nil` until something does.
+    @Published private(set) var lastFrameAt: Date?
+    /// Why the pair is not usable, in the user's words. Set on every failure path
+    /// that used to be silent.
+    @Published private(set) var disconnectReason: String?
     @Published private(set) var conversations: [DSHRemoteConversation] = []
     /// Harness Sessions (the web sidebar list). This is what the DSH sidebar shows.
     ///
@@ -86,6 +121,10 @@ final class DSHRemoteStore: ObservableObject {
     /// open and on every reconnect, so a reconnect resumes instead of replaying
     /// (or, worse, re-projecting a turn the writer already sealed).
     private var streamCursors: [String: Int] = [:]
+    /// Ticks while any Session is open and restarts a socket that went quiet.
+    private var watchdog: Task<Void, Never>?
+    /// How often the watchdog looks. Cheap: it only compares dates.
+    private static let watchdogInterval: TimeInterval = 3
 
     private init() {
         #if DEBUG
@@ -128,8 +167,19 @@ final class DSHRemoteStore: ObservableObject {
         if let data = UserDefaults.standard.data(forKey: Keys.host),
            let saved = try? JSONDecoder().decode(DSHRemoteHost.self, from: data) {
             host = saved
+            connectionState = .unavailable(AppLocalized("Pair this device again."))
             if let session = DSHRemoteKeychain.load(account: saved.serverId) {
                 client = DSHRemoteClient(session: session)
+            } else {
+                // The host survived the relaunch but its session did not (iOS can
+                // drop a Keychain item after an update/before first unlock). This
+                // used to be silent: the page said "not paired" with an empty URL
+                // and the user had no idea they only needed to pair again.
+                let reason = AppLocalized("The pairing expired. Pair this device again.")
+                status = .failed(reason)
+                connectionState = .unavailable(reason)
+                disconnectReason = reason
+                NSLog("[DSH] init: host restored but no local session (Keychain empty) — pair again, host kept")
             }
         }
         // A restored pairing must reconnect on its own: nothing else runs at
@@ -189,6 +239,8 @@ final class DSHRemoteStore: ObservableObject {
             apply(list)
             status = .connected
             errorText = nil
+            disconnectReason = nil
+            if connectionState != .connected { connectionState = .connected }
             // Team tools are gated on a value `makeAgentTools()` reads
             // SYNCHRONOUSLY every turn, so it cannot await there. A successful
             // connect is the one authoritative moment to refresh it: after the
@@ -203,10 +255,14 @@ final class DSHRemoteStore: ObservableObject {
                 status = .failed(error.message)
             }
             errorText = error.message
+            disconnectReason = error.message
+            connectionState = .unavailable(error.message)
         } catch {
             NSLog("[DSH] connect failed: \(error)")
             status = .failed(error.localizedDescription)
             errorText = error.localizedDescription
+            disconnectReason = error.localizedDescription
+            connectionState = .unavailable(error.localizedDescription)
         }
     }
 
@@ -306,6 +362,11 @@ final class DSHRemoteStore: ObservableObject {
         cursors = [:]
         streamCursors = [:]
         status = .disconnected
+        connectionState = .unpaired
+        disconnectReason = nil
+        lastFrameAt = nil
+        watchdog?.cancel()
+        watchdog = nil
         setMode(.minis)
     }
 
@@ -451,8 +512,106 @@ final class DSHRemoteStore: ObservableObject {
         }
         let slot = DSHRemoteStreamSlot(id: UUID(), sessionId: sessionId, onFrame: onFrame)
         streamSlots[slot.id] = slot
+        ensureWatchdog()
+        // A dead pair must be repaired BEFORE opening a socket, otherwise the
+        // page sits on a stream that can never deliver (the host rejects the
+        // token, the user sees a frozen snapshot and blames the app).
+        if status != .connected, host != nil, client == nil || isFailureStatus {
+            NSLog("[DSH] openStream: status not connected → connect() first sid=\(sessionId.prefix(12))")
+            Task { @MainActor [weak self] in
+                await self?.connect()
+                guard let self, let live = self.streamSlots[slot.id], !live.closed else { return }
+                self.start(live)
+            }
+            return slot.id
+        }
         start(slot)
         return slot.id
+    }
+
+    private var isFailureStatus: Bool {
+        if case .failed = status { return true }
+        return status == .disconnected
+    }
+
+    /// One ticker for every open Session. Started on the first `openStream`,
+    /// stopped when the last one closes.
+    private func ensureWatchdog() {
+        guard watchdog == nil else { return }
+        watchdog = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: UInt64(DSHRemoteStore.watchdogInterval * 1_000_000_000))
+                guard let self else { return }
+                if self.streamSlots.isEmpty {
+                    self.watchdog = nil
+                    return
+                }
+                self.checkStreamHealth()
+            }
+        }
+    }
+
+    /// Declare a socket dead when it has been silent for `staleTimeout`.
+    ///
+    /// Silence is measured against the last FRAME **or heartbeat**: when nothing
+    /// is happening the host still sends `{type:"heartbeat"}` every 15 s (the
+    /// device log shows `sse line len=40` for exactly those), so two missed beats
+    /// mean the socket is gone even though TCP has not noticed.
+    /// How a socket looks given its last sign of life. Pure, so the thresholds can
+    /// be asserted (`dsh-remote-projection-selftest.cjs` mirrors them).
+    enum StreamHealth: Equatable {
+        /// Nothing has ever arrived on this socket.
+        case unknown
+        case ok
+        /// Quiet for a while: show the banner, do not tear anything down yet.
+        case quiet(seconds: Int)
+        /// Silent past the timeout: the socket is dead, reconnect.
+        case stale(seconds: Int)
+    }
+
+    static func health(lastActivity: Date?, now: Date) -> StreamHealth {
+        guard let lastActivity else { return .unknown }
+        let age = now.timeIntervalSince(lastActivity)
+        if age > staleTimeout { return .stale(seconds: Int(age)) }
+        if age > staleHint { return .quiet(seconds: Int(age)) }
+        return .ok
+    }
+
+    private func checkStreamHealth() {
+        let now = Date()
+        for slot in streamSlots.values where !slot.closed {
+            switch DSHRemoteStore.health(lastActivity: slot.lastActivityAt, now: now) {
+            case .unknown, .ok:
+                continue
+            case .quiet(let age):
+                // Halfway: a banner is honest here, a teardown is not (a 20 s
+                // thought pause on the host looks exactly the same).
+                guard connectionState.isHealthy else { continue }
+                NSLog("[DSH] stream quiet (lastFrame=\(age)s) sid=\(slot.sessionId.prefix(12))")
+                connectionState = .stale(since: slot.lastActivityAt ?? now)
+            case .stale(let age):
+                NSLog("[DSH] stream stale (lastFrame=\(age)s) → reconnect attempt=\(slot.attempt + 1) sid=\(slot.sessionId.prefix(12))")
+                if let last = slot.lastActivityAt { connectionState = .stale(since: last) }
+                restartStale(slot)
+            }
+        }
+    }
+
+    /// Tear down a silent socket and open a fresh one.
+    ///
+    /// No `after`: the snapshot is a REBUILD, and a page trimmed to `after` would
+    /// truncate the transcript to the events that followed the last one we saw.
+    /// Re-opening without it re-reads the newest page, which is what "catch up"
+    /// means here — and it is the same path a first open takes, so nothing is
+    /// special-cased.
+    private func restartStale(_ slot: DSHRemoteStreamSlot) {
+        slot.stream?.close()
+        slot.stream = nil
+        slot.reconnectTask?.cancel()
+        slot.reconnectTask = nil
+        slot.attempt += 1
+        connectionState = .reconnecting(attempt: slot.attempt)
+        start(slot)
     }
 
     /// Detach and disconnect. Safe to call twice, and safe for a token the store
@@ -464,6 +623,11 @@ final class DSHRemoteStore: ObservableObject {
         slot.reconnectTask = nil
         slot.stream?.close()
         slot.stream = nil
+        if streamSlots.isEmpty {
+            watchdog?.cancel()
+            watchdog = nil
+            if case .connected = connectionState { connectionState = .connected }
+        }
         NSLog("[DSH] stream closed sid=\(slot.sessionId.prefix(12))")
     }
 
@@ -476,9 +640,18 @@ final class DSHRemoteStore: ObservableObject {
 
     private func start(_ slot: DSHRemoteStreamSlot) {
         guard let client else {
-            errorText = "This device is not paired."
+            // Not a log-only failure: the UI has to say why nothing streams.
+            let reason = host == nil
+                ? AppLocalized("Pair this device again.")
+                : AppLocalized("The pairing expired. Pair this device again.")
+            errorText = reason
+            disconnectReason = reason
+            status = .failed(reason)
+            connectionState = .unavailable(reason)
+            NSLog("[DSH] stream cannot start: no client (host=\(host != nil)) reason=\(reason)")
             return
         }
+        slot.lastActivityAt = Date()
         // NO `after` on purpose, even on a reconnect.
         //
         // The host trims `snapshot.records` to everything after `after`, and the
@@ -517,6 +690,10 @@ final class DSHRemoteStore: ObservableObject {
         }
         // Any frame proves the connection works: the backoff starts over.
         slot.attempt = 0
+        let now = Date()
+        slot.lastActivityAt = now
+        lastFrameAt = now
+        if connectionState != .connected { connectionState = .connected }
         NSLog("[DSH] route \(DSHRemoteStore.frameTag(frame)) slots=\(streamSlots.count)")
         if case .snapshot(let cursor, _, _, _, _, let pressure) = frame {
             if let pressure { cachePressure(pressure, sessionId: slot.sessionId) }
@@ -544,7 +721,14 @@ final class DSHRemoteStore: ObservableObject {
     }
 
     private func noteCursor(_ cursor: Int, token: UUID) {
-        guard let slot = streamSlots[token], !slot.closed, cursor > 0 else { return }
+        guard let slot = streamSlots[token], !slot.closed else { return }
+        // Heartbeats arrive here and nowhere else, so this is the liveness signal
+        // that keeps an idle Session from being declared stale.
+        let now = Date()
+        slot.lastActivityAt = now
+        lastFrameAt = now
+        if !connectionState.isHealthy { connectionState = .connected }
+        guard cursor > 0 else { return }
         streamCursors[slot.sessionId] = max(streamCursors[slot.sessionId] ?? 0, cursor)
     }
 
@@ -562,10 +746,17 @@ final class DSHRemoteStore: ObservableObject {
         }
         guard retryable else {
             NSLog("[DSH] stream not retryable — giving up sid=\(slot.sessionId.prefix(12))")
+            // Permanent: the user has to act, so say so instead of leaving the
+            // page looking connected.
+            let reason = message ?? AppLocalized("The connection was closed by the computer.")
+            status = .failed(reason)
+            connectionState = .unavailable(reason)
+            disconnectReason = reason
             return
         }
         let delay = DSHRemoteStore.backoffDelay(attempt: slot.attempt)
         slot.attempt += 1
+        connectionState = .reconnecting(attempt: slot.attempt)
         NSLog("[DSH] stream reconnect sid=\(slot.sessionId.prefix(12)) in \(String(format: "%.1f", delay))s attempt=\(slot.attempt)")
         slot.reconnectTask?.cancel()
         slot.reconnectTask = Task { @MainActor [weak self] in
@@ -702,6 +893,10 @@ final class DSHRemoteStreamSlot {
     /// Set by `closeStream`/`disconnect`. Every callback checks it, so a frame
     /// that races the teardown cannot reach a writer the UI already reset.
     var closed = false
+    /// When the last frame OR heartbeat arrived on this socket. `nil` until the
+    /// first byte; refreshed on every `start` so a new socket gets a full grace
+    /// period instead of inheriting the dead one's silence.
+    var lastActivityAt: Date?
 
     init(id: UUID, sessionId: String, onFrame: @escaping (DSHRemoteStreamFrame) -> Void) {
         self.id = id
