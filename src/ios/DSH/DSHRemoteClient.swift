@@ -624,6 +624,32 @@ final class DSHRemoteClient: @unchecked Sendable {
         return (try JSONDecoder().decode(Envelope.self, from: data)).items ?? []
     }
 
+    // MARK: - Model switching
+
+    /// `GET /mobile/v1/dsh/models?sessionId=` — the models this Session may switch to.
+    ///
+    /// `available == false` is NOT an error: the host lists the model and says why it
+    /// cannot be used (`reason`), because "why can't I pick this one" is the question
+    /// a user actually asks. The row is drawn greyed and its `reason` is shown on tap.
+    func models(sessionId: String) async throws -> DSHRemoteModelList {
+        let data = try await authorizedData(
+            path: "/dsh/models",
+            query: [URLQueryItem(name: "sessionId", value: sessionId)]
+        )
+        return try JSONDecoder().decode(DSHRemoteModelList.self, from: data)
+    }
+
+    /// `POST /mobile/v1/dsh/model` — set the model for this Session's NEXT request.
+    ///
+    /// The host answers `appliesTo: "next-request"`: a running turn is not
+    /// interrupted, so the UI must say "takes effect on the next request" rather
+    /// than implying a restart.
+    func setModel(sessionId: String, ref: String) async throws -> DSHRemoteModelSelection {
+        let body: [String: Any] = ["sessionId": sessionId, "ref": ref]
+        let data = try await authorizedData(path: "/dsh/model", method: "POST", json: body)
+        return try JSONDecoder().decode(DSHRemoteModelSelection.self, from: data)
+    }
+
     /// `GET /mobile/v1/dsh/messages` — one page of a Session's raw event log.
     func hostMessages(sessionId: String, beforeSeq: Double? = nil, limit: Int = 40) async throws -> DSHMessagesPage {
         var query = [

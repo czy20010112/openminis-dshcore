@@ -328,6 +328,25 @@ final class DSHRemoteStore: ObservableObject {
         }
     }
 
+    // MARK: - Model switching
+
+    /// The models this Session may switch to. Cached for the picker only — the
+    /// current model is a host fact that can change from the computer's side too,
+    /// so nothing else in the app reads it.
+    func models(sessionId: String) async throws -> DSHRemoteModelList {
+        guard let client else { throw DSHRemoteError(code: "not_paired", message: AppLocalized("Pair this device to use the remote session."), status: nil) }
+        return try await client.models(sessionId: sessionId)
+    }
+
+    /// Switch this Session's model. The answer carries `contextWindow` and
+    /// `appliesTo: "next-request"`; the caller updates the ring denominator from it.
+    func setModel(sessionId: String, ref: String) async throws -> DSHRemoteModelSelection {
+        guard let client else { throw DSHRemoteError(code: "not_paired", message: AppLocalized("Pair this device to use the remote session."), status: nil) }
+        let answer = try await client.setModel(sessionId: sessionId, ref: ref)
+        NSLog("[DSH] model switch sid=\(sessionId.prefix(8)) ref=\(answer.current ?? ref) applies=\(answer.appliesTo ?? "?")")
+        return answer
+    }
+
     func refreshConversations() async {
         guard let client, !loadingConversations else { return }
         loadingConversations = true
