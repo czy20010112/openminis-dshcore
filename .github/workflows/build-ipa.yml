@@ -12,7 +12,7 @@ name: Build IPA
 # Both lines branch on AIChatViewModel.useDSHAgentLoop, so the original loop stays
 # reachable for A/B comparison on either line.
 #
-# The ios26 job always checks out the `ios26` branch, whatever ref triggered the
+# The iOS 26 job always checks out `main` (the default branch, which carries that line),
 # run: this file is the single definition of the pipeline, and it lives on main.
 # For the same reason the helper scripts below are written out at run time rather
 # than committed, so there is nothing to keep in sync across the two branches.
@@ -72,9 +72,12 @@ jobs:
     if: github.event_name != 'workflow_dispatch' || inputs.build_ios15
 
     steps:
-      - name: Checkout repository
+      - name: Checkout the ios15 branch (iOS 15 line)
         uses: actions/checkout@v4
         with:
+          # Without this, a push to `main` builds the 26 line here and publishes it under an
+          # ios15 name. The job is named for its line; the checkout has to say so.
+          ref: ios15
           submodules: recursive
           fetch-depth: 0
 
@@ -249,15 +252,19 @@ jobs:
     if: github.event_name != 'workflow_dispatch' || inputs.build_ios26
 
     steps:
-      - name: Check that the ios26 branch exists
+      - name: Check that the main branch (iOS 26 line) exists
         id: probe
         run: |
+          # `main` carries the iOS 26 line since the branch restructure. This gate used to ask
+          # for `ios26`, a branch that no longer exists: the answer was always false, every
+          # remaining step of this job was skipped, and the job went green without building
+          # anything.
           if git ls-remote --exit-code --heads \
-               "https://github.com/${{ github.repository }}.git" ios26 >/dev/null 2>&1; then
+               "https://github.com/${{ github.repository }}.git" main >/dev/null 2>&1; then
             echo "exists=true" >> $GITHUB_OUTPUT
           else
             echo "exists=false" >> $GITHUB_OUTPUT
-            echo "::notice::branch 'ios26' does not exist yet — skipping this job"
+            echo "::notice::branch 'main' does not exist — skipping this job"
           fi
 
       - name: Checkout the main branch (iOS 26 line)
@@ -517,7 +524,6 @@ jobs:
         id: ids
         run: |
           git fetch --no-tags --depth=1 origin main 2>/dev/null || true
-          git fetch --no-tags --depth=1 origin ios26 2>/dev/null || true
           echo "main=$(git rev-parse --short origin/main 2>/dev/null || echo n/a)" >> $GITHUB_OUTPUT
           echo "ios15=$(git rev-parse --short origin/ios15 2>/dev/null || echo n/a)" >> $GITHUB_OUTPUT
 

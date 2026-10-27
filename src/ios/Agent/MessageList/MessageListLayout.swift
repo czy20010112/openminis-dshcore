@@ -820,6 +820,29 @@ final class MessageListLayout: UICollectionViewLayout {
 
     /// Invalidate the cached height for a specific item index, forcing re-measurement.
     /// Use this for the actively streaming message whose height is changing.
+    /// Where the height the layout will place the NEXT cell from actually comes
+    /// from.
+    ///
+    /// [T-seed-source] WHY A DISCRETE VALUE AND NOT `frame vs attributes`: the
+    /// cell's frame is what `preferredLayoutAttributesFitting` returns, and on this
+    /// content that call throws and returns the LAYOUT'S OWN attribute — so a stale
+    /// seed produces `frame == attrs` and a difference of zero. The mechanism is
+    /// invisible to a magnitude test and obvious to this one.
+    enum HeightSource: String {
+        case cache, precalc, estimate
+        /// Nothing was ever seeded: `defaultSize` (200pt) is doing the work, which
+        /// is a geometry bug the moment it happens for a visible content cell.
+        case fallback = "default"
+    }
+
+    /// `cache → precalc → estimate → default`, the same order `prepare()` resolves.
+    func heightSource(at index: Int) -> HeightSource {
+        if heightCache[index] != nil { return .cache }
+        if precalcHeights[index] != nil { return .precalc }
+        if estimatedHeights[index] != nil { return .estimate }
+        return .fallback
+    }
+
     func invalidateHeight(at index: Int, droppingSeed: Bool = false) {
         heightCache.removeValue(forKey: index)
         geometryReaderConfirmed.remove(index)
