@@ -86,6 +86,53 @@ final class DSHRemoteStore: ObservableObject {
     /// Why the pair is not usable, in the user's words. Set on every failure path
     /// that used to be silent.
     @Published private(set) var disconnectReason: String?
+
+    /// STICKY: the pairing itself is dead (revoked, expired past repair) and only a
+    /// re-pair can fix it.
+    ///
+    /// This is the flag the UI must read. The store sets `.unavailable(reason)` when
+    /// it sees `pair_again`, but a state alone was not enough: the next successful
+    /// frame (a heartbeat, a list, a lucky refresh) set `.connected` again, the
+    /// banner disappeared, and the screen was left with a stale status line and a
+    /// red "Reconnect" button that could never work.
+    ///
+    /// Cleared ONLY by a successful re-pair (`connect()`/`pairAgain()` obtaining a
+    /// working token). A successful request never clears it — that is the whole
+    /// point of "sticky".
+    @Published private(set) var needsRepair: Bool = false
+    /// The sentence to show while `needsRepair` is true (same string as
+    /// `disconnectReason`; separate field so the UI has one thing to read).
+    @Published private(set) var repairReason: String?
+
+    /// A success has arrived: healthy again, unless the pairing is dead.
+    private func markHealthy() {
+        guard !needsRepair else {
+            // Do not let a heartbeat or a lucky request paper over a dead pairing.
+            return
+        }
+        if connectionState != .connected { connectionState = .connected }
+        errorText = nil
+        disconnectReason = nil
+    }
+
+    /// The pairing is dead: make it stick, and make the UI able to say why.
+    private func markNeedsRepair(_ reason: String) {
+        needsRepair = true
+        repairReason = reason
+        disconnectReason = reason
+        errorText = reason
+        status = .failed(reason)
+        connectionState = .unavailable(reason)
+        NSLog("[DSH] needsRepair=TRUE reason=\(reason)")
+    }
+
+    /// A working token exists again (a fresh pair, or a refresh that succeeded).
+    private func clearNeedsRepair() {
+        guard needsRepair else { return }
+        needsRepair = false
+        repairReason = nil
+        NSLog("[DSH] needsRepair cleared (pairing is alive again)")
+    }
     @Published private(set) var conversations: [DSHRemoteConversation] = []
     /// Harness Sessions (the web sidebar list). This is what the DSH sidebar shows.
     ///
@@ -230,6 +277,13 @@ final class DSHRemoteStore: ObservableObject {
 
     /// Restores the saved pairing and loads the conversation list.
     func connect() async {
+        // `load()`/`onAppear` funnel into here. With a revoked pairing every attempt
+        // is another guaranteed 401, so the state is kept and the UI is left with
+        // the banner. `finishPairing` clears the flag before calling this.
+        guard !needsRepair else {
+            NSLog("[DSH] connect skipped — needsRepair")
+            return
+        }
         guard host != nil else { status = .disconnected; NSLog("[DSH] connect: no host"); return }
         if client == nil, let saved = host,
            let session = DSHRemoteKeychain.load(account: saved.serverId) {
@@ -242,10 +296,12 @@ final class DSHRemoteStore: ObservableObject {
             // Sub-agent Sessions stay out of the sidebar, same as the web UI.
             NSLog("[DSH] connect: got \(list.count) rows")
             apply(list)
+            // A working token means any earlier "pair again" is stale: this is one
+            // of the two places allowed to clear the sticky flag.
+            needsRepair = false
+            repairReason = nil
+            markHealthy()
             status = .connected
-            errorText = nil
-            disconnectReason = nil
-            if connectionState != .connected { connectionState = .connected }
             // Team tools are gated on a value `makeAgentTools()` reads
             // SYNCHRONOUSLY every turn, so it cannot await there. A successful
             // connect is the one authoritative moment to refresh it: after the
@@ -254,14 +310,15 @@ final class DSHRemoteStore: ObservableObject {
             NSLog("[DSH] team availability=\(DSHRemoteTeamTools.availability.tag) members=\(DSHRemoteTeamTools.lastMemberCount)")
         } catch let error as DSHRemoteError {
             NSLog("[DSH] connect failed (remote): \(error.message)")
-            if error.needsRepair {
-                status = .failed(error.message)
+            if error.needsRepair || error.code == "pair_again" {
+                // Sticky: a revoked pairing must survive every later success.
+                markNeedsRepair(error.message)
             } else {
                 status = .failed(error.message)
+                errorText = error.message
+                disconnectReason = error.message
+                connectionState = .unavailable(error.message)
             }
-            errorText = error.message
-            disconnectReason = error.message
-            connectionState = .unavailable(error.message)
         } catch {
             NSLog("[DSH] connect failed: \(error)")
             status = .failed(error.localizedDescription)
@@ -335,9 +392,69 @@ final class DSHRemoteStore: ObservableObject {
             UserDefaults.standard.set(data, forKey: Keys.host)
         }
         self.client = DSHRemoteClient(session: session)
+        // A brand-new pairing is the one thing that definitely repairs a dead one.
+        clearNeedsRepair()
+        errorText = nil
+        disconnectReason = nil
         self.pairingPhase = .approved
         self.setMode(.dsh)
         Task { await connect() }
+    }
+
+    // MARK: - Idle liveness probe
+
+    /// Whether the DSH UI is on screen. The probe only runs while it is: a hidden
+    /// page must not spend the user's battery confirming a session that nobody is
+    /// looking at.
+    private var uiVisible = false
+    private var idleProbe: Task<Void, Never>?
+    /// How often a visible, idle page asks "is this pairing still alive?".
+    ///
+    /// A revoked device that is sitting in Settings has no socket and no requests,
+    /// so nothing else would ever notice. 60 s is the compromise in the doc: the
+    /// banner appears within a minute instead of never.
+    static let idleProbeInterval: TimeInterval = 60
+
+    /// The page tells the store when it is visible; the probe follows.
+    func setUIVisible(_ visible: Bool) {
+        guard uiVisible != visible else { return }
+        uiVisible = visible
+        NSLog("[DSH] ui visible=\(visible)")
+        if visible {
+            startIdleProbe()
+        } else {
+            stopIdleProbe()
+        }
+    }
+
+    private func startIdleProbe() {
+        guard idleProbe == nil else { return }
+        idleProbe = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: UInt64(DSHRemoteStore.idleProbeInterval * 1_000_000_000))
+                guard let self, !Task.isCancelled else { return }
+                // A live socket answers this question on its own; a dead pairing
+                // must never be re-probed into "connected" again.
+                guard self.uiVisible, self.streamSlots.isEmpty, !self.needsRepair else { continue }
+                guard let client = self.client else { continue }
+                do {
+                    let list = try await client.hostSessions()
+                    NSLog("[DSH] idle probe ok rows=\(list.count)")
+                    self.markHealthy()
+                } catch let error as DSHRemoteError where error.needsRepair || error.code == "pair_again" {
+                    NSLog("[DSH] idle probe found a dead pairing code=\(error.code)")
+                    self.markNeedsRepair(error.message)
+                } catch {
+                    // A network blip while idle says nothing about the pairing.
+                    NSLog("[DSH] idle probe failed (ignored): \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
+    private func stopIdleProbe() {
+        idleProbe?.cancel()
+        idleProbe = nil
     }
 
     func cancelPairing() {
@@ -519,6 +636,15 @@ final class DSHRemoteStore: ObservableObject {
             existing.onFrame = onFrame
             return existing.id
         }
+        // A dead pairing cannot stream: opening one would produce another 401 and
+        // re-enter the loop the watchdog used to drive. The page keeps whatever it
+        // has and the banner explains why; a re-pair brings the stream back.
+        if needsRepair {
+            NSLog("[DSH] openStream refused — needsRepair sid=\(sessionId.prefix(12))")
+            let dead = DSHRemoteStreamSlot(id: UUID(), sessionId: sessionId, onFrame: onFrame)
+            dead.closed = true
+            return dead.id
+        }
         let slot = DSHRemoteStreamSlot(id: UUID(), sessionId: sessionId, onFrame: onFrame)
         streamSlots[slot.id] = slot
         ensureWatchdog()
@@ -609,6 +735,15 @@ final class DSHRemoteStore: ObservableObject {
     }
 
     private func checkStreamHealth() {
+        // A dead pairing has no socket to keep alive. Without this the watchdog was
+        // the SECOND way into the reconnect loop: the 401 path marked `needsRepair`
+        // and stopped the stream, but `lastActivityAt` kept its old value, so three
+        // seconds later the slot looked "stale", `restartStale` re-opened it, the
+        // host answered 401 again… every ~32 s for ever. Measured on device (v21).
+        guard !needsRepair else {
+            closeDefunctSlots()
+            return
+        }
         let now = Date()
         for slot in streamSlots.values where !slot.closed {
             switch DSHRemoteStore.health(lastActivity: slot.lastActivityAt, now: now) {
@@ -621,11 +756,32 @@ final class DSHRemoteStore: ObservableObject {
                 NSLog("[DSH] stream quiet (lastFrame=\(age)s) sid=\(slot.sessionId.prefix(12))")
                 connectionState = .stale(since: slot.lastActivityAt ?? now)
             case .stale(let age):
+                // Belt and braces: the loop guard above already returned.
+                guard !needsRepair else { continue }
                 NSLog("[DSH] stream stale (lastFrame=\(age)s) → reconnect attempt=\(slot.attempt + 1) sid=\(slot.sessionId.prefix(12))")
                 if let last = slot.lastActivityAt { connectionState = .stale(since: last) }
                 restartStale(slot)
             }
         }
+    }
+
+    /// Tear down every socket of a dead pairing and forget them.
+    ///
+    /// `closed` FIRST, so a callback that is already in flight cannot resurrect a
+    /// writer, and the removal is what makes the watchdog blind to them.
+    private func closeDefunctSlots() {
+        guard !streamSlots.isEmpty else { return }
+        NSLog("[DSH] closing \(streamSlots.count) stream(s) — pairing needs repair")
+        for slot in streamSlots.values {
+            slot.closed = true
+            slot.reconnectTask?.cancel()
+            slot.reconnectTask = nil
+            slot.stream?.close()
+            slot.stream = nil
+        }
+        streamSlots.removeAll()
+        watchdog?.cancel()
+        watchdog = nil
     }
 
     /// Tear down a silent socket and open a fresh one.
@@ -636,6 +792,13 @@ final class DSHRemoteStore: ObservableObject {
     /// means here — and it is the same path a first open takes, so nothing is
     /// special-cased.
     private func restartStale(_ slot: DSHRemoteStreamSlot) {
+        // The single choke point every reconnect goes through. A dead pairing must
+        // never reopen a socket, whatever asked for it.
+        guard !needsRepair else {
+            NSLog("[DSH] restart refused — needsRepair sid=\(slot.sessionId.prefix(12))")
+            closeDefunctSlots()
+            return
+        }
         slot.stream?.close()
         slot.stream = nil
         slot.reconnectTask?.cancel()
@@ -662,7 +825,6 @@ final class DSHRemoteStore: ObservableObject {
         if streamSlots.isEmpty {
             watchdog?.cancel()
             watchdog = nil
-            if case .connected = connectionState { connectionState = .connected }
         }
         NSLog("[DSH] stream closed sid=\(slot.sessionId.prefix(12))")
     }
@@ -723,8 +885,7 @@ final class DSHRemoteStore: ObservableObject {
         let now = Date()
         slot.lastActivityAt = now
         lastFrameAt = now
-        if connectionState != .connected { connectionState = .connected }
-        NSLog("[DSH] route \(DSHRemoteStore.frameTag(frame)) slots=\(streamSlots.count)")
+        markHealthy()
         if case .snapshot(let cursor, _, _, _, _, let pressure, let usage) = frame {
             // Live context data goes straight into the panel's published slot: the
             // ring must not need a second request, and a summary fetched earlier
@@ -771,7 +932,7 @@ final class DSHRemoteStore: ObservableObject {
         let now = Date()
         slot.lastActivityAt = now
         lastFrameAt = now
-        if !connectionState.isHealthy { connectionState = .connected }
+        markHealthy()
         guard cursor > 0 else { return }
         streamCursors[slot.sessionId] = max(streamCursors[slot.sessionId] ?? 0, cursor)
     }
@@ -790,12 +951,40 @@ final class DSHRemoteStore: ObservableObject {
         }
         guard retryable else {
             NSLog("[DSH] stream not retryable — giving up sid=\(slot.sessionId.prefix(12))")
-            // Permanent: the user has to act, so say so instead of leaving the
-            // page looking connected.
+            // Permanent: the user has to act. A dead pairing keeps its state until a
+            // re-pair, and a plain permanent failure is still a reason to show.
             let reason = message ?? AppLocalized("The connection was closed by the computer.")
-            status = .failed(reason)
-            connectionState = .unavailable(reason)
-            disconnectReason = reason
+            if needsRepair || reason.localizedCaseInsensitiveContains("pair") {
+                markNeedsRepair(reason)
+            } else {
+                status = .failed(reason)
+                connectionState = .unavailable(reason)
+                disconnectReason = reason
+                errorText = reason
+            }
+            // Take the slot OUT of the store. `return` alone left it in
+            // `streamSlots`, so the watchdog kept seeing a silent socket and
+            // reopened it every ~32 s, each time collecting another 401.
+            slot.closed = true
+            slot.reconnectTask?.cancel()
+            slot.reconnectTask = nil
+            slot.stream?.close()
+            slot.stream = nil
+            streamSlots.removeValue(forKey: token)
+            if streamSlots.isEmpty {
+                watchdog?.cancel()
+                watchdog = nil
+            }
+            return
+        }
+        // A dead pairing must not re-enter the reconnect loop even if some caller
+        // hands us a retryable finish.
+        guard !needsRepair else {
+            NSLog("[DSH] stream reconnect suppressed — needsRepair sid=\(slot.sessionId.prefix(12))")
+            slot.closed = true
+            slot.stream?.close()
+            slot.stream = nil
+            streamSlots.removeValue(forKey: token)
             return
         }
         let delay = DSHRemoteStore.backoffDelay(attempt: slot.attempt)
