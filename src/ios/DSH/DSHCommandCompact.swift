@@ -356,8 +356,8 @@ extension AIChatViewModel {
     /// old body here sent the WHOLE shadowed excerpt as one request with a fixed
     /// `maxTokens: 4096` and no region fitting, so the manual path carried exactly
     /// the unbounded-request shape the driver's budget exists to prevent (a
-    /// 1,783,917-byte summary request rejected with `context_length_exceeded`,
-    /// device 2026-10-19 09:17:19) — it just had not been hit yet. The prompt is
+    /// 1,783,917-byte summary request rejected with `context_length_exceeded`) —
+    /// it just had not been hit yet. The prompt is
     /// deliberately NOT the store-side one (`generateCompactSummary`): that one
     /// asks for its own structure and answers a different pipeline.
     ///

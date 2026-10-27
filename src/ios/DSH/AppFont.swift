@@ -24,8 +24,9 @@
 //
 //  THE STACK, AND WHERE IT COMES FROM
 //  ---------------------------------------------------------------------------
-//  The reference implementation is `D:\AI\_fontcheck\warm-parchment.fonts.css`
-//  plus `demo/index.html`, which replace the Anthropic faces with OFL ones:
+//  The reference implementation is a warm-parchment type specimen (kept out of
+//  this repository), whose stylesheet and demo page replace the Anthropic faces
+//  with OFL ones:
 //  Lora for editorial body text, Literata as the long-form alternative,
 //  JetBrains Mono for code, Inter for UI chrome only, and a Song face for
 //  Chinese. Its two rules are the ones implemented here:

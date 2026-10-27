@@ -3794,9 +3794,10 @@ extension CollectionViewMessageListV3 {
                 // A DSH compaction fires mid-turn, above a viewport that is pinned
                 // to the live tail: the transcript above is rewritten (divider +
                 // dimmed region) and nothing the user can see changes — their
-                // report, verbatim: 「压缩的时候没有任何显示了，就像正常对话一样直接
-                // 继续，看不到压缩的横条啊上面变灰啊。只能从上下文的小圆圈看出已
-                // 压缩。」 No scroll, no toast, no status row.
+                // reported symptom: compaction happens and the conversation simply
+                // continues — no bar at the cut, no dimming above it, and the only
+                // evidence is the context ring afterwards. No scroll, no toast, no
+                // status row.
                 //
                 // So the first snapshot that carries a divider still marked
                 // `compactionRevealPending` frames it once, bottom-aligned: the bar

@@ -667,7 +667,7 @@ extension AIChatViewModel {
             // so on a merged transcript the blocks the compaction DID cover were
             // presented as live context, on purpose. That is the under-claim the
             // decision reports as `deferredBlocks`, and on the device it is the
-            // operator's 「上面变灰」 complaint: Phase 2 folds a whole turn into one
+            // reported symptom (nothing above the cut dims): Phase 2 folds a whole turn into one
             // bubble, the anchor lands inside it, and nothing on screen dims.
             //
             // Per-block provenance answers "which of this bubble's blocks" exactly,

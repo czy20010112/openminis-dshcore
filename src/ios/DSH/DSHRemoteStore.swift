@@ -154,7 +154,12 @@ final class DSHRemoteStore: ObservableObject {
                                  name: injected.hostName ?? "DSH", tlsPin: nil)
             client = DSHRemoteClient(session: injected)
             mode = .dsh
+            // The host URL and server id identify the user's own computer. They are
+            // useful while debugging a pairing and worth nothing in a shipped log,
+            // which is the one place a user may paste into a bug report.
+            #if DEBUG
             NSLog("[DSH] init: injected session host=\(injected.baseURL) server=\(injected.serverId.prefix(12))")
+            #endif
             Task { await connect() }
             return
         } else if injectedData != nil {

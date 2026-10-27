@@ -394,7 +394,7 @@ extension AIChatViewModel {
     private static let remoteTeamDispatchPolicy: String = """
     Remote teammates: you have a computer paired with this phone (the `remote_team_*` tools). When a task meets ANY of the following, dispatch it to that computer instead of forcing it here:
     1. It needs a full desktop environment — Xcode / xcodebuild, Windows toolchains, Docker, large compiles, system-level dependencies, or devices on that computer's local network.
-    2. The user explicitly points at that machine — "that computer", "my computer", "my mac", "on my computer", a `D:\\…` path, "ssh m2".
+    2. The user explicitly points at that machine — "that computer", "my computer", "my mac", "on my computer", or a path that only exists there.
     3. It needs data this phone does not have — that workspace's large repositories, logs, or session records.
     4. You expect it to take more than 3 minutes to build or test here.
     Plain conversation, analysis, reading files on this phone, and small scripts stay here.

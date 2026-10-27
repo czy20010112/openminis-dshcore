@@ -351,6 +351,19 @@ struct DSHRemoteSessionSummary: Decodable, Sendable, Equatable {
         var error: String?
     }
 
+    /// The host's split of one request into its three parts.
+    ///
+    /// [T-ctx-panel-composition] Optional as a whole: a host without the context
+    /// projection sends no `composition`, and the panel then says "not reported"
+    /// for those rows rather than `~0`. The three parts are NOT guaranteed to add
+    /// up to `used` (the host does not promise that), so nothing here reconciles
+    /// them.
+    struct Composition: Decodable, Sendable, Equatable {
+        var systemTokens: Double?
+        var toolsTokens: Double?
+        var messageTokens: Double?
+    }
+
     struct Context: Decodable, Sendable, Equatable {
         /// Tokens in the window, and where that number came from.
         var used: Double?
@@ -358,6 +371,8 @@ struct DSHRemoteSessionSummary: Decodable, Sendable, Equatable {
         var remaining: Double?
         var ratio: Double?
         var projectedTokens: Double?
+        /// Per-part split of the current request, when the host reports one.
+        var composition: Composition?
         /// `pressure` (measured) / `projected` (estimated). Absent on older hosts.
         var source: String?
         var lastCompaction: LastCompaction?
@@ -407,6 +422,10 @@ struct DSHRemoteSessionSummary: Decodable, Sendable, Equatable {
     }
 
     struct TokenUsage: Decodable, Sendable, Equatable {
+        /// Whether the backend accounts for cache at all. Only the summary
+        /// document carries this key; a snapshot frame does not, so `nil` there
+        /// means "unknown", and the cache row is drawn only on `true`.
+        var cacheReported: Bool?
         var uncachedInputTokens: Double?
         var outputTokens: Double?
         var cacheReadTokens: Double?

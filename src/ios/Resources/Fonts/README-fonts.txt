@@ -98,7 +98,7 @@ Provenance
   as VARIABLE fonts, and turned into the static instances in this folder by
   `_tools/build-font-instances.py` on this host:
 
-      _tools/fetch-fonts-2026-10.ps1   downloads (proxy 127.0.0.1:12000)
+      _tools/fetch-fonts-2026-10.ps1   downloads (through a local proxy)
         https://raw.githubusercontent.com/google/fonts/main/ofl/lora/Lora%5Bwght%5D.ttf
         https://raw.githubusercontent.com/google/fonts/main/ofl/literata/Literata%5Bopsz,wght%5D.ttf
         https://raw.githubusercontent.com/google/fonts/main/ofl/jetbrainsmono/JetBrainsMono%5Bwght%5D.ttf

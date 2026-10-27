@@ -49,6 +49,9 @@ final class DSHRemoteChatAdapter: ObservableObject {
     @Published private(set) var contextReading: DSHContextReading?
 
     private var loadedSessionId: String?
+    /// Session ids this page has already asked the store about and not found in
+    /// `/dsh/sessions`. See `apply(rows:)` — the retry there must be bounded.
+    private var conversationsMissing: Set<String> = []
     private var streamToken: UUID?
     private var sessionsSubscription: AnyCancellable?
     private var runningSubscription: AnyCancellable?
@@ -151,6 +154,7 @@ final class DSHRemoteChatAdapter: ObservableObject {
         // A new Session starts with no panels: the previous document describes
         // another Session, and a stale goal above the composer is a lie.
         summary = nil
+        conversationsMissing.remove(sessionId)
         summaryCadence.onOpen()
         Task { await fetchSummary(sessionId: sessionId) }
         // Resolve now as well as through the subscription: the list is usually
@@ -181,6 +185,7 @@ final class DSHRemoteChatAdapter: ObservableObject {
         loadedSessionId = nil
         renderedTextLengths.removeAll(keepingCapacity: true)
         summary = nil
+        conversationsMissing.removeAll()
     }
 
     /// Fetch the goal/task document from the paired computer.
@@ -370,14 +375,25 @@ final class DSHRemoteChatAdapter: ObservableObject {
     private func apply(rows: [DSHHostSessionRow]) {
         guard let sessionId = loadedSessionId else { contextReading = nil; return }
         guard let row = rows.first(where: { $0.session.sessionId == sessionId }) else {
-            // Not in the list yet (opened from a restored selection before
-            // `connect()` returned): ask the store, so both the title and the ring
-            // fill in through this subscription instead of waiting for a refresh
-            // the user may never trigger.
-            Task { await DSHRemoteStore.shared.refreshConversations() }
+            // Not in the list YET (opened from a restored selection before
+            // `connect()` returned) deserves one refresh; not being in the list AT
+            // ALL (deleted on the computer, or filtered out as a sub-agent
+            // Session) must not.
+            //
+            // [T-remote-missing-session-loop] Without this, every `rows`
+            // publication asked the store for `/dsh/sessions` again, that request
+            // published `rows` again when it landed, and the page spun forever: an
+            // unbounded request loop whose only visible symptom was a spinner. A
+            // missing id is now remembered, so the automatic retry happens once;
+            // the toolbar refresh stays as the manual way out.
             contextReading = nil
+            if conversationsMissing.contains(sessionId) { return }
+            conversationsMissing.insert(sessionId)
+            Task { await DSHRemoteStore.shared.refreshConversations() }
             return
         }
+        // It is back: forget the miss, so a later disappearance is retried once.
+        conversationsMissing.remove(sessionId)
         title = Self.title(for: row.session)
         if let pressure = row.session.contextPressure {
             apply(pressure: pressure)
@@ -497,7 +513,22 @@ struct DSHRemoteChatView: View {
             }
         }
         .sheet(isPresented: $showContextPanel) {
-            DSHRemoteContextSheet(reading: adapter.contextReading, running: adapter.isRunning, summary: adapter.summary)
+            // The SAME view the local chat presents (see `DSHContextPanel`'s
+            // injected inputs): identical rows, order, labels, fonts and Done
+            // placement by construction, not by two files agreeing.
+            // Order follows the memberwise initialiser: the injected inputs sit
+            // right after `reading` in the declaration.
+            DSHContextPanel(
+                reading: remoteContextReading,
+                breakdown: remoteBreakdown,
+                labels: remoteContextLabels,
+                cacheHit: remoteCacheHit,
+                rowValueOverrides: remoteRowValues,
+                rowDetailOverrides: remoteRowDetails,
+                subtitleExtra: lastCompactionSubtitle,
+                requestInFlight: adapter.isRunning
+            )
+            .compatDetents([.medium, .large])
         }
         .navigationTitle(adapter.title)
         .navigationBarTitleDisplayMode(.inline)
@@ -552,6 +583,138 @@ struct DSHRemoteChatView: View {
     /// One red line, one action. The brief rules out stacked dialogs: a connection
     /// failure or a rejected send says what happened, in the page, and offers the
     /// single step that retries it.
+    // MARK: - Context panel inputs (remote)
+
+    /// The numbers the ring shows, in the panel's own type.
+    ///
+    /// Prefer the summary document (it carries the host's `source`), fall back to
+    /// the live snapshot pressure. `source == "projected"` becomes
+    /// `.requestEnvelopeEstimate`, which is what makes the subtitle say
+    /// "estimated request envelope" — the same sentence the local panel prints for
+    /// its own estimate.
+    private var remoteContextReading: DSHContextReading? {
+        if let context = adapter.summary?.context,
+           let used = context.used, let window = context.window, window > 0 {
+            return DSHContextReading(
+                usedTokens: Int(used),
+                windowTokens: Int(window),
+                source: context.usageSource == .pressure ? .providerMeasured : .requestEnvelopeEstimate
+            )
+        }
+        return adapter.contextReading
+    }
+
+    /// A breakdown shaped from the host's document.
+    ///
+    /// The host reports ONE envelope number per request and does not split it into
+    /// system prompt / tool definitions / conversation, so:
+    /// * `systemPromptTokens` / `toolTokens` are 0 and their rows are overridden
+    ///   with "Not reported by this computer" (never `~0`);
+    /// * the Conversation row carries the envelope itself, which is the only
+    ///   figure there is — its detail line is dropped because there is no entry
+    ///   count to state.
+    private var remoteBreakdown: DSHContextBreakdown? {
+        guard let context = adapter.summary?.context,
+              let used = context.used, used > 0 else { return nil }
+        // The host's own split, when the context projection is registered. The
+        // three parts are NOT reconciled against `used`: the host does not promise
+        // they add up, and padding a missing 100 tokens would be inventing a row.
+        let composition = context.composition
+        let tokens = context.usageSource == .pressure
+            ? Int(used)
+            : Int(context.projectedTokens ?? used)
+        return DSHContextBreakdown(
+            systemPromptTokens: Int(composition?.systemTokens ?? 0),
+            systemPromptChars: 0,
+            toolTokens: Int(composition?.toolsTokens ?? 0),
+            toolCount: 0,
+            surfaceTokens: composition?.messageTokens.map { Int($0) } ?? tokens,
+            surfaceMessageCount: 0,
+            sectionNames: [],
+            model: "",
+            provider: "",
+            sessionKey: adapter.summary?.sessionId,
+            windowTokens: context.window.map { Int($0) },
+            capturedAt: Date()
+        )
+    }
+
+    private var remoteNotReported: String { AppLocalized("Not reported by this computer") }
+
+    private var remoteRowValues: [DSHContextPanelRow: String] {
+        let hasComposition = adapter.summary?.context?.composition != nil
+        var values: [DSHContextPanelRow: String] = [
+            .total: DSHContextFormat.approx(
+                Int(adapter.summary?.context?.used
+                    ?? adapter.summary?.context?.projectedTokens ?? 0)
+            ),
+        ]
+        if !hasComposition {
+            // No context projection on that host: say so in the three rows
+            // instead of drawing `~0`, which would read as "this request has no
+            // system prompt".
+            values[.systemPrompt] = remoteNotReported
+            values[.toolDefinitions] = remoteNotReported
+            values[.conversation] = remoteNotReported
+        }
+        return values
+    }
+
+    private var remoteRowDetails: [DSHContextPanelRow: String] {
+        // The host reports tokens only — no character count, no section count, no
+        // entry count — so every detail line is "" (= draw none) rather than a
+        // fabricated "0 sections".
+        [.systemPrompt: "", .toolDefinitions: "", .conversation: ""]
+    }
+
+    /// Measured/estimated wording, decided from the host's `source` — the local
+    /// store's `isMeasured` cannot answer for another computer's request.
+    private var remoteContextLabels: DSHContextPanelLabels {
+        let measured = (adapter.summary?.context?.usageSource ?? .pressure) == .pressure
+        let scope = adapter.isRunning ? "This request" : "Last request"
+        return DSHContextPanelLabels(
+            section: "\(scope), \(measured ? "measured" : "estimated")",
+            total: measured ? "Total (measured)" : "Total (estimated)"
+        )
+    }
+
+    /// `cacheReadTokens / (uncachedInput + cacheRead + cacheWrite)`, and NOTHING
+    /// when the host reports no cache buckets at all — the local rule, because a
+    /// 0% row for a backend that does not count cache is fabrication.
+    private var remoteCacheHit: DSHUsageReading? {
+        guard let usage = adapter.summary?.tokenUsage else { return nil }
+        // The host states whether it accounts for cache at all; only `true` draws
+        // the row. `nil` (a snapshot frame carries no such key) and `false` both
+        // mean "no reading", and the local panel drops the row in that case.
+        guard usage.cacheReported == true else { return nil }
+        let read = Int(usage.cacheReadTokens ?? 0)
+        let uncached = Int(usage.uncachedInputTokens ?? 0)
+        let write = Int(usage.cacheWriteTokens ?? 0)
+        let prompt = uncached + read + write
+        guard prompt > 0 else { return nil }
+        return DSHUsageReading(promptTokens: prompt, cacheReadTokens: read)
+    }
+
+    /// "last compacted 2 min ago · 296K before" — a SECOND subtitle sentence, not
+    /// a row: the local panel has no such row and the two popups must match.
+    /// `after` is never used (the host reports it as null by contract).
+    private var lastCompactionSubtitle: String? {
+        guard let compaction = adapter.summary?.context?.lastCompaction else { return nil }
+        var parts: [String] = []
+        if let at = compaction.at, at > 0 {
+            let formatter = RelativeDateTimeFormatter()
+            formatter.unitsStyle = .short
+            parts.append(formatter.localizedString(for: Date(timeIntervalSince1970: at / 1000),
+                                                    relativeTo: Date()))
+        }
+        if let before = compaction.before, before > 0 {
+            parts.append(String(format: AppLocalized("%@ before"),
+                                DSHContextFormat.magnitude(Int(before))))
+        }
+        guard !parts.isEmpty else { return nil }
+        return String(format: AppLocalized("last compacted %@"), parts.joined(separator: " · "))
+    }
+
     // MARK: - Connection banner
 
     /// What the banner should say, if anything.
@@ -705,131 +868,6 @@ struct DSHRemoteChatView: View {
             if !accepted, draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 draft = outgoing
             }
-        }
-    }
-}
-
-// MARK: - Context panel (remote)
-
-/// The usage sheet behind the remote composer's context ring.
-///
-/// The LOCAL panel (`DSHContextPanel`) can show a per-component breakdown because
-/// this app assembled the request. A remote turn is assembled on the computer, so
-/// this sheet shows exactly what the paired host reports — used / window /
-/// remaining / share — and says "the computer did not report this" for the rows it
-/// cannot know, instead of drawing zeros. That distinction is the whole point of
-/// the panel: a 0% would read as "nothing used" when the truth is "nothing known".
-struct DSHRemoteContextSheet: View {
-    var reading: DSHContextReading?
-    var running: Bool
-    /// The summary document, for the one row a live snapshot cannot answer: when
-    /// the computer last compacted this Session's context.
-    var summary: DSHRemoteSessionSummary?
-    @Environment(\.dismiss) private var dismiss
-
-    /// "2 min ago · 296K before", or "Not reported" when the host has no
-    /// compaction record for this Session.
-    private var lastCompactionText: String {
-        guard let compaction = summary?.context?.lastCompaction else {
-            return AppLocalized("Not reported")
-        }
-        var parts: [String] = []
-        if let at = compaction.at, at > 0 {
-            // `at` is the host's clock in milliseconds.
-            let date = Date(timeIntervalSince1970: at / 1000)
-            let formatter = RelativeDateTimeFormatter()
-            formatter.unitsStyle = .short
-            parts.append(formatter.localizedString(for: date, relativeTo: Date()))
-        }
-        if let before = compaction.before, before > 0 {
-            parts.append(String(format: AppLocalized("%@ before"), DSHContextFormat.magnitude(Int(before))))
-        }
-        // `after` is deliberately not read: the host reports it as null by
-        // contract, and printing a placeholder for it would imply a number.
-        return parts.isEmpty ? AppLocalized("Not reported") : parts.joined(separator: " · ")
-    }
-
-    private var used: Int { reading?.usedTokens ?? 0 }
-    private var window: Int { reading?.windowTokens ?? 0 }
-    private var hasWindow: Bool { window > 0 }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Context")
-                        .font(AppFont.sw(17, weight: .semibold, category: .ui))
-                    Text(running
-                         ? AppLocalized("This session is running on the computer; these are its own figures.")
-                         : AppLocalized("What the paired computer reports for this session."))
-                        .font(AppFont.sw(11, weight: .regular, category: .ui))
-                        .foregroundStyle(ChatColors.secondaryText)
-                }
-                Spacer(minLength: 8)
-                Button { dismiss() } label: {
-                    Text("Done").font(AppFont.sw(15, weight: .medium, category: .ui))
-                }
-                .buttonStyle(.plain)
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, 14)
-            .padding(.bottom, 10)
-
-            Divider()
-
-            if reading == nil {
-                Text("This computer did not report context usage for this session.")
-                    .font(AppFont.sw(13, weight: .regular, category: .ui))
-                    .foregroundStyle(ChatColors.secondaryText)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(16)
-                Spacer(minLength: 0)
-            } else {
-                VStack(spacing: 10) {
-                    row("Used", hasWindow ? DSHContextFormat.approx(used) : DSHContextFormat.magnitude(used))
-                    row("Window", hasWindow ? DSHContextFormat.magnitude(window)
-                                            : AppLocalized("Not reported"))
-                    row("Remaining", hasWindow
-                        ? DSHContextFormat.magnitude(max(window - used, 0))
-                        : AppLocalized("Not reported"))
-                    row("Share", hasWindow ? "\(reading?.percent ?? 0)%" : AppLocalized("Not reported"))
-                    // `before` and `at` are host facts; `after` is ALWAYS null on
-                    // the host side (the projection does not record the size
-                    // after a compaction), so it is never printed — a fabricated
-                    // "after 40K" would be worse than saying nothing.
-                    row("Last compaction", lastCompactionText)
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                Spacer(minLength: 0)
-            }
-        }
-        .presentationDetentsIfAvailable()
-    }
-
-    private func row(_ title: String, _ value: String) -> some View {
-        HStack {
-            Text(title)
-                .font(AppFont.sw(13, weight: .regular, category: .ui))
-                .foregroundStyle(ChatColors.primaryText)
-            Spacer(minLength: 12)
-            Text(value)
-                .font(AppFont.sw(13, weight: .medium, category: .ui))
-                .foregroundStyle(ChatColors.secondaryText)
-                .monospacedDigit()
-        }
-    }
-}
-
-private extension View {
-    /// `.fraction` detents exist from iOS 16; below that the sheet keeps the
-    /// system default rather than failing to build on the iOS 15 line.
-    @ViewBuilder
-    func presentationDetentsIfAvailable() -> some View {
-        if #available(iOS 16.0, *) {
-            self.presentationDetents([.height(300)])
-        } else {
-            self
         }
     }
 }
