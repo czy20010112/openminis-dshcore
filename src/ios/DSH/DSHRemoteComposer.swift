@@ -92,6 +92,16 @@ struct DSHRemoteComposer: View {
     /// submissions are text-only, so the affordance has to say so rather than
     /// open a picker whose attachments would then be dropped on the floor.
     @State private var notice: String?
+    /// The row the keyboard has selected in the `/` menu.
+    ///
+    /// Reset whenever the query changes: a filter that keeps a stale index would
+    /// point at a row that no longer exists (or, worse, at a different command).
+    @State private var slashSelection = 0
+
+    private var slashQueryToken: String { slashQuery ?? "" }
+
+    /// The `/` menu is on screen and keyboard navigation applies.
+    private var isSlashMenuOpen: Bool { slashQuery != nil && !slashRows.isEmpty }
 
     private static let iconSize: CGFloat = 34
 
@@ -149,10 +159,26 @@ struct DSHRemoteComposer: View {
                 placeholder: placeholder,
                 onPasteImage: { _ in showAttachmentsUnavailable() },
                 onPasteFile: { _ in showAttachmentsUnavailable() },
+
                 onReturnKey: { sendIfPossible() },
-                onArrowUp: { false },
-                onArrowDown: { false },
+                // [T-arrow-nav] The 15/16 key path: `PastableTextView` turns these
+                // into `UIKeyCommand`s and asks them BEFORE the default behaviour.
+                // Every closure declines (returns false) when the `/` menu is
+                // closed, so plain typing keeps cursor movement, Tab and send.
+                onArrowUp: { guard isSlashMenuOpen else { return false }; moveSlashSelection(by: -1); return true },
+                onArrowDown: { guard isSlashMenuOpen else { return false }; moveSlashSelection(by: 1); return true },
                 onTab: { false },
+                onReturnIntercept: {
+                    guard isSlashMenuOpen,
+                          let row = slashRows.prefix(6).dshRow(at: slashSelection) else { return false }
+                    selectSlashRow(row)
+                    return true
+                },
+                onEscape: {
+                    guard isSlashMenuOpen else { return false }
+                    text = ""
+                    return true
+                },
                 onCaretChange: { _ in },
                 onSelectionReplace: { _, _ in },
                 desiredCaret: nil,
@@ -304,19 +330,61 @@ struct DSHRemoteComposer: View {
                     .padding(.horizontal, 12)
                     .padding(.vertical, 7)
                     .contentShape(Rectangle())
+                    // Keyboard selection is visible, not just functional: a menu
+                    // that moves an invisible cursor is unusable with the arrows.
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(index == slashSelection
+                                  ? ChatColors.primaryText.opacity(0.08)
+                                  : Color.clear)
+                            .padding(.horizontal, 4)
+                    )
                 }
                 .buttonStyle(.plain)
+                .accessibilityAddTraits(index == slashSelection ? [.isSelected] : [])
             }
         }
         .padding(.vertical, 4)
         .background(ChatColors.inputIconBg)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .padding(.horizontal, 12)
+        // [T-arrow-nav] Arrow keys move the selection, Return runs the selected
+        // row, Escape closes the menu by clearing the query.
+        //
+        // `onKeyPress` is the iOS 17+ API and is the only one that can see keys
+        // while the TEXT VIEW holds focus. On iOS 15/16 the same three actions are
+        // driven by `UIKeyCommand`s registered from `RemoteSlashKeyCommands` below.
+        .onKeyPressIfAvailable { key in
+            switch key {
+            case .upArrow:
+                moveSlashSelection(by: -1)
+                return .handled
+            case .downArrow:
+                moveSlashSelection(by: 1)
+                return .handled
+            case .returnKey:
+                guard let row = slashRows.prefix(6).dshRow(at: slashSelection) else { return .ignored }
+                selectSlashRow(row)
+                return .handled
+            case .escape:
+                text = ""
+                return .handled
+            case .other:
+                return .ignored
+            }
+        }
         .accessibilityIdentifier("dshSlashMenu")
     }
 
     /// Host-side rows become the message the user would have typed; local rows
     /// say why they do nothing here instead of silently clearing the draft.
+    /// One place that moves the selection, so the clamp rule lives once.
+    private func moveSlashSelection(by delta: Int) {
+        let count = min(slashRows.count, 6)
+        guard count > 0 else { slashSelection = 0; return }
+        slashSelection = min(max(0, slashSelection + delta), count - 1)
+    }
+
     private func selectSlashRow(_ row: RemoteSlashRow) {
         guard row.hostSide else {
             showNotice(AppLocalized("That command only affects local Minis chats."))
@@ -598,5 +666,75 @@ private struct DSHRemoteComposerSurface: ViewModifier {
             .clipShape(shape)
             .shadow(color: Color.black.opacity(0.12), radius: 8, x: 0, y: 2)
             .shadow(color: Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 0, alpha: 0.5) : UIColor(white: 0, alpha: 0) }), radius: 8, x: 0, y: -4)
+    }
+}
+
+// MARK: - Keyboard plumbing for the `/` menu
+
+/// Arrow-key navigation exists on EVERY deployment target the app supports, but
+/// the two ranges need different plumbing:
+///
+///  * iOS 17+ — `onKeyPress` sees keys while the text view holds focus. That is
+///    the whole implementation on that OS (see `slashMenu(query:)`).
+///  * iOS 15/16 — `onKeyPress` does not exist. The keys reach the app through
+///    `UIKeyCommand`s, which only fire for a responder in the chain of the first
+///    responder (here: the composer's `UITextView`). Registering them therefore
+///    needs ONE hook inside that text view — `PastableTextView` is shared with the
+///    local composer and out of this file's scope, so that hook is a follow-up
+///    decision rather than something to bolt on here with a fake first responder
+///    (that would steal focus and break typing).
+///
+/// Until that hook lands, the placeholder below keeps the call site identical on
+/// both lines and does nothing, so the behaviour is "touch/tap works everywhere,
+/// arrows work on 17+" — never "arrows silently swallow a keystroke".
+extension View {
+    /// `onKeyPress` on iOS 17+, a no-op below it — one call site in the composer,
+    /// no `#available` in the middle of a modifier chain.
+    @ViewBuilder
+    func onKeyPressIfAvailable(_ handler: @escaping (RemoteSlashKeyEvent) -> RemoteSlashKeyResult) -> some View {
+        if #available(iOS 17.0, *) {
+            self.onKeyPress(phases: .down) { press in
+                handler(RemoteSlashKeyEvent(press)).swiftUIResult
+            }
+        } else {
+            self
+        }
+    }
+}
+
+/// The four keys the menu cares about, so the handler can be written once without
+/// naming a type that does not exist below iOS 17.
+enum RemoteSlashKeyEvent {
+    case upArrow, downArrow, returnKey, escape, other
+
+    @available(iOS 17.0, *)
+    init(_ press: KeyPress) {
+        switch press.key {
+        case .upArrow: self = .upArrow
+        case .downArrow: self = .downArrow
+        case .return: self = .returnKey
+        case .escape: self = .escape
+        default: self = .other
+        }
+    }
+}
+
+enum RemoteSlashKeyResult {
+    case handled, ignored
+
+    @available(iOS 17.0, *)
+    var swiftUIResult: KeyPress.Result {
+        self == .handled ? .handled : .ignored
+    }
+}
+
+extension ArraySlice {
+    /// Bounds-checked read for the `/` menu. A free function rather than a
+    /// `subscript(safe:)`: that subscript already exists for arrays elsewhere in
+    /// this folder, and two identical extensions is a redeclaration, not a helper.
+    func dshRow(at index: Int) -> Element? {
+        let offset = index - startIndex
+        guard offset >= 0, offset < count else { return nil }
+        return self[index]
     }
 }

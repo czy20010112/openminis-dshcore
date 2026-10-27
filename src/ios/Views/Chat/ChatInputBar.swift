@@ -1013,6 +1013,12 @@ class PastableUITextView: UITextView, UIDropInteractionDelegate {
         set { _inputAccessoryView = newValue }
     }
 
+    /// [T-arrow-nav] See `PastableTextView.onReturnIntercept`: asked before Return
+    /// is treated as "send". `nil` keeps every existing behaviour.
+    var onReturnIntercept: (() -> Bool)?
+    /// See `PastableTextView.onEscape`.
+    var onEscape: (() -> Bool)?
+
     override var keyCommands: [UIKeyCommand]? {
         // Return (no modifiers) → send message (hardware keyboard only)
         let send = UIKeyCommand(input: "\r", modifierFlags: [], action: #selector(handleReturnKey))
@@ -1026,11 +1032,26 @@ class PastableUITextView: UITextView, UIDropInteractionDelegate {
         // Tab for slash menu autocomplete
         let tab = UIKeyCommand(input: "\t", modifierFlags: [], action: #selector(handleTab))
         tab.wantsPriorityOverSystemBehavior = true
-        return [send, newline, up, down, tab]
+        // Escape: the `/` menu's dismiss key. Its handler falls through to the
+        // system when no hook consumes it, so this command changes nothing for a
+        // caller that does not set `onEscape`.
+        let escape = UIKeyCommand(input: UIKeyCommand.inputEscape, modifierFlags: [], action: #selector(handleEscapeKey))
+        escape.wantsPriorityOverSystemBehavior = true
+        return [send, newline, up, down, tab, escape]
     }
 
     @objc private func handleReturnKey() {
+        // Order matters: the interceptor is the ONLY caller that may swallow a
+        // Return. Never unconditional — that would break newline, send and the
+        // IME's confirm key in one go.
+        if onReturnIntercept?() == true { return }
         onReturnKey?()
+    }
+
+    @objc private func handleEscapeKey() {
+        if onEscape?() == true { return }
+        // No hook (or it declined): Escape keeps its default meaning.
+        resignFirstResponder()
     }
 
     @objc private func handleShiftReturnKey() {
@@ -1335,6 +1356,16 @@ struct PastableTextView: UIViewRepresentable {
     var onArrowUp: (() -> Bool)?
     var onArrowDown: (() -> Bool)?
     var onTab: (() -> Bool)?
+    /// [T-arrow-nav] Asked BEFORE the Return key is treated as "send".
+    ///
+    /// Return `true` to swallow the keystroke (the `/` menu runs the highlighted
+    /// row), `false`/nil to let the existing send behaviour happen. Optional on
+    /// purpose: a caller that does not set it keeps today's behaviour exactly —
+    /// newline on Shift+Return, send on Return, IME confirm untouched.
+    var onReturnIntercept: (() -> Bool)?
+    /// Asked before the Escape key's default. `true` swallows it (the `/` menu
+    /// closes by clearing its query), `false`/nil keeps the system behaviour.
+    var onEscape: (() -> Bool)?
     /// Receives the caret location (UTF-16 offset) whenever the user moves
     /// the caret or edits the text. Used for `@`-mention detection.
     var onCaretChange: ((Int) -> Void)?
@@ -1403,6 +1434,8 @@ struct PastableTextView: UIViewRepresentable {
         tv.onArrowUp = onArrowUp
         tv.onArrowDown = onArrowDown
         tv.onTab = onTab
+        tv.onReturnIntercept = onReturnIntercept
+        tv.onEscape = onEscape
         tv.onCaretChange = onCaretChange
         // Hide the input-assistant bar that iPadOS shows above a physical
         // keyboard — it leaves a visible grey strip at the bottom of the screen.
@@ -1560,6 +1593,8 @@ struct PastableTextView: UIViewRepresentable {
         tv.onArrowUp = onArrowUp
         tv.onArrowDown = onArrowDown
         tv.onTab = onTab
+        tv.onReturnIntercept = onReturnIntercept
+        tv.onEscape = onEscape
 
         // Apply a pending caret move (e.g. after mention insert). Clamp to the
         // text length and only move when different to avoid fighting the user.
