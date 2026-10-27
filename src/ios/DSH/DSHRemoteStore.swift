@@ -320,7 +320,7 @@ final class DSHRemoteStore: ObservableObject {
                 connectionState = .unavailable(error.message)
             }
         } catch {
-            NSLog("[DSH] connect failed: \(error)")
+            NSLog("[DSH] connect failed: \(((error as NSError).domain)):\(((error as NSError).code))")
             status = .failed(error.localizedDescription)
             errorText = error.localizedDescription
             disconnectReason = error.localizedDescription
@@ -465,7 +465,7 @@ final class DSHRemoteStore: ObservableObject {
                     self.markNeedsRepair(error.message)
                 } catch {
                     // A network blip while idle says nothing about the pairing.
-                    NSLog("[DSH] idle probe failed (ignored): \(error.localizedDescription)")
+                    NSLog("[DSH] idle probe failed (ignored): \(((error as NSError).domain)):\(((error as NSError).code))")
                 }
             }
         }

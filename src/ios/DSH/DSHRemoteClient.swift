@@ -311,7 +311,7 @@ final class DSHRemoteClient: @unchecked Sendable {
                 status: 401
             )
         } catch {
-            NSLog("[DSH] auth refresh unavailable: \(error.localizedDescription)")
+            NSLog("[DSH] auth refresh unavailable: \(((error as NSError).domain)):\(((error as NSError).code))")
             throw error
         }
     }
@@ -478,7 +478,7 @@ final class DSHRemoteClient: @unchecked Sendable {
             NSLog("[DSH] auth 401 path=events refresh rejected code=\(error.code) → pair again")
             return .repairNeeded
         } catch {
-            NSLog("[DSH] auth 401 path=events refresh failed: \(error.localizedDescription)")
+            NSLog("[DSH] auth 401 path=events refresh failed: \(((error as NSError).domain)):\(((error as NSError).code))")
             return .transientFailure
         }
     }
@@ -1007,7 +1007,7 @@ final class DSHRemoteStream: @unchecked Sendable {
         } catch {
             // A cancelled task surfaces as URLError.cancelled; that is a close,
             // not a failure.
-            NSLog("[DSH] sse threw: \(error) closed=\(isClosed)")
+            NSLog("[DSH] sse threw: \(((error as NSError).domain)):\(((error as NSError).code)) closed=\(isClosed)")
             if !isClosed, !Self.isCancellation(error) {
                 finishMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
                 if let remote = error as? DSHRemoteError { retryable = remote.isRetryable }
@@ -1063,7 +1063,7 @@ final class DSHRemoteStream: @unchecked Sendable {
             // from the device log, which is exactly what made a stuck spinner
             // unattributable. A partial line (multi-line frame) lands here too,
             // which is why this is not fatal.
-            NSLog("[DSH] frame decode failed bytes=\(data.count) head=\(String(json.prefix(80))) err=\(error)")
+            NSLog("[DSH] frame decode failed bytes=\(data.count) err=\(((error as NSError).domain)):\(((error as NSError).code))")
             return false
         }
         NSLog("[DSH] frame type=\(envelope.type) records=\(envelope.records?.values.count ?? -1) seq=\(envelope.seq.map(String.init) ?? "-")")

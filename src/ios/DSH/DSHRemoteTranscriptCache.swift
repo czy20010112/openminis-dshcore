@@ -108,7 +108,7 @@ enum DSHRemoteTranscriptCache {
             }
             return cached
         } catch {
-            NSLog("[DSH] cache corrupt sid=\(sessionId.prefix(12)): \(error.localizedDescription) → removed")
+            NSLog("[DSH] cache corrupt sid=\(sessionId.prefix(12)): \(((error as NSError).domain)):\(((error as NSError).code)) → removed")
             remove(sessionId: sessionId)
             return nil
         }
@@ -135,7 +135,7 @@ enum DSHRemoteTranscriptCache {
             evictIfNeeded(keeping: url)
             return trimmed.count
         } catch {
-            NSLog("[DSH] cache write failed sid=\(sessionId.prefix(12)): \(error.localizedDescription)")
+            NSLog("[DSH] cache write failed sid=\(sessionId.prefix(12)): \(((error as NSError).domain)):\(((error as NSError).code))")
             return 0
         }
     }
