@@ -1,5 +1,6 @@
 import ActivityKit
 import AVFoundation
+import BackgroundTasks
 import Combine
 import CoreLocation
 import Foundation
@@ -86,7 +87,31 @@ final class BackgroundKeepAliveManager: NSObject, ObservableObject, CLLocationMa
     }
 
     @Published var backgroundSpeakEnabled: Bool = UserDefaults.standard.bool(forKey: "backgroundSpeakEnabled") {
-        didSet { UserDefaults.standard.set(backgroundSpeakEnabled, forKey: "backgroundSpeakEnabled") }
+        didSet {
+            UserDefaults.standard.set(backgroundSpeakEnabled, forKey: "backgroundSpeakEnabled")
+            // Turning audio on mid-run ends the continued-task fallback; off starts it.
+            evaluateContinuedProcessing(caller: "backgroundSpeakToggle")
+        }
+    }
+
+    /// [T-bka-continued-preferred-switch] "Prefer Continued Background Processing
+    /// (iOS 26+)", OFF by default.
+    ///
+    /// Off: the usual scheme — silent audio keeps the app alive, the standing
+    /// location session keeps the Live Activity refreshing. On: every run started in
+    /// the foreground gets a BGContinuedProcessingTask, which keeps the Live
+    /// Activity refreshing instead of location (see continuedMode). Toggling it
+    /// mid-run completes / submits the task and re-evaluates location.
+    static let continuedPreferredKey = "continuedProcessingPreferred"
+    @Published var continuedProcessingPreferred: Bool =
+        (UserDefaults.standard.object(forKey: BackgroundKeepAliveManager.continuedPreferredKey) as? Bool) ?? false {
+        didSet {
+            UserDefaults.standard.set(continuedProcessingPreferred, forKey: Self.continuedPreferredKey)
+            logger.info("[BKA][Continued] setting preferred=\(continuedProcessingPreferred)")
+            evaluateContinuedProcessing(caller: "settingToggle")
+            evaluateLocationUpdates()
+            evaluateBackgroundActivitySession()
+        }
     }
 
     /// True only when the configuration can actually keep the app alive in the
@@ -194,6 +219,38 @@ final class BackgroundKeepAliveManager: NSObject, ObservableObject, CLLocationMa
     private(set) var backgroundEnteredAt: Date?
     private(set) var lastBackgroundSuspendAt: Date?
     private(set) var lastForegroundResumeAt: Date?
+
+    // MARK: - Continued processing state (iOS 26+) [T-bka-continued-processing]
+
+    /// The running BGContinuedProcessingTask (iOS 26+), as Any so the stored
+    /// property needs no availability.
+    private var continuedTask: Any?
+    /// Identifier of a submitted request whose task has not started yet.
+    private var continuedPendingId: String?
+    private var continuedProgressTimer: Timer?
+    /// Released when the continued task is completed; the launch handler's
+    /// thread waits on it, so the handler does not return while the task runs.
+    private var continuedHandlerHold: DispatchSemaphore?
+    /// Set when this run's continued task could not be submitted or expired:
+    /// no second request is made for the rest of the run. Reset per run.
+    private var continuedUnavailableThisRun = false
+    /// [T-bka-continued-retry-foreground] The request was skipped only because
+    /// the app was not in the foreground (the system refuses it there). Unlike
+    /// `continuedUnavailableThisRun` this is not a failure: ask again the next
+    /// time the app becomes active while the run is still going.
+    private var continuedAwaitingForeground = false
+    /// Whether any session is busy - a "run" for the continued task, which
+    /// (unlike isActive) does not depend on Enhanced Background being on.
+    private var continuedBusy = false
+    /// One-shot callbacks for when the continued task ends before the run
+    /// does (expired, stopped by the user, or no longer needed). See
+    /// onContinuedTaskEndedMidRun.
+    private var continuedEndCallbacks: [() -> Void] = []
+    /// [T-bka-continued-hint] Last progress tick at which the continued task
+    /// was holding the app in the background. A foreground return compares it
+    /// with its own background-entry time to tell whether the period that just
+    /// ended ran on the (slow) continued task.
+    private(set) var continuedLastBackgroundTick: Date?
 
     // MARK: - CLBackgroundActivitySession (iOS 17+)
     private var bgActivitySession: Any?
@@ -486,6 +543,12 @@ final class BackgroundKeepAliveManager: NSObject, ObservableObject, CLLocationMa
             .sink { [weak self] _ in
                 self?.logLifecycleSnapshot("Active")
                 self?.retractOrphanedLocationSession(caller: "didBecomeActive")
+                // [T-bka-continued-retry-foreground] The continued task can only be
+                // requested from the foreground. A run that started while the app
+                // was in the background got none; ask again now.
+                if self?.continuedAwaitingForeground == true {
+                    self?.evaluateContinuedProcessing(caller: "didBecomeActive")
+                }
             }
             .store(in: &cancellables)
 
@@ -789,6 +852,20 @@ final class BackgroundKeepAliveManager: NSObject, ObservableObject, CLLocationMa
         // need the app alive; only the first is in `activeSessions`.
         let awaitingScheduled = AgentJobRegistry.shared.sessionsAwaitingScheduledFire
         let sessions = sessions.union(awaitingScheduled)
+        // [T-bka-contninued-noop] The run state is updated BEFORE the
+        // activate / deactivate branch, so the branch's own evaluate call sees it
+        // (no stray submit at run end).
+        //
+        // [T-bka-continued-fallback] The continued task follows the run, not
+        // isActive: it is also the keep-alive when Enhanced Background is off.
+        let busy = !sessions.isEmpty
+        let busyChanged = busy != continuedBusy
+        if busyChanged {
+            continuedBusy = busy
+            if busy { continuedUnavailableThisRun = false }
+            if !busy { continuedAwaitingForeground = false }
+        }
+
         let shouldBeActive = !sessions.isEmpty && enabled
         let sessionList = sessions.prefix(5).joined(separator: ",")
         // [T-ios-log-noise-reduction] INFO→DEBUG: reevaluate runs on every
@@ -803,6 +880,7 @@ final class BackgroundKeepAliveManager: NSObject, ObservableObject, CLLocationMa
             isActive = true
             AgentLiveActivityManager.shared.startActivity(sessions: buildSessionSnapshots())
             startUpdateTimer()
+            evaluateContinuedProcessing(caller: "activate")
             evaluateLocationUpdates()
             evaluateBackgroundActivitySession()
             evaluateSilentAudio(caller: "reevaluate-activate")
@@ -810,6 +888,7 @@ final class BackgroundKeepAliveManager: NSObject, ObservableObject, CLLocationMa
             logger.info("[BackgroundKeepAlive] Deactivating keep-alive")
             stopUpdateTimer()
             isActive = false
+            evaluateContinuedProcessing(caller: "deactivate")
             // [T-ios-live-activity-soft-finish] STOP LOCATION FIRST, fully, before
             // touching the Live Activity. The old order (end Live Activity, then
             // tear down location) let the probe-retract race surface a "ghost"
@@ -825,6 +904,14 @@ final class BackgroundKeepAliveManager: NSObject, ObservableObject, CLLocationMa
             // (checkmark + last message) and leave it on screen; it's dismissed
             // when the user taps it and Minis foregrounds.
             Task { await AgentLiveActivityManager.shared.finishActivity() }
+        }
+
+        // [T-bka-continued-fallback] Evaluated after the activate branch: when that
+        // branch runs it already submitted the task (its own evaluate call), so this
+        // is a no-op there; it does the submit when no Live Activity starts
+        // (Enhanced Background off) and the completion at run end.
+        if busyChanged {
+            evaluateContinuedProcessing(caller: busy ? "runStart" : "runEnd")
         }
     }
 
@@ -1018,6 +1105,9 @@ final class BackgroundKeepAliveManager: NSObject, ObservableObject, CLLocationMa
 
     private func evaluateLocationUpdates() {
         let shouldUpdate = isActive
+            // Preferred mode: the continued task keeps the Live Activity refreshing,
+            // so both location legs stand down while it runs.
+            && !continuedReplacesLocation
             && locationTrackingEnabled
             && appIsInBackground
             && backgroundLocationArmed
@@ -1060,6 +1150,10 @@ final class BackgroundKeepAliveManager: NSObject, ObservableObject, CLLocationMa
         // in the foreground. This gives a grace window so brief background blips
         // don't flash the indicator, and keeps the foreground free of location.
         let shouldRun = isActive && enhancedBackgroundEnabled && hasPermission
+            // Preferred mode: the continued task is what keeps the Live Activity
+            // rendering, so the location leg is not needed (and its indicator would
+            // otherwise show for no reason).
+            && !continuedReplacesLocation
             && appIsInBackground && backgroundLocationArmed
 
         // Singleton by construction: this manager is a `.shared` instance and
@@ -2037,6 +2131,338 @@ final class BackgroundBoost: ObservableObject {
     }
 }
 
+/// iOS 26's BGContinuedProcessingTask as the FALLBACK keep-alive.
+///
+/// [T-bka-continued-preferred-switch] Opt-in: the settings switch "Prefer
+/// Continued Background Processing (iOS 26+)" (continuedProcessingPreferred)
+/// is OFF by default.
+///   - Off: the usual scheme - silent audio keeps the app alive, the standing
+///     location session keeps the Live Activity rendering (see the location
+///     leg below; without it the Lock Screen freezes ~30s after
+///     backgrounding, iOS 26 and 27 alike). No continued task.
+///   - On: every run started in the foreground gets a continued task, and
+///     while it runs the location keep-alive stands down - the task keeps the
+///     Live Activity refreshing instead, with no location indicator. Silent
+///     audio is untouched (it keeps full background CPU, which the task alone
+///     does not get - about a fifth in the device bench). If the task cannot
+///     be submitted (a run started in the background) or ends early (system
+///     expiry, Stop on its card), location comes back for the rest of the run.
+///   The task shows the system's own task card with a Stop button, hence
+///   opt-in.
+///
+/// Modes under the switch (UserDefaults bka.continuedProcessingMode, DEBUG RPC
+/// debug.bka.setContinuedMode):
+///   - preferred (default): as above;
+///   - fallback: only for runs without the silent-audio keep-alive, and
+///     location is not suppressed (the T-bka-continued-fallback scheme);
+///   - off: never.
+///
+/// The system only accepts the request from the foreground app, so it is
+/// submitted when a run starts while the app is active; a run that starts in
+/// the background (a scheduled job, a relaunch) gets no continued task. The
+/// task must report progress, or it is expired as stalled: a 2s timer
+/// advances it and mirrors the first busy session's title / status.
+extension BackgroundKeepAliveManager {
+    enum ContinuedMode: String { case off, preferred, fallback }
+
+    static let continuedModeKey = "bka.continuedProcessingMode"
+    static let continuedIdPrefix = "com.openminis.app.continued."
+
+    /// The settings switch wins: off (the default) means never. When it is on,
+    /// a DEBUG override (bka.continuedProcessingMode) may pick another mode;
+    /// otherwise preferred. An unknown stored value (an older build's
+    /// replaceLocation / always / alongside) reads as preferred.
+    static var continuedMode: ContinuedMode {
+        let d = UserDefaults.standard
+        guard (d.object(forKey: continuedPreferredKey) as? Bool) ?? false else { return .off }
+        return ContinuedMode(rawValue: d.string(forKey: continuedModeKey) ?? "") ?? .preferred
+    }
+
+    /// Whether this run should have a continued task: always in preferred
+    /// mode, only without the silent-audio keep-alive in fallback mode.
+    var continuedWanted: Bool {
+        switch Self.continuedMode {
+        case .off: return false
+        case .preferred: return true
+        case .fallback: return !enhancedBackgroundEffective
+        }
+    }
+
+    /// While the task runs in preferred mode, it - not location - keeps the
+    /// Live Activity refreshing, so both location legs stand down.
+    var continuedReplacesLocation: Bool {
+        continuedTask != nil && Self.continuedMode == .preferred
+    }
+
+    /// [T-bka-continued-card-copy] What the system's task card shows.
+    /// [T-bka-continued-card-status] Title stays fixed; the subtitle now says
+    /// what the most recently active session is doing, like the Live Activity:
+    /// "Thinking deeply…", "Replying…", or the tool and its title ("Shell ·
+    /// Build the project"), prefixed with the session count when more than one
+    /// runs. Task Status Privacy keeps the old content-free text (session count
+    /// and "please don't stop"), as it redacts the Live Activity. Refreshed with
+    /// every progress tick (2s), so it follows the run.
+    private func continuedCardText() -> (title: String, subtitle: String) {
+        let tracker = SessionActivityTracker.shared
+        let n = max(1, tracker.activeSessions.count)
+        let title = AppLocalized("Minis is Processing…")
+        if liveActivityPrivacyMode {
+            // Kept short: the card truncates long subtitles (seen on device).
+            let subtitle = n == 1
+                ? AppLocalized("1 session running, please don't stop")
+                : String(format: AppLocalized("%lld sessions running, please don't stop"), n)
+            return (title, subtitle)
+        }
+        let latest = tracker.sessionToolInfo
+            .filter { tracker.activeSessions.contains($0.key) }
+            .max { $0.value.lastActivity < $1.value.lastActivity }?.value
+        let status = ContinuedCardStatus.text(toolName: latest?.toolName ?? "",
+                                              toolStatus: latest?.toolStatus ?? "",
+                                              localize: { AppLocalized(String.LocalizationValue($0)) })
+        return (title, ContinuedCardStatus.subtitle(status: status, sessionCount: n, localize: { AppLocalized(String.LocalizationValue($0)) }))
+    }
+
+    var continuedTaskRunning: Bool { continuedTask != nil }
+
+    /// [T-crash-keepalive-heartbeat] What is holding the app in the background
+    /// right now, for the crash heartbeat: with it, a kill after the keep-alive
+    /// audio was lost is classified as that instead of "cause undetermined".
+    var keepAliveHeartbeat: [String: Any] {
+        let remaining = UIApplication.shared.backgroundTimeRemaining
+        var d: [String: Any] = [
+            "configured": enhancedBackgroundEffective,
+            "audioPlaying": silentAudioIsPlaying,
+            "continued": continuedTaskRunning,
+            // -1 = unlimited (foreground, or a background mode is holding the app)
+            "bgRemaining": remaining > 99_999 ? -1 : Int(remaining),
+        ]
+        if let at = lastAudioInterruptionAt {
+            d["audioInterruption"] = lastAudioInterruption
+            d["audioInterruptionAgoS"] = Int(Date().timeIntervalSince(at))
+        }
+        return d
+    }
+
+    /// Run `body` once if the continued task ends while the run is still
+    /// going. AIChatViewModel ends its expiring UIKit background task while
+    /// the continued task holds the app (see its expiry handler); this lets
+    /// it take a fresh one when the hold goes away, so the usual expiry path
+    /// (re-arm under silent audio, or suspend and resume in the foreground)
+    /// applies again instead of the app being frozen mid-call. Dropped
+    /// without running when the run ends.
+    func onContinuedTaskEndedMidRun(_ body: @escaping () -> Void) {
+        continuedEndCallbacks.append(body)
+    }
+
+    func evaluateContinuedProcessing(caller: String) {
+        guard #available(iOS 26.0, *) else { return }
+        // An iPad app on a Mac is never suspended in the background.
+        if ProcessInfo.processInfo.isiOSAppOnMac || ProcessInfo.processInfo.isMacCatalystApp { return }
+        let mode = Self.continuedMode
+        guard continuedBusy, continuedWanted else {
+            finishContinuedTask(success: true, reason: "\(caller) mode=\(mode.rawValue) busy=\(continuedBusy) wanted=\(continuedWanted)")
+            return
+        }
+        guard continuedTask == nil, continuedPendingId == nil, !continuedUnavailableThisRun else { return }
+        guard UIApplication.shared.applicationState == .active else {
+            // [T-bka-continued-retry-foreground] Not `continuedUnavailableThisRun`:
+            // that gave up for the whole run, so a run that (re)started in the
+            // background never got a task even after the user opened the app
+            // (2026-10-09: none from 17:23 to the kill at 18:01, across three
+            // foreground visits).
+            if !continuedAwaitingForeground {
+                logger.info("[BKA][Continued] not submitted (caller=\(caller)) - app not in the foreground; will ask again when it is")
+            }
+            continuedAwaitingForeground = true
+            return
+        }
+        continuedAwaitingForeground = false
+        submitContinuedTask(caller: caller)
+    }
+
+    @available(iOS 26.0, *)
+    private func submitContinuedTask(caller: String) {
+        // A fresh identifier per request: registering one identifier twice
+        // kills the app (BGTaskScheduler).
+        let id = Self.continuedIdPrefix + UUID().uuidString.prefix(8)
+        let registered = BGTaskScheduler.shared.register(forTaskWithIdentifier: id, using: nil) { [weak self] task in
+            guard let task = task as? BGContinuedProcessingTask else { task.setTaskCompleted(success: false); return }
+            // Logged here, on the handler's own thread: a hop to the main actor
+            // first would lose the line if the process is suspended right after.
+            task.expirationHandler = {
+                NSLog("[BackgroundKeepAlive] [WARN] [BKA][Continued] expirationHandler fired id=%@", id)
+                Task { @MainActor [weak self] in self?.continuedTaskExpired(id: id) }
+            }
+            let hold = DispatchSemaphore(value: 0)
+            Task { @MainActor [weak self] in self?.continuedTaskStarted(task, id: id, hold: hold) }
+            // Keep the launch handler running until the task is completed
+            // (Apple's examples do the work inside the handler).
+            hold.wait()
+            NSLog("[BackgroundKeepAlive] [INFO] [BKA][Continued] launch handler returned id=%@", id)
+        }
+        guard registered else {
+            logger.warning("[BKA][Continued] register FAILED id=\(id) - is \(Self.continuedIdPrefix)* in BGTaskSchedulerPermittedIdentifiers?")
+            continuedUnavailableThisRun = true
+            return
+        }
+        let card = continuedCardText()
+        let request = BGContinuedProcessingTaskRequest(identifier: id, title: card.title, subtitle: card.subtitle)
+        request.strategy = .fail
+        do {
+            try BGTaskScheduler.shared.submit(request)
+            continuedPendingId = id
+            logger.info("[BKA][Continued] submitted id=\(id) caller=\(caller) mode=\(Self.continuedMode.rawValue)")
+        } catch {
+            let ns = error as NSError
+            logger.warning("[BKA][Continued] submit FAILED id=\(id): \(ns.domain) \(ns.code) \(ns.localizedDescription) - legacy keep-alive covers this run")
+            continuedUnavailableThisRun = true
+        }
+    }
+
+    @available(iOS 26.0, *)
+    private func continuedTaskStarted(_ task: BGContinuedProcessingTask, id: String, hold: DispatchSemaphore) {
+        guard continuedPendingId == id, continuedBusy else {
+            logger.info("[BKA][Continued] task \(id) started after its run ended - completing at once")
+            task.setTaskCompleted(success: true)
+            hold.signal()
+            return
+        }
+        continuedPendingId = nil
+        continuedTask = task
+        continuedHandlerHold = hold
+        task.progress.totalUnitCount = 100
+        task.progress.completedUnitCount = 0
+        logger.info("[BKA][Continued] task STARTED id=\(id) appState=\(UIApplication.shared.applicationState.rawValue)")
+        continuedProgressTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.tickContinuedProgress() }
+        }
+        // Preferred mode: location stands down while the task runs.
+        evaluateLocationUpdates()
+        evaluateBackgroundActivitySession()
+    }
+
+    @available(iOS 26.0, *)
+    private func tickContinuedProgress() {
+        guard let task = continuedTask as? BGContinuedProcessingTask else { return }
+        let p = task.progress
+        // Unknown length: keep moving, never reaching the end.
+        if p.totalUnitCount - p.completedUnitCount < 10 { p.totalUnitCount += 100 }
+        p.completedUnitCount += 1
+        let card = continuedCardText()
+        task.updateTitle(card.title, subtitle: card.subtitle)
+        if UIApplication.shared.applicationState != .active {
+            continuedLastBackgroundTick = Date()
+            BackgroundInterruptionTracker.shared.recordContinuedFallback()
+        }
+        if p.completedUnitCount % 5 == 0 {
+            logger.info("[BKA][Continued] tick \(p.completedUnitCount)/\(p.totalUnitCount) appState=\(UIApplication.shared.applicationState.rawValue) bgRemaining=\(Int(min(UIApplication.shared.backgroundTimeRemaining, 99999)))")
+        }
+    }
+
+    private func continuedTaskExpired(id: String) {
+        // Also what the card's Stop button produces: the API does not tell the
+        // two apart. No new request this run.
+        logger.warning("[BKA][Continued] task EXPIRED id=\(id) (system expiry or Stop on the card)")
+        continuedUnavailableThisRun = true
+        finishContinuedTask(success: false, reason: "expired")
+    }
+
+    func finishContinuedTask(success: Bool, reason: String) {
+        continuedProgressTimer?.invalidate()
+        continuedProgressTimer = nil
+        continuedPendingId = nil
+        let callbacks = continuedEndCallbacks
+        continuedEndCallbacks = []
+        guard #available(iOS 26.0, *), let task = continuedTask as? BGContinuedProcessingTask else { return }
+        continuedTask = nil
+        task.progress.completedUnitCount = task.progress.totalUnitCount
+        task.setTaskCompleted(success: success)
+        continuedHandlerHold?.signal()
+        continuedHandlerHold = nil
+        logger.info("[BKA][Continued] task COMPLETED success=\(success) reason=\(reason) busy=\(continuedBusy) endCallbacks=\(callbacks.count)")
+        // Location takes over again if the run goes on (no-op once it ended).
+        evaluateLocationUpdates()
+        evaluateBackgroundActivitySession()
+        if continuedBusy { callbacks.forEach { $0() } }
+    }
+}
+
+// BEGIN ContinuedCardStatus
+/// [T-bka-continued-card-status] The continued-processing card's subtitle,
+/// from one session's tool info (SessionActivityTracker.SessionToolInfo).
+/// Foundation only, with localization injected, so the standalone test can
+/// compile this block.
+enum ContinuedCardStatus {
+    /// Longest tool title kept; the card truncates anyway, this just keeps the
+    /// tool name in view and the update small.
+    static let maxDetailLength = 60
+
+    static func text(toolName: String, toolStatus: String, localize: (String) -> String) -> String {
+        let detail = toolStatus
+            .components(separatedBy: .newlines).joined(separator: " ")
+            .trimmingCharacters(in: .whitespaces)
+        let shortDetail = detail.count > maxDetailLength ? String(detail.prefix(maxDetailLength)) + "…" : detail
+        switch toolName {
+        case "": return localize("Working…")
+        case "thinking": return localize("Thinking deeply…")
+        // The status of a text block is the token "streaming", never prose.
+        case "text": return localize("Replying…")
+        default:
+            guard let label = toolLabel(toolName) else {
+                return shortDetail.isEmpty ? localize("Working…") : shortDetail
+            }
+            return shortDetail.isEmpty ? localize(label) : "\(localize(label)) · \(shortDetail)"
+        }
+    }
+
+    static func subtitle(status: String, sessionCount: Int, localize: (String) -> String) -> String {
+        guard sessionCount > 1 else { return status }
+        return String(format: localize("%lld sessions · %@"), sessionCount, status)
+    }
+
+    /// Catalog keys for the tools the Live Activity names
+    /// (AgentLiveActivityManager.displayName); nil = show the title alone.
+    static func toolLabel(_ toolName: String) -> String? {
+        switch toolName {
+        case "browser", "browser_use": return "Browser"
+        case "shell", "shell_execute": return "Shell"
+        case "file_read": return "Read File"
+        case "file_write": return "Write File"
+        case "file_edit": return "Edit File"
+        case "read_image": return "Read Image"
+        case "memory": return "Memory"
+        case "code_interpret": return "Code"
+        default: return nil
+        }
+    }
+}
+// END ContinuedCardStatus
+
+/// [T-bka-audio-dead-expiry] What the finite UIKit background task's expiry
+/// handler does.
+enum BGTaskExpiryPolicy {
+    enum Action: Equatable {
+        /// A continued-processing task holds the app: end this task, keep running.
+        case endOnly
+        /// Keep-alive audio is really playing: take a fresh task, keep running.
+        case rearm
+        /// Nothing holds the app: stop the shell, end the task, resume in the
+        /// foreground. The only safe answer - the system kills an app that is
+        /// still holding a task when the time runs out.
+        case suspend
+    }
+
+    /// - keepAliveConfigured: the settings allow background audio keep-alive.
+    /// - silentAudioPlaying: the engine is running NOW. The setting alone is
+    ///   not enough: with the audio dead, the "re-armed" task is granted only
+    ///   the seconds that were left.
+    static func decide(continuedTaskRunning: Bool, keepAliveConfigured: Bool, silentAudioPlaying: Bool) -> Action {
+        if continuedTaskRunning { return .endOnly }
+        if keepAliveConfigured && silentAudioPlaying { return .rearm }
+        return .suspend
+    }
+}
+
 // MARK: - Background Interruption Tracker
 
 @MainActor
@@ -2077,6 +2503,9 @@ final class BackgroundInterruptionTracker: ObservableObject {
     }
 
     private var wasInterrupted = false
+    /// [T-bka-continued-hint] A continued-task period in the background is counted
+    /// like an interruption on the next foreground return (same back-off).
+    private var ranOnContinuedTask = false
     private var cancellables: Set<AnyCancellable> = []
 
     // [T-ios-scene-create-watchdog-corelocation] This singleton is first touched
@@ -2111,15 +2540,26 @@ final class BackgroundInterruptionTracker: ObservableObject {
         lastInterruptionAt = Date()
     }
 
-    /// Called when app returns to foreground. Counts the interruption and only
-    /// surfaces the banner once the running count reaches `remindInterval`.
+    /// [T-bka-continued-hint] The continued-processing task held the app in the
+    /// background (called from its progress ticks). Counted like an interruption
+    /// on the next foreground return, same reminder back-off.
+    func recordContinuedFallback() {
+        ranOnContinuedTask = true
+    }
+
+    /// Called when app returns to foreground. Counts the interruption (or the slow
+    /// continued-task period) and only surfaces the banner once the running count
+    /// reaches `remindInterval`. A real interruption wins over a slow period: it is
+    /// the worse outcome.
     func checkOnForeground() {
-        guard wasInterrupted,
+        let interrupted = wasInterrupted
+        let slow = ranOnContinuedTask
+        wasInterrupted = false
+        ranOnContinuedTask = false
+        guard interrupted || slow,
               !BackgroundKeepAliveManager.shared.enhancedBackgroundEffective else {
-            wasInterrupted = false
             return
         }
-        wasInterrupted = false
 
         interruptionCount += 1
         guard interruptionCount >= remindInterval else { return }

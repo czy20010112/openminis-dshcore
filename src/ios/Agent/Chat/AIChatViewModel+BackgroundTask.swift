@@ -53,7 +53,41 @@ extension AIChatViewModel {
             // `delay:` tool waits (and any in-flight command) even though the
             // app was in no danger of termination. Instead, just re-arm a fresh
             // finite task to reset the clock and let the agent loop continue.
-            if BackgroundKeepAliveManager.shared.enhancedBackgroundEffective {
+            // [T-bka-continued-processing] An iOS 26 continued-processing task
+            // holds the process while it runs, but backgroundTimeRemaining still
+            // counts down and these finite tasks still expire. Re-arming one with
+            // seconds left (the branch below, which assumes silent audio makes the
+            // time unlimited) got the app killed by RunningBoard for an assertion it
+            // could not end in time (0x2182BAD2). End it promptly and keep the loop
+            // running.
+            let keepAlive = BackgroundKeepAliveManager.shared
+            let expiryAction = BGTaskExpiryPolicy.decide(
+                continuedTaskRunning: keepAlive.continuedTaskRunning,
+                keepAliveConfigured: keepAlive.enhancedBackgroundEffective,
+                silentAudioPlaying: keepAlive.silentAudioIsPlaying)
+            if expiryAction == .endOnly {
+                logger.info("[Background] Finite task expiring while a continued-processing task holds the app — ending it, loop keeps running")
+                let expiringId = self.backgroundTaskID
+                self.backgroundTaskID = .invalid
+                if expiringId != .invalid {
+                    UIApplication.shared.endBackgroundTask(expiringId)
+                    AIChatViewModel.noteBackgroundTaskEnded()
+                }
+                // [T-bka-continued-fallback] If the continued task ends first
+                // (expired, or Stop on its card), take a fresh finite task so this
+                // handler runs again without the continued branch: it then re-arms
+                // under silent audio, or suspends the loop to resume in the
+                // foreground — rather than the app being frozen mid-request with no
+                // task held.
+                let sid = self.sessionId
+                BackgroundKeepAliveManager.shared.onContinuedTaskEndedMidRun { [weak self] in
+                    guard let self, let sid, SessionActivityTracker.shared.activeSessions.contains(sid) else { return }
+                    logger.info("[Background] Continued task ended mid-run — taking a fresh finite task")
+                    self.beginBackgroundProcessing()
+                }
+                return
+            }
+            if expiryAction == .rearm {
                 BackgroundBoost.shared.logStatus(reason: "bgTaskExpiry/rearm")
                 logger.info("[Background] Finite task expiring but silent-audio keep-alive is active — re-arming, NOT cancelling")
                 // End only the expiring task id (no completion notification),
