@@ -2205,7 +2205,7 @@ extension BackgroundKeepAliveManager {
     private func continuedCardText() -> (title: String, subtitle: String) {
         let tracker = SessionActivityTracker.shared
         let n = max(1, tracker.activeSessions.count)
-        let title = AppLocalized("Minis is Processing…")
+        let title = AppLocalized("mini-dsh is Processing…")
         if liveActivityPrivacyMode {
             // Kept short: the card truncates long subtitles (seen on device).
             let subtitle = n == 1
