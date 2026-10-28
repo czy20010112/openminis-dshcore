@@ -1,4 +1,5 @@
 import XCTest
+@testable import Minis
 
 /// Unit tests for the pure-logic parts of voice correction: the truncator, the phonetic
 /// normalizer, the LCS/word-boundary diff, the vocabulary filter, and confidence math.
