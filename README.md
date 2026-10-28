@@ -122,7 +122,22 @@ Probe artefacts carry a `-probe` suffix and the publish job refuses them.
   decision, not implemented).
 - `waitForAny` drains a tool batch rather than waking on the first completion; the latency is real and
   documented in the code.
-- **An occasional overlap in local conversations is unverified, not fixed.** Two overlap defects were
+- **iOS 26's continued processing is ported and off by default, and no device here can run it.**
+  When the iOS 26 background switch is on, a run started in the foreground asks the system for a
+  `BGContinuedProcessingTask` instead of leaning on silent audio and a standing location session;
+  the system shows a card with the task's status. On this line the app builds and links, and the
+  unit tests run, but nothing more: a simulator cannot tell whether the system grants the task, and
+  whether it accepts the wildcard identifier
+  (`com.openminis.app.continued.*`) is only answerable on an iPhone running iOS 26, which we do not
+  have. Four upstream pieces are deliberately absent because what they depend on is absent here
+  too; `verify/PORT-NOTES.md` lists them.
+- **The unit tests did not run at all until this build.** `MinisTests` is a synchronized folder, so
+  131 top-level scripts under `Standalone/` were being compiled into the test target, and a real
+  test (`ThinkingLevelTests`) was excluded to stop the build complaining instead of being fixed.
+  Nobody noticed because CI only builds the app, and a local test build died earlier, on an x86_64
+  FFmpeg link, before reaching the compile stage. The tests build and run now — 537 cases on the
+  iOS 26 line, 362 on the iOS 15 line — with 11 and 9 failures respectively, all pre-existing and
+  listed in the acceptance matrix rather than quietly deleted.- **An occasional overlap in local conversations is unverified, not fixed.** Two overlap defects were
   closed by measurement (a bubble painting over the body after a send, and misalignment after
   collapsing a thinking block). The third — reported as occasional, in ordinary local chats — is a
   static-state defect, and a probe that samples after a transition cannot see one: a cell's height
